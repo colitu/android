@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPing">#10B981</color>
+    <color name="colorPingRed">#F43F5E</color>
+    <color name="colorConfigType">#F59E0B</color>
+    <color name="colorWhite">#FFFFFF</color>
+    <color name="color_fab_active">#3B82F6</color>
+    <color name="color_fab_inactive">#475569</color>
+    <color name="divider_color_light">#1F2A3D</color>
+
+    <!-- Primary colors: Colitu blue -->
+    <color name="md_theme_primary">#3B82F6</color>
+    <color name="md_theme_onPrimary">#FFFFFF</color>
+    <color name="md_theme_primaryContainer">#1D4ED8</color>
+    <color name="md_theme_onPrimaryContainer">#DBEAFE</color>
+
+    <!-- Secondary colors: Colitu cyan -->
+    <color name="md_theme_secondary">#22D3EE</color>
+    <color name="md_theme_onSecondary">#05070D</color>
+    <color name="md_theme_secondaryContainer">#164E63</color>
+    <color name="md_theme_onSecondaryContainer">#CFFAFE</color>
+
+    <!-- Tertiary colors: Colitu success green -->
+    <color name="md_theme_tertiary">#10B981</color>
+    <color name="md_theme_onTertiary">#05070D</color>
+    <color name="md_theme_tertiaryContainer">#065F46</color>
+    <color name="md_theme_onTertiaryContainer">#D1FAE5</color>
+
+    <!-- Error colors: Colitu danger -->
+    <color name="md_theme_error">#F43F5E</color>
+    <color name="md_theme_errorContainer">#4C0519</color>
+    <color name="md_theme_onError">#FFFFFF</color>
+    <color name="md_theme_onErrorContainer">#FFE4E6</color>
+
+    <!-- Background: ultra dark -->
+    <color name="md_theme_background">#05070D</color>
+    <color name="md_theme_onBackground">#F8FAFC</color>
+
+    <!-- Surface: dark card surface -->
+    <color name="md_theme_surface">#0D111C</color>
+    <color name="md_theme_onSurface">#F8FAFC</color>
+    <color name="md_theme_surfaceVariant">#111827</color>
+    <color name="md_theme_onSurfaceVariant">#94A3B8</color>
+    <color name="md_theme_inverseSurface">#F9FAFB</color>
+    <color name="md_theme_inverseOnSurface">#05070D</color>
+
+    <!-- Outline colors -->
+    <color name="md_theme_outline">#1F2A3D</color>
+    <color name="md_theme_outlineVariant">#162033</color>
+
+    <!-- Other -->
+    <color name="md_theme_inversePrimary">#60A5FA</color>
+    <color name="md_theme_shadow">#000000</color>
+    <color name="md_theme_surfaceTint">#3B82F6</color>
+    <color name="md_theme_scrim">#000000</color>
+
+    <!-- Colitu design system tokens -->
+    <color name="colitu_bg">#05070D</color>
+    <color name="colitu_bg_alt">#060812</color>
+    <color name="colitu_surface">#0D111C</color>
+    <color name="colitu_surface_elevated">#101624</color>
+    <color name="colitu_surface_high">#111827</color>
+    <color name="colitu_border">#1F2A3D</color>
+    <color name="colitu_border_soft">#661F2A3D</color>
+    <color name="colitu_cyan">#22D3EE</color>
+    <color name="colitu_blue">#3B82F6</color>
+    <color name="colitu_purple">#8B5CF6</color>
+    <color name="colitu_success">#10B981</color>
+    <color name="colitu_danger">#F43F5E</color>
+    <color name="colitu_warning">#F59E0B</color>
+    <color name="colitu_text_primary">#F8FAFC</color>
+    <color name="colitu_text_secondary">#94A3B8</color>
+    <color name="colitu_text_disabled">#475569</color>
+    <color name="colitu_badge_free_bg">#1422D3EE</color>
+    <color name="colitu_badge_free_border">#8022D3EE</color>
+    <color name="colitu_badge_free_text">#67E8F9</color>
+    <color name="colitu_badge_pro_bg">#1AF59E0B</color>
+    <color name="colitu_badge_pro_border">#80F59E0B</color>
+    <color name="colitu_badge_pro_text">#FCD34D</color>
+    <color name="colitu_orb_outer">#263B82F6</color>
+    <color name="colitu_orb_ring">#803B82F6</color>
+    <color name="colitu_orb_inner">#3B82F6</color>
+    <color name="colitu_blue_overlay">#1A3B82F6</color>
+    <color name="colitu_cyan_overlay">#1422D3EE</color>
+    <color name="colitu_success_bg">#1410B981</color>
+    <color name="colitu_success_border">#6610B981</color>
+    <color name="colitu_danger_bg">#14F43F5E</color>
+    <color name="colitu_danger_border">#66F43F5E</color>
+    <color name="colitu_warning_bg">#1AF59E0B</color>
+    <color name="colitu_nav_bg">#E60D111C</color>
+    <color name="colitu_nav_selected">#3B82F6</color>
+    <color name="colitu_nav_unselected">#94A3B8</color>
+</resources>

@@ -1,0 +1,9 @@
+<p>Colitu protects your network traffic through an account-based VPN service.</p>
+<ul>
+<li>New accounts receive a 24-hour trial on one device, no card required.</li>
+<li>Servers, protocols and device-bound VPN profiles are delivered by the Colitu control plane.</li>
+<li>VLESS Reality, Trojan and Shadowsocks transports with automatic protocol selection.</li>
+<li>View your subscription, traffic usage and registered devices in the app.</li>
+<li>Payments use the hosted Platega checkout; Colitu never collects card or SBP credentials.</li>
+</ul>
+<p>Website: https://colitu.com · Support: support@colitu.com · Privacy: https://colitu.com/legal/privacy</p>

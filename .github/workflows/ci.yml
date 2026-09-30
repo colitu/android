@@ -1,0 +1,44 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - name: Unit, lint and unsigned PR artifact
+        working-directory: V2rayNG
+        run: |
+          ./gradlew testPlaystoreDebugUnitTest lintPlaystoreRelease compilePlaystoreDebugAndroidTestKotlin assemblePlaystoreDebug --no-daemon
+          sha256sum app/libs/libv2ray.aar > app/build/libv2ray.aar.sha256
+          ./gradlew app:dependencies --configuration playstoreReleaseRuntimeClasspath > app/build/playstore-release-dependencies.txt
+      - name: Generate CycloneDX SBOM
+        run: |
+          python scripts/generate-android-sbom.py \
+            --dependencies V2rayNG/app/build/playstore-release-dependencies.txt \
+            --artifact "$(find V2rayNG/app/build/outputs/apk/playstore/debug -name '*_universal.apk' -print -quit)" \
+            --native-dir V2rayNG/app/libs \
+            --version "$(grep -oP 'versionName = "\K[^"]+' V2rayNG/app/build.gradle.kts | head -n 1)-ci" \
+            --output V2rayNG/app/build/colitu-android.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-ci-provenance
+          path: |
+            V2rayNG/app/build/libv2ray.aar.sha256
+            V2rayNG/app/build/playstore-release-dependencies.txt
+            V2rayNG/app/build/colitu-android.cdx.json
+          if-no-files-found: error
