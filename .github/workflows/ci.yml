@@ -34,7 +34,7 @@ jobs:
             --native-dir V2rayNG/app/libs \
             --version "$(grep -oP 'versionName = "\K[^"]+' V2rayNG/app/build.gradle.kts | head -n 1)-ci" \
             --output V2rayNG/app/build/colitu-android.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-ci-provenance
           path: |
