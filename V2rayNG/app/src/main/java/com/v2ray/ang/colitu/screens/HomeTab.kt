@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.app.ConnectPhase
 import com.v2ray.ang.colitu.app.VpnStatus
+import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planLeftOf
 import com.v2ray.ang.colitu.app.planNameOf
 import com.v2ray.ang.colitu.design.BadgeTone
@@ -262,7 +263,8 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
     val active = c.planActive
     val expires = c.expiresAt
     val limit = c.user?.trafficLimitBytes?.takeIf { it > 0 }
-    val detail = if (!active) loc["plan.noneHint"] else listOfNotNull(
+    val free = isFreePlan(c.user)
+    val detail = if (!active && !free) loc["plan.noneHint"] else if (free) loc["plan.freeHint"] else listOfNotNull(
         expires?.let { planLeftOf(it) },
         if (limit == null) loc["home.unlimited"] else null,
     ).joinToString(" · ")

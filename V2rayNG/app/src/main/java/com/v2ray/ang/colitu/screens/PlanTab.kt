@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.v2ray.ang.colitu.app.ColituController
+import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planDetailOf
 import com.v2ray.ang.colitu.app.planNameOf
 import com.v2ray.ang.colitu.design.BadgeTone
@@ -80,7 +81,7 @@ fun PlanTab(c: ColituController) {
                     CText(planNameOf(c.user, c.subscription), ColituText.h2, maxLines = 2)
                     Spacer(Modifier.height(3.dp))
                     CText(
-                        if (active && expires != null) planDetailOf(expires) else loc["plan.noneHint"],
+                        if (isFreePlan(c.user)) loc["plan.freeHint"] else if (active && expires != null) planDetailOf(expires) else loc["plan.noneHint"],
                         ColituText.small,
                         maxLines = 2,
                     )

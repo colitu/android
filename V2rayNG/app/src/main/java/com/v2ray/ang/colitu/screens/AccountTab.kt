@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.app.ColituController
+import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planNameOf
 import com.v2ray.ang.colitu.app.safeCall
 import com.v2ray.ang.colitu.data.ColituDevice
@@ -82,6 +83,7 @@ fun AccountTab(
     var devicesError by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
     var removing by remember { mutableStateOf<ColituDevice?>(null) }
+    var linking by remember { mutableStateOf(false) }
 
     LaunchedEffect(reload) {
         loadingDevices = true
@@ -123,7 +125,8 @@ fun AccountTab(
                         Spacer(Modifier.height(2.dp))
                         val expires = c.expiresAt
                         CText(
-                            if (active && expires != null) "${planNameOf(user, c.subscription)} · ${loc.date(expires)}"
+                            if (isFreePlan(user)) "${planNameOf(user, c.subscription)} · ${loc["plan.freeHint"]}"
+                            else if (active && expires != null) "${planNameOf(user, c.subscription)} · ${loc.date(expires)}"
                             else planNameOf(user, c.subscription),
                             ColituText.small,
                             maxLines = 1,
@@ -133,12 +136,23 @@ fun AccountTab(
                     ColituBadge(loc["plan.status.$status"], if (active) BadgeTone.Accent else BadgeTone.Danger)
                 }
                 Spacer(Modifier.height(12.dp))
-                ColituButton(if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
+                ColituButton(if (isFreePlan(user)) loc["plan.upgrade"] else if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
                 Spacer(Modifier.height(4.dp))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     ColituLinkButton(loc["account.manage"], { openUrl(context, ACCOUNT_URL) }, icon = ColituIcons.ArrowUpRightSquare)
                 }
             }
+        }
+        Spacer(Modifier.height(10.dp))
+        // Sign a TV in by scanning the QR code on its sign-in screen.
+        if (!ColituTv.isTv) {
+            ColituActionRow(
+                icon = ColituIcons.Tv,
+                title = loc["link.row"],
+                hint = loc["link.rowHint"],
+                onClick = { linking = true },
+                trailing = { ColituIcon(ColituIcons.QrScan, ColituColors.lilac, 22.dp) },
+            )
         }
         Spacer(Modifier.height(18.dp))
 
@@ -271,6 +285,20 @@ fun AccountTab(
         CText(loc.format("brand.credit", "brand" to COMPANY_NAME), ColituText.small, Modifier.fillMaxWidth(), align = androidx.compose.ui.text.style.TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         CText(loc["about.credits"], ColituText.small, Modifier.fillMaxWidth(), color = ColituColors.dim, align = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+
+    if (linking) {
+        LinkScannerDialog(
+            onDismiss = { linking = false },
+            onApproved = {
+                linking = false
+                c.showToast(loc["link.approved"], error = false)
+                scope.launch {
+                    kotlinx.coroutines.delay(6_000)
+                    reload++
+                }
+            },
+        )
     }
 
     removing?.let { device ->

@@ -41,31 +41,141 @@ object ColituAuthRepository {
      */
     private suspend fun signIn(path: String, body: JsonObject, email: String, sendCode: Boolean): Result<ColituUser> {
         return when (val result = ColituApiClient.post(path, body)) {
-            is ColituApiClient.ApiResult.Success -> {
-                val auth = ColituAuthResponse.fromJson(result.data)
-                if (auth.accessToken.isNullOrBlank()) return Result.failure(Exception("auth_expired"))
-                ColituTokenManager.saveTokens(auth.accessToken, auth.refreshToken)
-                ColituTokenManager.setPendingVerificationEmail(null)
-                registerDevice().fold(
-                    onSuccess = {
-                        runCatching { fetchMe() }.fold(
-                            onSuccess = { Result.success(it) },
-                            onFailure = { ColituTokenManager.clear(); Result.failure(it) },
-                        )
-                    },
-                    onFailure = { error ->
-                        if (error.message == EMAIL_NOT_VERIFIED) {
-                            ColituTokenManager.setPendingVerificationEmail(email)
-                            // A code sent less than a minute ago is still valid; the
-                            // verification screen offers "send again" for the rest.
-                            if (sendCode) sendVerificationCode()
-                        } else {
-                            ColituTokenManager.clear()
-                        }
-                        Result.failure(error)
-                    },
+            is ColituApiClient.ApiResult.Success -> finishSignIn(result.data, email, sendCode)
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
+    private suspend fun finishSignIn(data: JsonObject, email: String, sendCode: Boolean): Result<ColituUser> {
+        val auth = ColituAuthResponse.fromJson(data)
+        if (auth.accessToken.isNullOrBlank()) return Result.failure(Exception("auth_expired"))
+        ColituTokenManager.saveTokens(auth.accessToken, auth.refreshToken)
+        ColituTokenManager.setPendingVerificationEmail(null)
+        return registerDevice().fold(
+            onSuccess = {
+                runCatching { fetchMe() }.fold(
+                    onSuccess = { Result.success(it) },
+                    onFailure = { ColituTokenManager.clear(); Result.failure(it) },
                 )
+            },
+            onFailure = { error ->
+                if (error.message == EMAIL_NOT_VERIFIED) {
+                    ColituTokenManager.setPendingVerificationEmail(email)
+                    // A code sent less than a minute ago is still valid; the
+                    // verification screen offers "send again" for the rest.
+                    if (sendCode) sendVerificationCode()
+                } else {
+                    ColituTokenManager.clear()
+                }
+                Result.failure(error)
+            },
+        )
+    }
+
+    /** E-mails a six-digit password reset code. Unknown addresses get the same answer. */
+    suspend fun requestPasswordReset(email: String): Result<Unit> {
+        val body = JsonObject().apply {
+            addProperty("email", email)
+            addProperty("locale", ColituLoc.language)
+        }
+        return when (val result = ColituApiClient.post("/auth/password/forgot", body)) {
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
+    /** Sets a new password with the e-mailed code; every other session ends and this phone signs in. */
+    suspend fun resetPassword(email: String, code: String, password: String): Result<ColituUser> {
+        val body = JsonObject().apply {
+            addProperty("email", email)
+            addProperty("code", code)
+            addProperty("password", password)
+        }
+        return signIn("/auth/password/reset", body, email, sendCode = true)
+    }
+
+    // ── Signing a TV in with a phone ────────────────────────────────────────────
+
+    /** What the TV shows: the code, the QR link and the secret it polls with. */
+    data class LinkStart(val code: String, val url: String, val pollToken: String, val expiresInSeconds: Long, val intervalSeconds: Long)
+
+    /** The device asking to be signed in, shown on the phone before approving. */
+    data class LinkRequest(val code: String, val deviceName: String, val platform: String, val country: String?)
+
+    sealed class LinkPoll {
+        data object Pending : LinkPoll()
+        data object Expired : LinkPoll()
+        data object Denied : LinkPoll()
+        data class SignedIn(val user: ColituUser) : LinkPoll()
+        data class Failed(val code: String) : LinkPoll()
+    }
+
+    suspend fun startLink(): Result<LinkStart> {
+        val body = JsonObject().apply {
+            addProperty("device_name", "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(100))
+            addProperty("platform", "android")
+        }
+        return when (val result = ColituApiClient.post("/auth/link/start", body)) {
+            is ColituApiClient.ApiResult.Success -> {
+                val d = result.data
+                val code = d.tryString("code")
+                val url = d.tryString("url")
+                val poll = d.tryString("poll_token")
+                if (code == null || url == null || poll == null) Result.failure(Exception("parse_error"))
+                else Result.success(LinkStart(code, url, poll, d.tryLong("expires_in") ?: 600, (d.tryLong("interval") ?: 3).coerceIn(2, 15)))
             }
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
+    /** One poll by the TV: pending until a phone decides, then signs in like a normal sign-in. */
+    suspend fun pollLink(pollToken: String): LinkPoll {
+        val body = JsonObject().apply { addProperty("poll_token", pollToken) }
+        return when (val result = ColituApiClient.post("/auth/link/poll", body)) {
+            is ColituApiClient.ApiResult.Success ->
+                if (result.statusCode == 202) LinkPoll.Pending
+                else finishSignIn(result.data, "", sendCode = false).fold(
+                    onSuccess = { LinkPoll.SignedIn(it) },
+                    onFailure = { LinkPoll.Failed(it.message.orEmpty()) },
+                )
+            is ColituApiClient.ApiResult.Error -> when (result.message) {
+                "LINK_EXPIRED", "LINK_NOT_FOUND" -> LinkPoll.Expired
+                "LINK_DENIED" -> LinkPoll.Denied
+                else -> LinkPoll.Failed(result.message)
+            }
+        }
+    }
+
+    /** Reads the code out of a scanned QR (https://colitu.com/link?c=CODE) or a typed "ABCD-2345". */
+    fun linkCodeOf(value: String): String? {
+        val raw = value.trim()
+        val candidate = if (raw.contains("/")) {
+            val uri = runCatching { java.net.URI(raw) }.getOrNull() ?: return null
+            val host = uri.host.orEmpty().lowercase()
+            if (uri.scheme != "https" || !(host == "colitu.com" || host.endsWith(".colitu.com")) || uri.path != "/link") return null
+            uri.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("c=") }?.removePrefix("c=") ?: return null
+        } else raw
+        val code = candidate.uppercase().filter { it != '-' && it != ' ' }
+        return code.takeIf { it.length == 8 && it.all { c -> c in LINK_ALPHABET } }
+    }
+
+    private const val LINK_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+    suspend fun lookupLink(code: String): Result<LinkRequest> {
+        val body = JsonObject().apply { addProperty("code", code) }
+        return when (val result = ColituApiClient.post("/auth/link/lookup", body)) {
+            is ColituApiClient.ApiResult.Success -> {
+                val d = result.data
+                Result.success(LinkRequest(d.tryString("code") ?: code, d.tryString("device_name").orEmpty(), d.tryString("platform").orEmpty(), d.tryString("country")))
+            }
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
+    suspend fun decideLink(code: String, approve: Boolean): Result<Unit> {
+        val body = JsonObject().apply { addProperty("code", code) }
+        return when (val result = ColituApiClient.post(if (approve) "/auth/link/approve" else "/auth/link/deny", body)) {
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
     }

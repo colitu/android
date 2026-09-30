@@ -694,6 +694,62 @@ object ColituIcons {
             horizontalLineTo(13.5f)
         }
     }
+
+    /** A TV on a stand (signing a TV in with the phone). */
+    val Tv = icon("tv") {
+        stroke {
+            moveTo(4f, 5f)
+            horizontalLineTo(20f)
+            curveTo(20.6f, 5f, 21f, 5.4f, 21f, 6f)
+            verticalLineTo(16f)
+            curveTo(21f, 16.6f, 20.6f, 17f, 20f, 17f)
+            horizontalLineTo(4f)
+            curveTo(3.4f, 17f, 3f, 16.6f, 3f, 16f)
+            verticalLineTo(6f)
+            curveTo(3f, 5.4f, 3.4f, 5f, 4f, 5f)
+            close()
+            moveTo(8f, 20.5f)
+            horizontalLineTo(16f)
+            moveTo(12f, 17f)
+            verticalLineTo(20.5f)
+        }
+    }
+
+    /** Viewfinder corners around a small QR mark. */
+    val QrScan = icon("qr-scan") {
+        stroke {
+            moveTo(3.5f, 8f)
+            verticalLineTo(5f)
+            curveTo(3.5f, 4.2f, 4.2f, 3.5f, 5f, 3.5f)
+            horizontalLineTo(8f)
+            moveTo(16f, 3.5f)
+            horizontalLineTo(19f)
+            curveTo(19.8f, 3.5f, 20.5f, 4.2f, 20.5f, 5f)
+            verticalLineTo(8f)
+            moveTo(20.5f, 16f)
+            verticalLineTo(19f)
+            curveTo(20.5f, 19.8f, 19.8f, 20.5f, 19f, 20.5f)
+            horizontalLineTo(16f)
+            moveTo(8f, 20.5f)
+            horizontalLineTo(5f)
+            curveTo(4.2f, 20.5f, 3.5f, 19.8f, 3.5f, 19f)
+            verticalLineTo(16f)
+            moveTo(8f, 8f)
+            horizontalLineTo(11f)
+            verticalLineTo(11f)
+            horizontalLineTo(8f)
+            close()
+            moveTo(13f, 13f)
+            horizontalLineTo(16f)
+            verticalLineTo(16f)
+            horizontalLineTo(13f)
+            close()
+            moveTo(13f, 8f)
+            horizontalLineTo(16f)
+            moveTo(8f, 13f)
+            verticalLineTo(16f)
+        }
+    }
 }
 
 /** Tinted icon; the vector's own colour is ignored. */

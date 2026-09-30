@@ -37,7 +37,8 @@ fun colituErrorMessage(code: String?, signingIn: Boolean = false): String {
         "VPN_PERMISSION_DENIED" -> loc["err.permission"]
         "CONFIG_NOT_READY", "CONFIG_CACHE_MISS", "PARSE_ERROR", "CONFIG_EXPIRED", "ENGINE_FAILED" -> loc["err.engine"]
         "INVALID_EMAIL" -> loc["auth.err.email"]
-        "INVALID_PASSWORD", "PASSWORD_TOO_SHORT" -> loc["auth.err.password"]
+        "INVALID_PASSWORD", "PASSWORD_TOO_SHORT", "AUTH_INVALID_PASSWORD" -> loc["auth.err.password"]
+        "LINK_NOT_FOUND", "LINK_EXPIRED", "LINK_DENIED" -> loc["link.invalid"]
         "BILLING_CHECKOUT_UNAVAILABLE", "BILLING_PAYMENT_METHOD_UNAVAILABLE" -> loc["pricing.unavailable"]
         else -> if (raw.startsWith("BILLING_")) loc["err.payment"] else loc["err.generic"]
     }

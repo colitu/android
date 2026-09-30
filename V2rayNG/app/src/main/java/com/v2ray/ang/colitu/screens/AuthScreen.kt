@@ -91,7 +91,20 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     var repeatError by rememberSaveable { mutableStateOf<String?>(null) }
     var termsError by rememberSaveable { mutableStateOf<String?>(null) }
     var message by rememberSaveable { mutableStateOf(initialMessage) }
+    // "Forgot password" replaces the form; a TV starts with the QR sign-in.
+    var forgot by rememberSaveable { mutableStateOf(false) }
+    var usePassword by rememberSaveable { mutableStateOf(register) }
     val isRegister = mode == AuthMode.Register
+    val title = when {
+        forgot -> loc["reset.title"]
+        isRegister -> loc["auth.registerTitle"]
+        else -> loc["auth.loginTitle"]
+    }
+    val subtitle = when {
+        forgot -> loc["reset.heroSub"]
+        isRegister -> loc["auth.registerSub"]
+        else -> loc["auth.loginSub"]
+    }
 
     fun validate(): Boolean {
         emailError = if (emailPattern.matches(email.trim())) null else loc["auth.err.email"]
@@ -146,7 +159,11 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     }
 
     val form: @Composable () -> Unit = {
-        ColituPanel(padding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 20.dp)) {
+        if (forgot) {
+            PasswordResetPanel(email, onBack = { forgot = false }, onSignedIn = onSignedIn, onVerify = onVerify)
+        } else if (ColituTv.isTv && !usePassword) {
+            TvLinkPanel(onSignedIn = onSignedIn, onVerify = onVerify, onUsePassword = { usePassword = true })
+        } else ColituPanel(padding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 20.dp)) {
             Column {
                 ColituSegment(
                     AuthMode.entries,
@@ -193,6 +210,14 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                         }
                     },
                 )
+                if (!isRegister) {
+                    Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.CenterEnd) {
+                        ColituLinkButton(loc["auth.forgot"], if (loading) null else ({
+                            message = null
+                            forgot = true
+                        }))
+                    }
+                }
                 if (isRegister) {
                     Spacer(Modifier.height(14.dp))
                     ColituField(
@@ -230,6 +255,12 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                 )
                 Spacer(Modifier.height(12.dp))
                 CText(loc["auth.remember"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
+                if (ColituTv.isTv) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        ColituLinkButton(loc["tvlink.useQr"], { usePassword = false; message = null }, icon = ColituIcons.QrScan)
+                    }
+                }
             }
         }
     }
@@ -243,7 +274,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     }
 
     if (ColituTv.isTv) {
-        TvAuthLayout(isRegister, form, links)
+        TvAuthLayout(title, subtitle, form, links)
         return
     }
 
@@ -271,14 +302,14 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ColituPill(loc["auth.kicker"], kicker = true) }
             Spacer(Modifier.height(14.dp))
             CText(
-                if (isRegister) loc["auth.registerTitle"] else loc["auth.loginTitle"],
+                title,
                 ColituText.display.copy(fontSize = 30.sp, lineHeight = 34.sp),
                 Modifier.fillMaxWidth(),
                 align = TextAlign.Center,
             )
             Spacer(Modifier.height(8.dp))
             CText(
-                if (isRegister) loc["auth.registerSub"] else loc["auth.loginSub"],
+                subtitle,
                 ColituText.muted,
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                 align = TextAlign.Center,
@@ -293,7 +324,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
 
 /** TV sign-in: brand and language on the left, the form on the right. */
 @Composable
-private fun TvAuthLayout(isRegister: Boolean, form: @Composable () -> Unit, links: @Composable () -> Unit) {
+private fun TvAuthLayout(title: String, subtitle: String, form: @Composable () -> Unit, links: @Composable () -> Unit) {
     val loc = ColituLoc
     ColituBackdrop {
         Row(Modifier.fillMaxSize().padding(start = 48.dp, top = 28.dp, end = 48.dp, bottom = 20.dp)) {
@@ -307,20 +338,16 @@ private fun TvAuthLayout(isRegister: Boolean, form: @Composable () -> Unit, link
                 ColituParticles(mode = ParticleMode.Sphere, size = 190.dp, energy = 0.5f)
                 ColituPill(loc["auth.kicker"], kicker = true)
                 Spacer(Modifier.height(12.dp))
-                CText(
-                    if (isRegister) loc["auth.registerTitle"] else loc["auth.loginTitle"],
-                    ColituText.display.copy(fontSize = 30.sp, lineHeight = 34.sp),
-                    align = TextAlign.Center,
-                )
+                CText(title, ColituText.display.copy(fontSize = 30.sp, lineHeight = 34.sp), align = TextAlign.Center)
                 Spacer(Modifier.height(6.dp))
-                CText(if (isRegister) loc["auth.registerSub"] else loc["auth.loginSub"], ColituText.muted, align = TextAlign.Center)
+                CText(subtitle, ColituText.muted, align = TextAlign.Center)
                 Spacer(Modifier.height(16.dp))
                 Box(Modifier.width(260.dp)) {
                     ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { it.uppercase() }, height = 38.dp)
                 }
             }
             Spacer(Modifier.width(36.dp))
-            Column(Modifier.width(440.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
+            Column(Modifier.width(520.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
                 form()
                 Spacer(Modifier.height(12.dp))
                 links()

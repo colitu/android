@@ -867,6 +867,8 @@ fun planStatusOf(user: ColituUser?, subscription: ColituSubscription?): String {
         "active" -> "active"
         "trialing", "trial_active" -> "trialing"
         "expired" -> "expired"
+        // The free plan's 10 GB are used up until the next month.
+        "quota_exceeded" -> "quota"
         else -> "inactive"
     }
     val expires = (user?.expiresAt ?: subscription?.expiresAt)?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -893,11 +895,14 @@ fun planNameOf(user: ColituUser?, subscription: ColituSubscription?): String {
     return when (planStatusOf(user, subscription)) {
         "inactive" -> ColituLoc["plan.none"]
         "trialing" -> ColituLoc["plan.trialName"]
-        else -> subscription?.planName?.takeIf { it.isNotBlank() }
+        else -> if (isFreePlan(user)) ColituLoc["plan.freeName"] else subscription?.planName?.takeIf { it.isNotBlank() }
             ?: user?.plan?.takeIf { it.isNotBlank() && it != "inactive" }
             ?: "Colitu VPN"
     }
 }
+
+/** The free plan (10 GB a month); its entitlement renews every month. */
+fun isFreePlan(user: ColituUser?): Boolean = user?.plan.equals("Free", ignoreCase = true)
 
 fun planDetailOf(expires: Instant): String {
     val left = java.time.Duration.between(ColituClock.now(), expires)

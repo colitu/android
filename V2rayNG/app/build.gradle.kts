@@ -29,8 +29,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 23000
-        versionName = "2.3.0"
+        versionCode = 24000
+        versionName = "2.4.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -239,6 +239,10 @@ dependencies {
 
     // QR codes for links on TV (zxing core)
     implementation(libs.core)
+    // Camera for scanning a TV's sign-in QR code (decoded with zxing core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
 
     // AndroidX Lifecycle and Architecture Components
     implementation(libs.lifecycle.viewmodel.ktx)
