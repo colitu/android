@@ -56,7 +56,8 @@ object ColituSupportRepository {
     suspend fun unread(): Result<Int> =
         when (val result = ColituApiClient.get("/support/unread")) {
             is ColituApiClient.ApiResult.Success -> Result.success(
-                result.data.get("data")?.takeIf { it.isJsonObject }?.asJsonObject?.get("unread")?.asInt ?: 0,
+                result.data.get("data")?.takeIf { it.isJsonObject }?.asJsonObject?.get("unread")
+                    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asInt?.coerceAtLeast(0) ?: 0,
             )
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
@@ -156,9 +157,19 @@ object ColituSupportRepository {
         }
     }.getOrNull()
 
-    /** The app can only read its own log lines; at most ~24 KB, credentials masked. */
+    /** Log tags of Colitu's own code; the Xray core and hev are left out of reports. */
+    private val LOG_TAGS = listOf(
+        com.v2ray.ang.AppConfig.TAG, "Colitu", "ColituApiClient", "ColituSecureStore", "ColituServerRepo", "ColituVpnRepo",
+    )
+
+    /**
+     * The app's own Colitu log lines only (the Xray core, whose warnings can
+     * name the sites a user visits, is filtered out by tag), at most ~24 KB,
+     * with credentials and IP addresses masked.
+     */
     private fun recentLog(maxChars: Int = 24_000): String? = runCatching {
-        val process = ProcessBuilder("logcat", "-d", "-t", "400", "-v", "time").redirectErrorStream(true).start()
+        val command = listOf("logcat", "-d", "-t", "400", "-v", "time") + LOG_TAGS.map { "$it:V" } + "*:S"
+        val process = ProcessBuilder(command).redirectErrorStream(true).start()
         val text = process.inputStream.bufferedReader().use { it.readText() }
         process.destroy()
         redact(text.takeLast(maxChars)).takeIf { it.isNotBlank() }
@@ -166,10 +177,17 @@ object ColituSupportRepository {
 
     private val shareLink = Regex("((?:vless|vmess|trojan|hysteria2|hy2|ss|tuic)://)[^@\\s/]+@", RegexOption.IGNORE_CASE)
     private val bearer = Regex("Bearer\\s+[A-Za-z0-9\\-_.=]+", RegexOption.IGNORE_CASE)
-    private val jsonSecret = Regex("(\"(?:password|uuid|token|access_token|refresh_token|private_key)\"\\s*:\\s*)\"[^\"]*\"", RegexOption.IGNORE_CASE)
+    private val jsonSecret = Regex(
+        "(\"(?:password|pass|user|uuid|id|auth|token|access_token|refresh_token|private_key|privateKey|public_key|publicKey|short_id|shortId)\"\\s*:\\s*)\"[^\"]*\"",
+        RegexOption.IGNORE_CASE,
+    )
+    private val ipv4 = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
+    private val ipv6 = Regex("\\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\\b", RegexOption.IGNORE_CASE)
 
     fun redact(text: String): String = text
         .replace(shareLink, "$1***@")
         .replace(bearer, "Bearer ***")
         .replace(jsonSecret, "$1\"***\"")
+        .replace(ipv4, "x.x.x.x")
+        .replace(ipv6, "x:x::x")
 }

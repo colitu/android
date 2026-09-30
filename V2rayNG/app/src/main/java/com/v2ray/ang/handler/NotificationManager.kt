@@ -16,7 +16,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.dto.ProfileItem
 import com.v2ray.ang.extension.toSpeedString
-import com.v2ray.ang.ui.MainActivity
+import com.v2ray.ang.colitu.ui.ColituMainActivity
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -107,7 +107,7 @@ object NotificationManager {
 
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
-        val startMainIntent = Intent(service, MainActivity::class.java)
+        val startMainIntent = Intent(service, ColituMainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val contentPendingIntent = PendingIntent.getActivity(service, NOTIFICATION_PENDING_INTENT_CONTENT, startMainIntent, flags)
 
         val stopV2RayIntent = Intent(AppConfig.BROADCAST_ACTION_SERVICE)

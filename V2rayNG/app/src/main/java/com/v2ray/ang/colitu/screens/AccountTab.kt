@@ -136,7 +136,7 @@ fun AccountTab(
                 ColituButton(if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
                 Spacer(Modifier.height(4.dp))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    ColituLinkButton(loc["account.manage"], { openWeb(context, "/account") }, icon = ColituIcons.ArrowUpRightSquare)
+                    ColituLinkButton(loc["account.manage"], { openUrl(context, ACCOUNT_URL) }, icon = ColituIcons.ArrowUpRightSquare)
                 }
             }
         }
@@ -262,10 +262,15 @@ fun AccountTab(
                 }
             },
         )
+        Spacer(Modifier.height(8.dp))
+        // The app is GPL-3.0; on a TV openUrl shows the link as a QR code.
+        ColituActionRow(ColituIcons.Code, loc["about.openSource"], loc["about.openSourceHint"], onClick = { openUrl(context, SOURCE_CODE_URL) })
         Spacer(Modifier.height(18.dp))
         ColituButton(loc["account.signOut"], onSignOut, kind = ColituButtonKind.Danger, icon = ColituIcons.SignOut)
         Spacer(Modifier.height(14.dp))
         CText(loc.format("brand.credit", "brand" to COMPANY_NAME), ColituText.small, Modifier.fillMaxWidth(), align = androidx.compose.ui.text.style.TextAlign.Center)
+        Spacer(Modifier.height(6.dp))
+        CText(loc["about.credits"], ColituText.small, Modifier.fillMaxWidth(), color = ColituColors.dim, align = androidx.compose.ui.text.style.TextAlign.Center)
     }
 
     removing?.let { device ->
@@ -281,7 +286,9 @@ fun AccountTab(
                     safeCall { ColituAccountRepository.disconnectDevice(device.id) }
                         .onSuccess {
                             if (device.current) {
-                                onSignOut()
+                                // This phone is no longer on the account: end the session
+                                // right away instead of asking "sign out?" first.
+                                c.onCurrentDeviceRemoved()
                             } else {
                                 c.showToast(loc["account.removed"], error = false)
                                 reload++

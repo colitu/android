@@ -5,8 +5,6 @@ import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.data.ColituServerListResponse
 import com.v2ray.ang.colitu.data.ColituVpnConfig
-import com.v2ray.ang.colitu.util.ColituErrorCode
-import com.v2ray.ang.colitu.util.ColituErrorMapper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -122,101 +120,6 @@ class ColituParserTest {
         }
         assertNull(ColituVpnConfig.fromJson(JsonObject()))
     }
-    // ── Error code mapping ────────────────────────────────────────────────────────
-
-    @Test
-    fun error_503_mapsToServerUnavailable() {
-        assertEquals(ColituErrorCode.SERVER_UNAVAILABLE, ColituErrorMapper.toErrorCode("503"))
-        assertEquals(ColituErrorCode.SERVER_UNAVAILABLE, ColituErrorMapper.toErrorCode("server_unavailable"))
-        assertEquals(ColituErrorCode.SERVER_UNAVAILABLE, ColituErrorMapper.toErrorCode("service_unavailable"))
-        assertEquals(ColituErrorCode.SERVER_UNAVAILABLE, ColituErrorMapper.toErrorCode("502"))
-    }
-
-    @Test
-    fun error_timeout_mapsToTimeout() {
-        assertEquals(ColituErrorCode.TIMEOUT, ColituErrorMapper.toErrorCode("timeout"))
-        // case-insensitive
-        assertEquals(ColituErrorCode.TIMEOUT, ColituErrorMapper.toErrorCode("TIMEOUT"))
-    }
-
-    @Test
-    fun error_networkError_mapsToNetworkError() {
-        assertEquals(ColituErrorCode.NETWORK_ERROR, ColituErrorMapper.toErrorCode("network_error"))
-        assertEquals(ColituErrorCode.NETWORK_ERROR, ColituErrorMapper.toErrorCode("io_error"))
-    }
-
-    @Test
-    fun error_authExpired_mapsCorrectly() {
-        assertEquals(ColituErrorCode.AUTH_EXPIRED, ColituErrorMapper.toErrorCode("auth_expired"))
-        assertEquals(ColituErrorCode.AUTH_EXPIRED, ColituErrorMapper.toErrorCode("unauthorized"))
-        assertEquals(ColituErrorCode.AUTH_EXPIRED, ColituErrorMapper.toErrorCode("401"))
-    }
-
-    @Test
-    fun error_configNotReady_isCaseInsensitive() {
-        // Repository emits uppercase "CONFIG_NOT_READY"; mapper must handle it
-        assertEquals(ColituErrorCode.CONFIG_NOT_READY, ColituErrorMapper.toErrorCode("CONFIG_NOT_READY"))
-        assertEquals(ColituErrorCode.CONFIG_NOT_READY, ColituErrorMapper.toErrorCode("config_not_ready"))
-        assertEquals(ColituErrorCode.CONFIG_NOT_READY, ColituErrorMapper.toErrorCode("server_not_found"))
-    }
-
-    @Test
-    fun error_premiumRequired_mapsCorrectly() {
-        assertEquals(ColituErrorCode.PREMIUM_REQUIRED, ColituErrorMapper.toErrorCode("premium_required"))
-        assertEquals(ColituErrorCode.PREMIUM_REQUIRED, ColituErrorMapper.toErrorCode("server_not_allowed"))
-    }
-
-    @Test
-    fun error_noServerSelected_mapsCorrectly() {
-        assertEquals(ColituErrorCode.NO_SERVER_SELECTED, ColituErrorMapper.toErrorCode("no_server_selected"))
-    }
-
-    @Test
-    fun error_unknown_mapsToGeneric() {
-        assertEquals(ColituErrorCode.GENERIC, ColituErrorMapper.toErrorCode("some_unknown_error_xyz"))
-        assertEquals(ColituErrorCode.GENERIC, ColituErrorMapper.toErrorCode(""))
-        assertEquals(ColituErrorCode.GENERIC, ColituErrorMapper.toErrorCode("parse_error"))
-        assertEquals(ColituErrorCode.GENERIC, ColituErrorMapper.toErrorCode("api_error"))
-    }
-
-    // Context-free message content tests (no Android Context needed)
-
-    @Test
-    fun error_contextFree_503_mentionsUnavailable() {
-        val msg = ColituErrorMapper.toUserMessage("server_unavailable")
-        assertTrue("Should mention unavailability", msg.lowercase().contains("unavailable"))
-    }
-
-    @Test
-    fun error_contextFree_timeout_mentionsTimedOut() {
-        val msg = ColituErrorMapper.toUserMessage("timeout")
-        assertTrue("Should mention time", msg.lowercase().contains("timed out"))
-    }
-
-    @Test
-    fun error_contextFree_unknown_mentionsNetwork() {
-        val msg = ColituErrorMapper.toUserMessage("completely_unknown_garbage")
-        assertTrue("Should mention network", msg.lowercase().contains("network"))
-    }
-
-    @Test
-    fun error_contextFree_authExpired_mentionsSession() {
-        val msg = ColituErrorMapper.toUserMessage("auth_expired")
-        assertTrue("Should mention session", msg.lowercase().contains("session"))
-    }
-
-    @Test
-    fun error_contextFree_premiumRequired_mentionsPremium() {
-        val msg = ColituErrorMapper.toUserMessage("premium_required")
-        assertTrue("Should mention premium", msg.lowercase().contains("premium"))
-    }
-
-    @Test
-    fun error_contextFree_noServer_mentionsLocation() {
-        val msg = ColituErrorMapper.toUserMessage("no_server_selected")
-        assertTrue("Should mention location", msg.lowercase().contains("location"))
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
 }

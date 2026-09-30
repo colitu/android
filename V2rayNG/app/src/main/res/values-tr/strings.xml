@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_action_stop_v2ray">Bağlantıyı kes</string>
+    <string name="title_service_restart">Yeniden bağlan</string>
+    <string name="colitu_shortcut_connect">Bağlan</string>
+    <string name="colitu_shortcut_disconnect">Bağlantıyı kes</string>
+</resources>

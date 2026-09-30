@@ -1,21 +1,28 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# R8 rules for the Colitu release build.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Readable stack traces in Play vitals, without shipping source file names.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Xray core (gomobile): Go calls into these Java classes by name.
+-keep class go.** { *; }
+-keep class libv2ray.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# hev-socks5-tunnel registers its JNI methods on this class by name.
+-keep class com.v2ray.ang.service.TProxyService {
+    native <methods>;
+    *;
+}
+
+# Profiles, subscriptions and the Xray config model are (de)serialised with
+# Gson by field name and stored in MMKV; renaming a field would lose data.
+-keep class com.v2ray.ang.dto.** { *; }
+-keep class com.v2ray.ang.enums.** { *; }
+-keepclassmembers enum * { *; }
+
+# Gson generic types (TypeToken) need the Signature attribute.
+-keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+-dontwarn sun.misc.**

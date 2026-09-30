@@ -27,13 +27,22 @@ import kotlin.coroutines.coroutineContext
 
 /**
  * Updates the sideloaded app from colitu.com: reads
- * https://colitu.com/downloads/android/latest.json, downloads the APK for
- * this phone's CPU, checks its SHA-256 and that it is signed with the same
- * key as the installed app, then hands it to Android's package installer.
+ * https://colitu.com/downloads/android/latest.json, checks the manifest's
+ * release signature ([ColituUpdateSignature]), downloads the APK for this
+ * phone's CPU, checks its SHA-256 and that it is signed with the same key as
+ * the installed app, then hands it to Android's package installer.
+ *
+ * Only the "direct" build (the APK on colitu.com) has this; Google Play and
+ * F-Droid do not allow apps that install their own updates.
  */
 object ColituUpdater {
     private val MANIFEST_URL = com.v2ray.ang.BuildConfig.COLITU_UPDATE_MANIFEST_URL
     private const val TRUSTED_HOST = "colitu.com"
+    /** No Colitu APK comes near this; a bigger download is cut off. */
+    private const val MAX_APK_BYTES = 250L * 1024 * 1024
+    private const val MAX_MANIFEST_BYTES = 64 * 1024
+
+    val enabled: Boolean get() = com.v2ray.ang.BuildConfig.COLITU_SELF_UPDATE
 
     /** The release the update dialog is showing; null hides it. */
     var offered by mutableStateOf<Update?>(null)
@@ -49,8 +58,13 @@ object ColituUpdater {
 
     /** The newer release on colitu.com, or null when this build is current or the check failed. */
     suspend fun check(context: Context): Update? = withContext(Dispatchers.IO) {
+        if (!enabled) return@withContext null
         runCatching {
             val json = JsonParser.parseString(fetchText("$MANIFEST_URL?t=${System.currentTimeMillis() / 60000}")).asJsonObject
+            if (!ColituUpdateSignature.verify(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })) {
+                LogUtil.w(AppConfig.TAG, "Colitu update manifest is not signed by the release key; ignored")
+                return@runCatching null
+            }
             val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
             if (remoteCode <= installedVersionCode(context)) return@runCatching null
             val variant = pickVariant(json)
@@ -72,8 +86,8 @@ object ColituUpdater {
     /** Downloads and verifies the APK; [onProgress] gets 0..1. */
     suspend fun download(context: Context, update: Update, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-        dir.listFiles()?.forEach { if (!it.name.contains(update.versionName)) it.delete() }
-        val target = File(dir, "Colitu-${update.versionName}.apk")
+        val target = File(dir, "Colitu-${update.versionCode}.apk")
+        dir.listFiles()?.forEach { if (it.name != target.name) it.delete() }
         if (target.exists() && sha256(target) == update.sha256) return@withContext target.also { onProgress(1f) }
 
         val partial = File(dir, target.name + ".part")
@@ -85,6 +99,9 @@ object ColituUpdater {
         try {
             if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
             val total = connection.contentLengthLong.takeIf { it > 0 } ?: update.sizeBytes
+            // The manifest's size (plus slack) bounds the download; without it a hard cap.
+            val limit = update.sizeBytes.takeIf { it > 0 }?.let { it + it / 20 + 1024 }?.coerceAtMost(MAX_APK_BYTES) ?: MAX_APK_BYTES
+            if (total > limit) error("download too large")
             val digest = MessageDigest.getInstance("SHA-256")
             connection.inputStream.use { input ->
                 partial.outputStream().use { output ->
@@ -97,6 +114,7 @@ object ColituUpdater {
                         output.write(buffer, 0, read)
                         digest.update(buffer, 0, read)
                         done += read
+                        if (done > limit) error("download too large")
                         if (total > 0) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
                     }
                 }
@@ -111,8 +129,14 @@ object ColituUpdater {
                 error("signature mismatch")
             }
             target.delete()
-            partial.renameTo(target)
+            if (!partial.renameTo(target)) {
+                partial.delete()
+                error("could not store the update")
+            }
             target
+        } catch (e: Exception) {
+            partial.delete()
+            throw e
         } finally {
             connection.disconnect()
         }
@@ -165,7 +189,18 @@ object ColituUpdater {
         }
         try {
             if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
-            return connection.inputStream.bufferedReader().use { it.readText() }
+            val bytes = connection.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    out.write(buffer, 0, read)
+                    if (out.size() > MAX_MANIFEST_BYTES) error("manifest too large")
+                }
+                out.toByteArray()
+            }
+            return String(bytes, Charsets.UTF_8)
         } finally {
             connection.disconnect()
         }

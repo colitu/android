@@ -252,7 +252,6 @@ object SettingsManager {
      * it creates a new default subscription to ensure that ungroup
      **/
     fun removeSubscriptionWithDefault(subid: String) {
-        SubscriptionUpdater.cancelOne(subId = subid)
         // Remove the subscription
         removeSubscription(subid)
 
@@ -507,7 +506,6 @@ object SettingsManager {
         ensureDefaultValue(AppConfig.PREF_REMOTE_DNS, AppConfig.DNS_PROXY)
         ensureDefaultValue(AppConfig.PREF_DOMESTIC_DNS, AppConfig.DNS_DIRECT)
         ensureDefaultValue(AppConfig.PREF_DELAY_TEST_URL, AppConfig.DELAY_TEST_URL)
-        ensureDefaultValue(AppConfig.PREF_IP_API_URL, AppConfig.IP_API_URL)
         ensureDefaultValue(AppConfig.PREF_HEV_TUNNEL_RW_TIMEOUT, AppConfig.HEVTUN_RW_TIMEOUT)
         ensureDefaultValue(AppConfig.PREF_MUX_CONCURRENCY, "8")
         ensureDefaultValue(AppConfig.PREF_MUX_XUDP_CONCURRENCY, "8")

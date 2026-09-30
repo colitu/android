@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the verified update APKs are shared with the package installer. -->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

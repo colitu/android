@@ -56,9 +56,12 @@ private sealed interface Step {
 /**
  * Checks colitu.com once per app start. When a newer build is out it asks
  * whether to update now; a release marked forceUpdate cannot be postponed.
+ * Only the colitu.com build updates itself; Play and F-Droid builds are
+ * updated by their store.
  */
 @Composable
 fun ColituUpdatePrompt() {
+    if (!ColituUpdater.enabled) return
     val context = LocalContext.current
     LaunchedEffect(Unit) { ColituUpdater.check(context.applicationContext)?.let { ColituUpdater.offered = it } }
     ColituUpdater.offered?.let { update ->

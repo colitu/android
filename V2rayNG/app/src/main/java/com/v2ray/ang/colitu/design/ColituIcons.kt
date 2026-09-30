@@ -656,6 +656,19 @@ object ColituIcons {
         }
     }
 
+    val Code = icon("code") {
+        stroke(2f) {
+            moveTo(8f, 7f)
+            lineTo(3f, 12f)
+            lineTo(8f, 17f)
+            moveTo(16f, 7f)
+            lineTo(21f, 12f)
+            lineTo(16f, 17f)
+            moveTo(13.5f, 4.5f)
+            lineTo(10.5f, 19.5f)
+        }
+    }
+
     val Book = icon("book") {
         stroke {
             moveTo(4f, 5.5f)

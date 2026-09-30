@@ -48,8 +48,14 @@ import com.v2ray.ang.colitu.design.colituGlow
 import com.v2ray.ang.colitu.design.pressable
 
 const val WEB_BASE_URL = "https://colitu.com"
+
+/** Customer account: plans, renewals and devices are managed there, never in the app. */
+const val ACCOUNT_URL = "https://app.colitu.com"
 const val SUPPORT_EMAIL = "support@colitu.com"
 const val COMPANY_NAME = "Avenlith"
+
+/** The app is published under GPL-3.0; shown under About. */
+const val SOURCE_CODE_URL = "https://github.com/cyberlexs/colitu-android"
 
 /**
  * Shared scroll container for the tabs: page padding plus room for the

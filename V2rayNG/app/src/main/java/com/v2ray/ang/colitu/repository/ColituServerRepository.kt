@@ -18,19 +18,12 @@ object ColituServerRepository {
     private const val TAG = "ColituServerRepo"
     private const val STORE_ID = "COLITU_SERVERS"
     private const val KEY_SELECTED_SERVER = "selected_server_id"
-    private const val KEY_AUTO_CONNECT_SERVER = "auto_connect_server_id"
     private const val KEY_CONFIG_ETAG = "config_etag"
 
     private val store by lazy { MMKV.mmkvWithID(STORE_ID, MMKV.MULTI_PROCESS_MODE) }
 
     fun getSelectedServerId(): String? = store.decodeString(KEY_SELECTED_SERVER)
     fun setSelectedServerId(id: String) = store.encode(KEY_SELECTED_SERVER, id)
-    fun requestAutoConnect(serverId: String) = store.encode(KEY_AUTO_CONNECT_SERVER, serverId)
-    fun consumeAutoConnectServerId(): String? {
-        val serverId = store.decodeString(KEY_AUTO_CONNECT_SERVER)
-        if (!serverId.isNullOrBlank()) store.removeValueForKey(KEY_AUTO_CONNECT_SERVER)
-        return serverId
-    }
 
     // ── Servers ──────────────────────────────────────────────────────────────────
 
@@ -55,11 +48,6 @@ object ColituServerRepository {
         ColituServerListResponse.fromJson(json)
 
     // ── Config ───────────────────────────────────────────────────────────────────
-
-    suspend fun fetchConfig(serverId: String): Result<ColituVpnConfig> =
-        fetchConfigEnvelope().mapCatching { envelope ->
-            ColituVpnConfig.fromJson(envelope) ?: throw Exception("parse_error")
-        }
 
     /**
      * Every transport the panel offers for the preferred server (primary
@@ -160,35 +148,20 @@ object ColituServerRepository {
         return envelope.takeIf { ColituVpnConfig.fromJson(it) != null }
     }
 
-    /** GET /me/usage — authoritative usage and subscription summary */
-    suspend fun fetchVpnStats(): Result<JsonObject> = withContext(Dispatchers.IO) {
-        when (val result = ColituApiClient.get("/me/usage")) {
-            is ColituApiClient.ApiResult.Success -> Result.success(result.data)
-            is ColituApiClient.ApiResult.Error -> {
-                if (result.isAuthError) Result.failure(Exception("auth_expired"))
-                else Result.failure(Exception(result.message))
+    /**
+     * Makes [serverId] the preferred node; GET /config then answers with
+     * that node's profile. (The old follow-up POST /config/refresh with
+     * revision 0 only made the panel render the whole config a second time.)
+     */
+    suspend fun selectServer(serverId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val body = JsonObject().apply { addProperty("preferred_node_id", serverId) }
+        when (val saved = ColituApiClient.put("/me/preferences", body)) {
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(if (saved.isAuthError) "auth_expired" else saved.message))
+            is ColituApiClient.ApiResult.Success -> {
+                // The cached profile belongs to the previous node.
+                store.removeValueForKey(KEY_CONFIG_ETAG)
+                Result.success(Unit)
             }
-        }
-    }
-
-    // ── JsonObject helpers ───────────────────────────────────────────────────────
-
-    private fun JsonObject.tryInt(key: String): Int? =
-        if (has(key) && !get(key).isJsonNull && get(key).isJsonPrimitive)
-            try { get(key).asInt } catch (_: Exception) { null }
-        else null
-
-    private fun JsonObject.tryString(key: String): String? =
-        if (has(key) && !get(key).isJsonNull && get(key).isJsonPrimitive)
-            get(key).asString.takeIf { it.isNotBlank() }
-        else null
-
-    suspend fun selectServer(serverId:String):Result<Unit> = withContext(Dispatchers.IO) {
-        val body=JsonObject().apply{addProperty("preferred_node_id",serverId)}
-        when(val saved=ColituApiClient.put("/me/preferences",body)){
-            is ColituApiClient.ApiResult.Error->Result.failure(Exception(saved.message))
-            is ColituApiClient.ApiResult.Success->when(val refreshed=ColituApiClient.post("/config/refresh",JsonObject().apply{addProperty("current_revision",0)})){
-                is ColituApiClient.ApiResult.Error->Result.failure(Exception(refreshed.message));is ColituApiClient.ApiResult.Success->Result.success(Unit)}
         }
     }
 }

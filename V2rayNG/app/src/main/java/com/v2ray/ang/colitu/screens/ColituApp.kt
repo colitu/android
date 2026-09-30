@@ -148,8 +148,8 @@ fun ColituApp(controller: ColituController) {
 private val EaseOut = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
 
 /**
- * Signed-in shell: floating pill navigation over four pages (home,
- * locations, plan, account with settings) sharing one controller.
+ * Signed-in shell: floating pill navigation over five pages (home,
+ * locations, plan, support, account with settings) sharing one controller.
  */
 @Composable
 private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> Unit, onHowItWorks: () -> Unit) {
@@ -198,10 +198,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     onOpenPlan = { tab = ColituTab.Plan },
                 )
                 ColituTab.Locations -> LocationsTab(c, onOpenPlan = { tab = ColituTab.Plan })
-                ColituTab.Plan -> PlanTab(c, onConnect = {
-                    tab = ColituTab.Home
-                    if (!c.connected) toggle()
-                })
+                ColituTab.Plan -> PlanTab(c)
                 ColituTab.Support -> SupportTab(c)
                 ColituTab.Account -> AccountTab(
                     c,

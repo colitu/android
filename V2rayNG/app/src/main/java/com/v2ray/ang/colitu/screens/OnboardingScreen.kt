@@ -9,7 +9,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -153,7 +152,7 @@ private fun Slide(index: Int) {
 /** Globe with a few country flags orbiting it (the "pick a location" slide). */
 @Composable
 private fun FlagsHero() {
-    BoxWithConstraints(Modifier.size(250.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(250.dp), contentAlignment = Alignment.Center) {
         ColituParticles(mode = ParticleMode.Sphere, size = 250.dp, energy = 0.45f)
         val half = (250 - 40) / 2f
         listOf(

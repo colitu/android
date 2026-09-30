@@ -50,6 +50,67 @@ class XrayMobileAdapterTest {
         XrayMobileAdapter.render(envelope().apply { addProperty("revision", 0) }, now)
     }
 
+    @Test
+    fun acceptsUnsignedRevisionAboveLongMax() {
+        // The panel sends the first 8 bytes of a SHA-256 as uint64; half of
+        // all revisions are above Long.MAX_VALUE and used to be rejected.
+        val source = JsonParser.parseString(
+            envelope().toString().replace("\"revision\":42", "\"revision\":13345678901234567890"),
+        ).asJsonObject
+        val result = XrayMobileAdapter.render(source, now)
+        assertTrue(result.revision != 0L)
+        assertEquals("13345678901234567890", java.lang.Long.toUnsignedString(result.revision))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsRevisionWiderThan64Bits() {
+        XrayMobileAdapter.render(
+            JsonParser.parseString(envelope().toString().replace("\"revision\":42", "\"revision\":18446744073709551616")).asJsonObject,
+            now,
+        )
+    }
+
+    @Test
+    fun localSocksInboundAlwaysRequiresTheSessionAccount() {
+        val raw = requireNotNull(XrayMobileAdapter.render(envelope(), now).rawConfig)
+        val placeholder = JsonParser.parseString(raw).asJsonObject.getAsJsonArray("inbounds")[0].asJsonObject
+        assertEquals("password", placeholder.getAsJsonObject("settings").get("auth").asString)
+        assertEquals("127.0.0.1", placeholder.get("listen").asString)
+
+        val proxy = com.v2ray.ang.colitu.api.LocalProxy(34567, "user-a", "secret-b")
+        val runtime = JsonParser.parseString(XrayMobileAdapter.withLocalProxy(raw, proxy)).asJsonObject
+        val inbounds = runtime.getAsJsonArray("inbounds")
+        assertEquals(1, inbounds.size())
+        val socks = inbounds[0].asJsonObject
+        assertEquals(34567, socks.get("port").asInt)
+        val settings = socks.getAsJsonObject("settings")
+        assertEquals("password", settings.get("auth").asString)
+        val account = settings.getAsJsonArray("accounts")[0].asJsonObject
+        assertEquals("user-a", account.get("user").asString)
+        assertEquals("secret-b", account.get("pass").asString)
+    }
+
+    @Test
+    fun runtimeHasNoAccessLog() {
+        val log = JsonParser.parseString(XrayMobileAdapter.render(envelope(), now).rawConfig).asJsonObject.getAsJsonObject("log")
+        assertEquals("none", log.get("access").asString)
+    }
+
+    @Test
+    fun visionFlowOnlyOnRawTcp() {
+        val tcp = JsonParser.parseString(XrayMobileAdapter.render(envelope(), now).rawConfig).asJsonObject
+        val tcpUser = tcp.getAsJsonArray("outbounds")[0].asJsonObject.getAsJsonObject("settings")
+            .getAsJsonArray("vnext")[0].asJsonObject.getAsJsonArray("users")[0].asJsonObject
+        assertEquals("xtls-rprx-vision", tcpUser.get("flow").asString)
+
+        val source = envelope()
+        source.getAsJsonObject("profile").getAsJsonObject("payload").getAsJsonObject("transport").addProperty("type", "grpc")
+        val grpc = JsonParser.parseString(XrayMobileAdapter.render(source, now).rawConfig).asJsonObject
+        val grpcUser = grpc.getAsJsonArray("outbounds")[0].asJsonObject.getAsJsonObject("settings")
+            .getAsJsonArray("vnext")[0].asJsonObject.getAsJsonArray("users")[0].asJsonObject
+        assertFalse(grpcUser.has("flow"))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsInvertedLifetime() {
         XrayMobileAdapter.render(envelope().apply { addProperty("expires_at", "2026-09-14T00:00:00Z") }, now)

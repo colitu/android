@@ -13,6 +13,11 @@ object ColituTokenManager {
     private const val KEY_DEVICE_ID = "backend_device_id"
     private const val KEY_PENDING_EMAIL = "pending_verification_email"
 
+    /** COLITU_SETTINGS keys that belong to the signed-in account. */
+    private val ACCOUNT_SETTINGS = setOf(
+        "synced_server", "stalled_transport", "last_transport", "connected_server", "auto_connect", "auto_selection",
+    )
+
     fun getAccessToken(): String? = ColituSecureStore.get(KEY_ACCESS_TOKEN)
     fun getRefreshToken(): String? = ColituSecureStore.get(KEY_REFRESH_TOKEN)
     fun getUserId(): String? = ColituSecureStore.get(KEY_USER_ID)
@@ -57,8 +62,18 @@ object ColituTokenManager {
         if (email.isNullOrBlank()) ColituSecureStore.remove(KEY_PENDING_EMAIL) else ColituSecureStore.put(KEY_PENDING_EMAIL, email)
     }
 
+    /**
+     * Ends the session on this device: stops the tunnel, forgets the tokens,
+     * the Colitu profile and everything that belonged to this account, so
+     * the next account starts clean (no synced server, remembered transports
+     * or auto-connect of the previous one, no quick start from the tile).
+     */
     fun clear() {
         com.v2ray.ang.core.CoreServiceManager.stopVService(com.v2ray.ang.AngApplication.application)
+        com.v2ray.ang.colitu.app.ColituQuickStart.revoke()
+        val settings = com.tencent.mmkv.MMKV.mmkvWithID("COLITU_SETTINGS", com.tencent.mmkv.MMKV.MULTI_PROCESS_MODE)
+        settings.allKeys()?.filter { key -> ACCOUNT_SETTINGS.any { key == it || key.startsWith("good_transport_") } }
+            ?.let { settings.removeValuesForKeys(it.toTypedArray()) }
         com.v2ray.ang.handler.MmkvManager.decodeSubscriptions()
             .filter { it.subscription.remarks == "Colitu" }
             .forEach { com.v2ray.ang.handler.MmkvManager.removeSubscription(it.guid) }

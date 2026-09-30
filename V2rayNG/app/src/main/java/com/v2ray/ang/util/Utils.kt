@@ -537,15 +537,14 @@ object Utils {
     }
 
     /**
-     * Get the receiver flags based on the Android version.
-     *
-     * @return The receiver flags.
+     * Flags for the app's internal message receivers. They are never
+     * exported: the UI and the VPN process share this app's UID, so they
+     * still reach each other, while other apps can no longer stop the tunnel
+     * or fake a "connected" state. Below Android 13 ContextCompat guards the
+     * receiver with the app's signature-level DYNAMIC_RECEIVER_NOT_EXPORTED
+     * permission.
      */
-    fun receiverFlags(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.RECEIVER_EXPORTED
-    } else {
-        ContextCompat.RECEIVER_NOT_EXPORTED
-    }
+    fun receiverFlags(): Int = ContextCompat.RECEIVER_NOT_EXPORTED
 
     /**
      * Check if the package is Xray.

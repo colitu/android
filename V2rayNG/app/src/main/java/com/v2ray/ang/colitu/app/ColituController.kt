@@ -129,9 +129,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private var pendingStart: CompletableDeferred<String?>? = null
     private var pendingStop: CompletableDeferred<Unit>? = null
     private var pendingVerify: CompletableDeferred<Long>? = null
+    /** Id of the running tunnel check; answers to an older check are ignored. */
+    private var verifyId = 0L
     private var receiverRegistered = false
     private var initialized = false
     private var userStopped = false
+    /** The user cancelled while the service was still starting. */
+    private var cancelledStart = false
     private var updateHintShown = false
 
     /** The tunnel process reports running (it lives in another process). */
@@ -224,7 +228,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** Updates the unread badge; a new reply shows a toast unless support is open. */
     suspend fun checkSupport() {
         if (!ColituTokenManager.isLoggedIn()) return
-        ColituSupportRepository.unread()
+        safeCall { ColituSupportRepository.unread() }
             .onSuccess { unread ->
                 supportAvailable = true
                 if (supportChecked && unread > supportUnread && !supportOpen) {
@@ -290,6 +294,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             if (previous != null) error = null
             return
         }
+        // The tile, widget and shortcuts may no longer start the tunnel.
+        ColituQuickStart.revoke()
         if (connected || status == VpnStatus.Connecting) {
             connectJob?.cancel()
             stopService()
@@ -345,6 +351,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         connectJob?.cancel()
         verifyJob?.cancel()
         userStopped = false
+        cancelledStart = false
         connectJob = viewModelScope.launch { runConnect(fresh) }
     }
 
@@ -366,9 +373,23 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         val synced = store.decodeString(KEY_SYNCED_SERVER) == server.id
         if (!synced) {
-            safeCall { ColituServerRepository.selectServer(server.id) }.onSuccess { store.encode(KEY_SYNCED_SERVER, server.id) }
+            // Without the new preference the panel would hand out the previous
+            // node's profile while the app shows this one, so a failed switch
+            // stops here instead of connecting somewhere else.
+            val switched = safeCall { ColituServerRepository.selectServer(server.id) }
+            switched.exceptionOrNull()?.let {
+                if (it.message == "auth_expired") endSession(ColituLoc["auth.expired"])
+                fail(it.message)
+                return
+            }
+            store.encode(KEY_SYNCED_SERVER, server.id)
         }
-        if (serviceUp) stopService()
+        if (serviceUp) {
+            stopService(force = true)
+            // Probes started while the old tunnel was still closing all failed
+            // at once on a real phone (EOF within 300 ms); let it settle first.
+            delay(TEARDOWN_SETTLE_MS)
+        }
 
         val cached = if (fresh || !synced) null else ColituServerRepository.cachedConfigCandidates(server.id)
         if (cached != null) {
@@ -446,13 +467,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 stopService(force = true)
                 continue
             }
-            onConnected(server, config.protocolType)
+            val actual = servers.firstOrNull { it.id == config.serverId } ?: server
+            onConnected(actual, config, guid)
             LogUtil.w(
                 AppConfig.TAG,
                 "Colitu: connected via ${config.protocolType} in ${android.os.SystemClock.elapsedRealtime() - begin} ms (cached profile: $fromCache)",
             )
             verifyJob?.cancel()
-            verifyJob = viewModelScope.launch { verifyAfterConnect(server, config, fromCache, recover) }
+            verifyJob = viewModelScope.launch { verifyAfterConnect(actual, config, fromCache, recover) }
             return true
         }
         return false
@@ -484,9 +506,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun onConnected(server: ColituServer, protocol: String?) {
+    private fun onConnected(server: ColituServer, config: ColituVpnConfig, guid: String) {
+        val protocol = config.protocolType
         transport = protocol
         store.encode(KEY_LAST_TRANSPORT, protocol)
+        // The tile, widget and Always-on may restart exactly this profile
+        // until the panel's offline grace for it ends.
+        config.offlineGraceUntil?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+            ?.let { ColituQuickStart.allow(guid, it, ColituClock.skewMs) }
         connectedServerId = server.id
         store.encode(KEY_CONNECTED_SERVER, server.id)
         connectedAt = store.decodeLong(AppConfig.PREF_COLITU_CONNECTED_AT, 0L).takeIf { it > 0 } ?: System.currentTimeMillis()
@@ -567,19 +594,25 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** Real request through the running tunnel; the delay in ms or -1. */
     private suspend fun verifyTunnel(): Long {
         val result = CompletableDeferred<Long>().also { pendingVerify = it }
-        MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_COLITU_VERIFY, "")
+        val id = ++verifyId
+        MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_COLITU_VERIFY, id.toString())
         val delayMs = withTimeoutOrNull(VERIFY_TIMEOUT_MS) { result.await() } ?: -1L
         pendingVerify = null
         return delayMs
     }
 
     fun disconnect() {
+        // While connecting the service may already be starting although it
+        // has not reported "running" yet; stop it regardless.
+        val starting = status == VpnStatus.Connecting || pendingStart != null
         connectJob?.cancel()
         verifyJob?.cancel()
+        pendingStart = null
         userStopped = true
+        if (starting) cancelledStart = true
         viewModelScope.launch {
             status = VpnStatus.Disconnecting
-            stopService()
+            stopService(force = starting)
             status = VpnStatus.Disconnected
             phase = ConnectPhase.Idle
             showToast(ColituLoc["info.disconnected"], error = false)
@@ -659,29 +692,48 @@ class ColituController(application: Application) : AndroidViewModel(application)
         error = null
     }
 
-    fun signOut() {
+    fun signOut() = finishSession(message = null, notifyServer = true)
+
+    /** This phone was removed from the account on the devices list. */
+    fun onCurrentDeviceRemoved() = finishSession(message = null, notifyServer = false)
+
+    private fun endSession(message: String?) = finishSession(message, notifyServer = false)
+
+    /**
+     * Stops the tunnel, drops the tokens and everything tied to the account
+     * (ColituTokenManager.clear) and resets this controller, so the next
+     * sign-in starts from a clean state.
+     */
+    private fun finishSession(message: String?, notifyServer: Boolean) {
         viewModelScope.launch {
             connectJob?.cancel()
-            stopService()
+            verifyJob?.cancel()
+            userStopped = true
+            stopService(force = serviceUp || status != VpnStatus.Disconnected)
             status = VpnStatus.Disconnected
-            runCatching { ColituAuthRepository.logout() }
-            store.removeValueForKey(KEY_SYNCED_SERVER)
-            supportUnread = 0
-            supportChecked = false
-            _sessionEnded.tryEmit(null)
+            phase = ConnectPhase.Idle
+            if (notifyServer) runCatching { ColituAuthRepository.logout() }
+            ColituTokenManager.clear()
+            resetAccountState()
+            _sessionEnded.tryEmit(message)
         }
     }
 
-    private fun endSession(message: String?) {
-        viewModelScope.launch {
-            connectJob?.cancel()
-            stopService()
-            status = VpnStatus.Disconnected
-            ColituTokenManager.clear()
-            supportUnread = 0
-            supportChecked = false
-            _sessionEnded.tryEmit(message)
-        }
+    private fun resetAccountState() {
+        servers = emptyList()
+        user = null
+        subscription = null
+        denial = null
+        error = null
+        transport = null
+        autoSelection = true
+        autoConnect = false
+        selectedServerId = null
+        supportUnread = 0
+        supportChecked = false
+        supportAvailable = true
+        loading = true
+        updateHintShown = false
     }
 
     // ── Service messages ───────────────────────────────────────────────────
@@ -710,7 +762,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 AppConfig.MSG_STATE_START_SUCCESS -> {
                     serviceUp = true
                     pendingStart?.complete("")
-                    if (status == VpnStatus.Disconnected && connectJob?.isActive != true) {
+                    if (cancelledStart) {
+                        cancelledStart = false
+                        // Cancelled while it was starting: the stop is already on its way.
+                        viewModelScope.launch { stopService(force = true) }
+                    } else if (status == VpnStatus.Disconnected && connectJob?.isActive != true) {
                         connectedAt = System.currentTimeMillis()
                         status = VpnStatus.Connected
                     }
@@ -733,7 +789,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         downloadBps = parts[1].toDoubleOrNull() ?: 0.0
                     }
                 }
-                AppConfig.MSG_COLITU_VERIFY_RESULT -> pendingVerify?.complete(content.toLongOrNull() ?: -1L)
+                AppConfig.MSG_COLITU_VERIFY_RESULT -> {
+                    // "<id>,<delay>": a late answer for a previous connection
+                    // must not decide about the current one.
+                    val (id, delayMs) = content.split(',').let { it.getOrNull(0)?.toLongOrNull() to it.getOrNull(1)?.toLongOrNull() }
+                    if (id == verifyId) pendingVerify?.complete(delayMs ?: -1L)
+                }
             }
         }
     }
@@ -783,6 +844,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val VERIFY_TIMEOUT_MS = 12_000L
         private const val PROBE_TIMEOUT_MS = 4_500L
+        private const val TEARDOWN_SETTLE_MS = 1_200L
     }
 }
 
@@ -808,9 +870,24 @@ fun planStatusOf(user: ColituUser?, subscription: ColituSubscription?): String {
         else -> "inactive"
     }
     val expires = (user?.expiresAt ?: subscription?.expiresAt)?.let { runCatching { Instant.parse(it) }.getOrNull() }
-    if ((status == "active" || status == "trialing") && expires != null && expires.isBefore(Instant.now())) return "expired"
+    // Server time: TV sticks without a clock battery often run days off.
+    if ((status == "active" || status == "trialing") && expires != null && expires.isBefore(ColituClock.now())) return "expired"
     return status
 }
+
+/** Plans further out than this are shown as "no expiry", like on iOS. */
+private const val LIFETIME_DAYS = 3650L
+
+/** Short form for one-line rows: "211 days left" or "No expiry". */
+fun planLeftOf(expires: Instant): String {
+    val left = java.time.Duration.between(ColituClock.now(), expires)
+    if (left.toDays() > LIFETIME_DAYS) return ColituLoc["plan.lifetime"]
+    return ColituLoc.format("plan.left", "left" to leftText(left))
+}
+
+private fun leftText(left: java.time.Duration): String =
+    if (left.toDays() >= 1) ColituLoc.count("day", left.toDays().toInt())
+    else ColituLoc.count("hour", left.toHours().toInt().coerceAtLeast(1))
 
 fun planNameOf(user: ColituUser?, subscription: ColituSubscription?): String {
     return when (planStatusOf(user, subscription)) {
@@ -823,8 +900,7 @@ fun planNameOf(user: ColituUser?, subscription: ColituSubscription?): String {
 }
 
 fun planDetailOf(expires: Instant): String {
-    val left = java.time.Duration.between(Instant.now(), expires)
-    val leftText = if (left.toDays() >= 1) ColituLoc.count("day", left.toDays().toInt())
-    else ColituLoc.count("hour", left.toHours().toInt().coerceAtLeast(1))
-    return "${ColituLoc.format("plan.until", "date" to ColituLoc.date(expires))} · ${ColituLoc.format("plan.left", "left" to leftText)}"
+    val left = java.time.Duration.between(ColituClock.now(), expires)
+    if (left.toDays() > LIFETIME_DAYS) return ColituLoc["plan.lifetime"]
+    return "${ColituLoc.format("plan.until", "date" to ColituLoc.date(expires))} · ${ColituLoc.format("plan.left", "left" to leftText(left))}"
 }

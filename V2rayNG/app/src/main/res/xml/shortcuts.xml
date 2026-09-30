@@ -1,31 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher shortcuts. Both go through ColituShortcutActivity, which only
+     starts the tunnel with a valid Colitu profile and opens the app otherwise. -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
         android:enabled="true"
         android:icon="@drawable/ic_qu_start_24dp"
-        android:shortcutDisabledMessage="@string/toast_services_start"
-        android:shortcutId="shortcuts_start"
-        android:shortcutLongLabel="@string/toast_services_start"
-        android:shortcutShortLabel="@string/toast_services_start">
-
+        android:shortcutDisabledMessage="@string/colitu_shortcut_connect"
+        android:shortcutId="colitu_connect"
+        android:shortcutLongLabel="@string/colitu_shortcut_connect"
+        android:shortcutShortLabel="@string/colitu_shortcut_connect">
         <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.v2ray.ang.ui.ScStartActivity"
+            android:action="com.colitulu.shortcut.START"
+            android:targetClass="com.v2ray.ang.colitu.ui.ColituShortcutActivity"
             android:targetPackage="com.colitulu" />
-        <categories android:name="android.shortcut.conversation" />
     </shortcut>
     <shortcut
         android:enabled="true"
         android:icon="@drawable/ic_qu_stop_24dp"
-        android:shortcutDisabledMessage="@string/toast_services_stop"
-        android:shortcutId="shortcuts_stop"
-        android:shortcutLongLabel="@string/toast_services_stop"
-        android:shortcutShortLabel="@string/toast_services_stop">
-
+        android:shortcutDisabledMessage="@string/colitu_shortcut_disconnect"
+        android:shortcutId="colitu_disconnect"
+        android:shortcutLongLabel="@string/colitu_shortcut_disconnect"
+        android:shortcutShortLabel="@string/colitu_shortcut_disconnect">
         <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.v2ray.ang.ui.ScStopActivity"
+            android:action="com.colitulu.shortcut.STOP"
+            android:targetClass="com.v2ray.ang.colitu.ui.ColituShortcutActivity"
             android:targetPackage="com.colitulu" />
-        <categories android:name="android.shortcut.conversation" />
     </shortcut>
 </shortcuts>

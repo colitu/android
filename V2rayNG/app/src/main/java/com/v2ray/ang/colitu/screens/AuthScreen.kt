@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -82,7 +83,9 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     var repeat by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var acceptTerms by rememberSaveable { mutableStateOf(false) }
-    var loading by rememberSaveable { mutableStateOf(false) }
+    // Not saveable: a request does not survive the process, so a restored
+    // "true" would leave the button spinning forever.
+    var loading by remember { mutableStateOf(false) }
     var emailError by rememberSaveable { mutableStateOf<String?>(null) }
     var passwordError by rememberSaveable { mutableStateOf<String?>(null) }
     var repeatError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -92,7 +95,13 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
 
     fun validate(): Boolean {
         emailError = if (emailPattern.matches(email.trim())) null else loc["auth.err.email"]
-        passwordError = if (password.length >= 10) null else loc["auth.err.password"]
+        // The 10-character rule applies when a password is chosen; signing in
+        // only needs one, the server decides whether it is right.
+        passwordError = when {
+            isRegister && password.length < 10 -> loc["auth.err.password"]
+            !isRegister && password.isEmpty() -> loc["auth.err.passwordEmpty"]
+            else -> null
+        }
         repeatError = null
         termsError = null
         if (isRegister) {

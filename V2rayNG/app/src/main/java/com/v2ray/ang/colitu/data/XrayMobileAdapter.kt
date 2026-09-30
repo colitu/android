@@ -3,6 +3,7 @@ package com.v2ray.ang.colitu.data
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.api.ColituClock
+import com.v2ray.ang.colitu.api.LocalProxy
 import java.time.Instant
 
 /** Maps the backend-owned xray-mobile-v1 profile to the existing Xray custom-config runtime. */
@@ -49,8 +50,7 @@ object XrayMobileAdapter {
 
     private fun renderProfile(envelope: JsonObject, profile: JsonObject, now: Instant): ColituVpnConfig {
         require(envelope.has("revision")) { "CONFIG_REVISION_MISSING" }
-        val revision = envelope.get("revision").asLong
-        require(revision > 0) { "CONFIG_REVISION_INVALID" }
+        val revision = revisionOf(envelope)
         val expires = Instant.parse(envelope.requiredString("expires_at"))
         val grace = Instant.parse(envelope.requiredString("offline_grace_until"))
         require(!grace.isBefore(expires)) { "CONFIG_LIFETIME_INVALID" }
@@ -85,16 +85,16 @@ object XrayMobileAdapter {
             else -> shadowsocks(host, port, credentials)
         }
         val runtime = JsonObject().apply {
-            add("log", JsonObject().apply { addProperty("loglevel", "warning") })
-            add("inbounds", JsonArray().apply {
-                add(JsonObject().apply {
-                    addProperty("tag", "socks")
-                    addProperty("listen", "127.0.0.1")
-                    addProperty("port", 10808)
-                    addProperty("protocol", "socks")
-                    add("settings", JsonObject().apply { addProperty("udp", true) })
-                })
+            // No access log: it writes every visited host to logcat.
+            add("log", JsonObject().apply {
+                addProperty("loglevel", "warning")
+                addProperty("access", "none")
+                addProperty("dnsLog", false)
             })
+            // Placeholder account; [withLocalProxy] puts the connection's own
+            // port and account in before the profile is imported. The inbound
+            // never listens without a password.
+            add("inbounds", JsonArray().apply { add(socksInbound(LocalProxy(0, randomToken(), randomToken()))) })
             add("outbounds", JsonArray().apply {
                 add(outbound)
                 add(JsonObject().apply {
@@ -125,6 +125,60 @@ object XrayMobileAdapter {
         )
     }
 
+    /**
+     * [raw] with its SOCKS inbound replaced by one on [proxy]'s port that
+     * accepts only [proxy]'s account (hev-socks5-tunnel and the API client
+     * log in with it).
+     */
+    fun withLocalProxy(raw: String, proxy: LocalProxy): String {
+        val json = com.google.gson.JsonParser.parseString(raw).asJsonObject
+        val inbounds = JsonArray()
+        json.get("inbounds")?.takeIf { it.isJsonArray }?.asJsonArray?.forEach { inbound ->
+            val isSocks = inbound.isJsonObject && inbound.asJsonObject.get("protocol")?.takeIf { it.isJsonPrimitive }?.asString == "socks"
+            if (!isSocks) inbounds.add(inbound)
+        }
+        inbounds.add(socksInbound(proxy))
+        json.add("inbounds", inbounds)
+        return json.toString()
+    }
+
+    private fun socksInbound(proxy: LocalProxy) = JsonObject().apply {
+        addProperty("tag", "socks")
+        addProperty("listen", "127.0.0.1")
+        addProperty("port", proxy.port)
+        addProperty("protocol", "socks")
+        add("settings", JsonObject().apply {
+            addProperty("auth", "password")
+            add("accounts", JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("user", proxy.user)
+                    addProperty("pass", proxy.password)
+                })
+            })
+            addProperty("udp", true)
+            addProperty("ip", "127.0.0.1")
+        })
+    }
+
+    private fun randomToken(): String =
+        ByteArray(16).also(java.security.SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * The panel's revision is an unsigned 64-bit hash prefix, so half of all
+     * values are above Long.MAX_VALUE. Reading it with asLong wrapped those to
+     * negative numbers and rejected every such profile as
+     * CONFIG_REVISION_INVALID (the "engine could not start" error on some
+     * servers, accounts and TVs). The value is kept as the same 64 bits; only
+     * zero means "no revision".
+     */
+    internal fun revisionOf(envelope: JsonObject): Long {
+        val value = envelope.get("revision")?.takeIf { it.isJsonPrimitive }?.asString?.trim()
+            ?: throw IllegalArgumentException("CONFIG_REVISION_MISSING")
+        val number = value.toBigIntegerOrNull() ?: throw IllegalArgumentException("CONFIG_REVISION_INVALID")
+        require(number.signum() > 0 && number.bitLength() <= 64) { "CONFIG_REVISION_INVALID" }
+        return number.toLong()
+    }
+
     /** Human name of a panel transport for the status line. */
     fun transportName(protocol: String?): String = when (protocol) {
         "hysteria2" -> "Hysteria2"
@@ -147,7 +201,8 @@ object XrayMobileAdapter {
                         add(JsonObject().apply {
                             addProperty("id", c.requiredString("uuid"))
                             addProperty("encryption", "none")
-                            addProperty("flow", "xtls-rprx-vision")
+                            // Vision only works on raw TCP; ws/grpc must go without a flow.
+                            if (t.requiredString("type") == "tcp") addProperty("flow", "xtls-rprx-vision")
                         })
                     })
                 })

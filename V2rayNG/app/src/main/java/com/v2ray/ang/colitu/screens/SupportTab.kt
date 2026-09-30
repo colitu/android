@@ -225,7 +225,8 @@ private fun SupportNewRequest(c: ColituController, onCancel: () -> Unit, onCreat
     val scope = rememberCoroutineScope()
     var subject by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf("") }
-    var diagnostics by rememberSaveable { mutableStateOf(true) }
+    // Opt-in: logs and device details leave the phone only when the user ticks it.
+    var diagnostics by rememberSaveable { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val files = remember { mutableStateListOf<ColituSupportRepository.Attachment>() }
@@ -417,10 +418,7 @@ private fun SupportThread(c: ColituController, id: String, initial: ColituSuppor
                                 scope.launch {
                                     val bytes = ColituSupportRepository.attachment(attachment.id)
                                     images[attachment.id] = bytes?.let {
-                                        withContext(Dispatchers.Default) {
-                                            val options = BitmapFactory.Options().apply { inSampleSize = 2 }
-                                            BitmapFactory.decodeByteArray(it, 0, it.size, options)?.asImageBitmap()
-                                        }
+                                        withContext(Dispatchers.Default) { decodePreview(it)?.asImageBitmap() }
                                     }
                                 }
                             }
@@ -662,3 +660,18 @@ private fun shortTime(value: Instant): String {
     val local = value.atZone(ZoneId.systemDefault())
     return if (local.toLocalDate() == java.time.LocalDate.now()) clock(value) else ColituLoc.date(value).substringBeforeLast(' ')
 }
+
+/**
+ * Decodes an attachment for display at most ~1600 px on its long side, so a
+ * huge photo cannot run the app out of memory; null for anything that is
+ * not a decodable image.
+ */
+internal fun decodePreview(bytes: ByteArray, maxSide: Int = 1600): android.graphics.Bitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+}.getOrNull()

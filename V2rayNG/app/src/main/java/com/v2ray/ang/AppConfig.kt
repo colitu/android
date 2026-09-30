@@ -66,7 +66,6 @@ object AppConfig {
     const val PREF_DOMESTIC_DNS = "pref_domestic_dns"
     const val PREF_DNS_HOSTS = "pref_dns_hosts"
     const val PREF_DELAY_TEST_URL = "pref_delay_test_url"
-    const val PREF_IP_API_URL = "pref_ip_api_url"
     const val PREF_LOGLEVEL = "pref_core_loglevel"
     const val PREF_OUTBOUND_DOMAIN_RESOLVE_METHOD = "pref_outbound_domain_resolve_method"
     const val PREF_MODE = "pref_mode"
@@ -111,23 +110,9 @@ object AppConfig {
     const val UPLINK = "uplink"
     const val DOWNLINK = "downlink"
 
-    /** URLs for various resources. */
-    const val GITHUB_URL = "https://github.com"
-    const val GITHUB_RAW_URL = "https://raw.githubusercontent.com"
-    const val GITHUB_DOWNLOAD_URL = "$GITHUB_URL/%s/releases/latest/download"
-    const val ANDROID_PACKAGE_NAME_LIST_URL = "$GITHUB_RAW_URL/2dust/androidpackagenamelist/master/proxy.txt"
-    const val APP_URL = "$GITHUB_URL/2dust/v2rayNG"
-    const val APP_API_URL = "https://api.github.com/repos/2dust/v2rayNG/releases"
-    const val APP_ISSUES_URL = "$APP_URL/issues"
-    const val APP_WIKI_MODE = "$APP_URL/wiki/Mode"
-    const val APP_PRIVACY_POLICY = "$GITHUB_RAW_URL/2dust/v2rayNG/master/CR.md"
-    const val APP_PROMOTION_URL = "aHR0cHM6Ly85LjIzNDQ1Ni54eXovYWJjLmh0bWw="
-    const val TG_CHANNEL_URL = "https://t.me/github_2dust"
+    /** Real-traffic check through the tunnel (HTTP 204). */
     const val DELAY_TEST_URL = "https://www.gstatic.com/generate_204"
     const val DELAY_TEST_URL2 = "https://www.google.com/generate_204"
-
-    //    const val IP_API_URL = "https://speed.cloudflare.com/meta"
-    const val IP_API_URL = "https://api.ip.sb/geoip"
 
     /** DNS server addresses. */
     const val DNS_PROXY = "1.1.1.1"
@@ -142,7 +127,6 @@ object AppConfig {
     const val GEOSITE_DAT = "geosite.dat"
     const val GEOIP_DAT = "geoip.dat"
     const val GEOIP_ONLY_CN_PRIVATE_DAT = "geoip-only-cn-private.dat"
-    const val GEOIP_ONLY_CN_PRIVATE_URL = "$GITHUB_RAW_URL/Loyalsoldier/geoip/release/$GEOIP_ONLY_CN_PRIVATE_DAT"
 
     /** Ports and addresses for various services. */
     const val PORT_LOCAL_DNS = "10853"

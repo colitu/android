@@ -7,89 +7,51 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
-import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
+import com.v2ray.ang.colitu.ui.ColituShortcutActivity
 import com.v2ray.ang.core.CoreServiceManager
 
+/**
+ * Home-screen on/off widget. The button opens the private
+ * [ColituShortcutActivity], so the same Colitu checks as the tile and the
+ * shortcuts apply; the VPN process redraws the widget through [refresh].
+ */
 class WidgetProvider : AppWidgetProvider() {
-    /**
-     * This method is called every time the widget is updated.
-     * It updates the widget background based on the V2Ray service running state.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param appWidgetManager The AppWidgetManager instance.
-     * @param appWidgetIds The appWidgetIds for which an update is needed.
-     */
+
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        updateWidgetBackground(context, appWidgetManager, appWidgetIds, CoreServiceManager.isRunning())
+        draw(context, appWidgetManager, appWidgetIds, CoreServiceManager.isRunning())
     }
 
-    /**
-     * Updates the widget background based on whether the V2Ray service is running.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param appWidgetManager The AppWidgetManager instance.
-     * @param appWidgetIds The appWidgetIds for which an update is needed.
-     * @param isRunning Boolean indicating if the V2Ray service is running.
-     */
-    private fun updateWidgetBackground(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, isRunning: Boolean) {
-        val remoteViews = RemoteViews(context.packageName, R.layout.widget_switch)
-        val intent = Intent(context, WidgetProvider::class.java)
-        intent.action = AppConfig.BROADCAST_ACTION_WIDGET_CLICK
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            R.id.layout_switch,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        remoteViews.setOnClickPendingIntent(R.id.layout_switch, pendingIntent)
-        if (isRunning) {
-            remoteViews.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_stop_24dp)
-            remoteViews.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_active)
-        } else {
-            remoteViews.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_play_24dp)
-            remoteViews.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_inactive)
+    companion object {
+        fun refresh(context: Context, running: Boolean) {
+            runCatching {
+                val manager = AppWidgetManager.getInstance(context) ?: return
+                val ids = manager.getAppWidgetIds(ComponentName(context, WidgetProvider::class.java))
+                if (ids.isNotEmpty()) draw(context, manager, ids, running)
+            }
         }
 
-        for (appWidgetId in appWidgetIds) {
-            appWidgetManager.updateAppWidget(appWidgetId, remoteViews)
-        }
-    }
-
-    /**
-     * This method is called when the BroadcastReceiver is receiving an Intent broadcast.
-     * It handles widget click actions and updates the widget background based on the V2Ray service state.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param intent The Intent being received.
-     */
-    override fun onReceive(context: Context, intent: Intent) {
-        super.onReceive(context, intent)
-        if (AppConfig.BROADCAST_ACTION_WIDGET_CLICK == intent.action) {
-            if (CoreServiceManager.isRunning()) {
-                CoreServiceManager.stopVService(context)
+        private fun draw(context: Context, manager: AppWidgetManager, ids: IntArray, running: Boolean) {
+            val views = RemoteViews(context.packageName, R.layout.widget_switch)
+            val intent = Intent(context, ColituShortcutActivity::class.java)
+                .setAction(ColituShortcutActivity.ACTION_TOGGLE)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val pending = PendingIntent.getActivity(
+                context,
+                R.id.layout_switch,
+                intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            views.setOnClickPendingIntent(R.id.layout_switch, pending)
+            if (running) {
+                views.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_stop_24dp)
+                views.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_active)
             } else {
-                CoreServiceManager.startVServiceFromToggle(context)
+                views.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_play_24dp)
+                views.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_inactive)
             }
-        } else if (AppConfig.BROADCAST_ACTION_ACTIVITY == intent.action) {
-            AppWidgetManager.getInstance(context)?.let { manager ->
-                when (intent.getIntExtra("key", 0)) {
-                    AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS -> {
-                        updateWidgetBackground(
-                            context, manager, manager.getAppWidgetIds(ComponentName(context, WidgetProvider::class.java)),
-                            true
-                        )
-                    }
-
-                    AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_START_FAILURE, AppConfig.MSG_STATE_STOP_SUCCESS -> {
-                        updateWidgetBackground(
-                            context, manager, manager.getAppWidgetIds(ComponentName(context, WidgetProvider::class.java)),
-                            false
-                        )
-                    }
-                }
-            }
+            ids.forEach { manager.updateAppWidget(it, views) }
         }
     }
 }

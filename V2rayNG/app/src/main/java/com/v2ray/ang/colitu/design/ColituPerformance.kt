@@ -49,7 +49,7 @@ object ColituPerformance {
         val animatorScale = runCatching {
             Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
         }.getOrDefault(1f)
-        val mediaClass = if (sdk >= Build.VERSION_CODES.S) Build.VERSION.MEDIA_PERFORMANCE_CLASS else 0
+        val mediaClass = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.VERSION.MEDIA_PERFORMANCE_CLASS else 0
         val summary = "ram=%.1fGB cores=%d sdk=%d animScale=%.1f mpc=%d".format(ramGb, cores, sdk, animatorScale, mediaClass)
         val tier = when {
             // Google's media performance class is only granted to capable phones.

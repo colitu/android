@@ -28,10 +28,8 @@ object ColituAccountRepository {
         val encodedId = encode(deviceId)
         val path = "/devices/$encodedId"
         return when (val result = ColituApiClient.delete(path)) {
-            is ColituApiClient.ApiResult.Success -> {
-                if (deviceId == ColituTokenManager.getDeviceId()) ColituTokenManager.clear()
-                Result.success(Unit)
-            }
+            // For this phone the caller ends the session (ColituController.onCurrentDeviceRemoved).
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
     }

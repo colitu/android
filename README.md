@@ -25,15 +25,23 @@ server detail from the Colitu API.
   tunnel is verified with a real request, and the app falls back to the next
   candidate if it fails.
 - **Full account flow in the app.** Onboarding, sign-in and registration,
-  e-mail verification, plans and checkout, devices, usage, and a support inbox
-  with ticket replies.
+  e-mail verification, plan status, devices, usage, and a support inbox with
+  ticket replies. Nothing is sold inside the app: plans are bought and renewed
+  in the customer account on app.colitu.com.
 - **Server locations** with live latency and a remembered preferred location.
 - **Android TV** layout (leanback launcher, D-pad navigation).
-- **Verified in-app updates** for builds distributed outside Google Play: the
-  APK is only installed when its SHA-256 matches the release manifest, and
-  Android itself refuses an update signed with a different key.
-- **Secure token storage.** Session tokens are encrypted with AES-GCM using a
-  key held in the Android Keystore.
+- **Verified in-app updates** only in the APK from colitu.com (`direct`
+  flavor): the release manifest must carry our ECDSA signature, the APK must
+  match its SHA-256, and Android itself refuses an update signed with a
+  different key. The Play and F-Droid builds are updated by their store.
+- **Secure token storage.** Session tokens and VPN profiles are encrypted with
+  AES-GCM using a key held in the Android Keystore (an app-private key on
+  devices whose Keystore is broken).
+- **Closed to other apps.** Xray's local SOCKS inbound gets a random port and
+  account for every connection; the app's internal broadcasts are not
+  exported, and there is no URL scheme or Tasker plug-in that could add
+  servers or start and stop the tunnel. While connected, API calls go through
+  the tunnel, and api.colitu.com is certificate-pinned.
 
 ## How it connects
 

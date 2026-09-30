@@ -29,8 +29,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 22000
-        versionName = "2.2.0"
+        versionCode = 23000
+        versionName = "2.3.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -56,6 +56,8 @@ android {
         buildConfigField("String", "COLITU_API_BASE_URL", "\"https://api.colitu.com/api/v1\"")
         buildConfigField("String", "COLITU_UPDATE_MANIFEST_URL", "\"https://colitu.com/downloads/android/latest.json\"")
         buildConfigField("boolean", "COLITU_FORCE_TV", "false")
+        // Only the colitu.com APK ("direct") installs its own updates.
+        buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
     }
 
     signingConfigs {
@@ -69,7 +71,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 drops the imported v2rayNG code the product no longer uses and
+            // unused resources; keep rules for reflection/JNI are in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -102,6 +107,13 @@ android {
         create("playstore") {
             dimension = "distribution"
             buildConfigField("String", "DISTRIBUTION", "\"Play Store\"")
+        }
+        // The APK published on colitu.com: same identity and version codes as
+        // the Play build, plus the self-updater (src/direct).
+        create("direct") {
+            dimension = "distribution"
+            buildConfigField("String", "DISTRIBUTION", "\"colitu.com\"")
+            buildConfigField("boolean", "COLITU_SELF_UPDATE", "true")
         }
     }
 
@@ -180,10 +192,9 @@ android {
     }
 
     lint {
-        // The imported GPL client ships a broad upstream locale matrix. Colitu
-        // source strings intentionally fall back to the default locale until
-        // product translations are supplied; other lint errors remain fatal.
-        disable += "MissingTranslation"
+        // Every lint error is fatal; the app's own texts live in ColituLoc
+        // (ru/tr/en), Android resources only hold launcher/notification strings.
+        abortOnError = true
     }
 
 }
@@ -203,12 +214,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity)
-    implementation(libs.androidx.constraintlayout)
-    implementation(libs.preference.ktx)
-    implementation(libs.recyclerview)
-    implementation(libs.androidx.swiperefreshlayout)
-    implementation(libs.androidx.viewpager2)
-    implementation(libs.androidx.fragment)
 
     // Compose (Colitu UI)
     implementation(platform(libs.compose.bom))
@@ -222,9 +227,6 @@ dependencies {
 
     // UI Libraries
     implementation(libs.material)
-    implementation(libs.toasty)
-    implementation(libs.editorkit)
-    implementation(libs.flexbox)
 
     // Data and Storage Libraries
     implementation(libs.mmkv.static)
@@ -235,22 +237,13 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    // Language and Processing Libraries
-    implementation(libs.language.base)
-    implementation(libs.language.json)
-
-    // Intent and Utility Libraries
-    implementation(libs.quickie.foss)
+    // QR codes for links on TV (zxing core)
     implementation(libs.core)
 
     // AndroidX Lifecycle and Architecture Components
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.lifecycle.livedata.ktx)
     implementation(libs.lifecycle.runtime.ktx)
-
-    // Background Task Libraries
-    implementation(libs.work.runtime.ktx)
-    implementation(libs.work.multiprocess)
 
     // Multidex Support
     implementation(libs.multidex)

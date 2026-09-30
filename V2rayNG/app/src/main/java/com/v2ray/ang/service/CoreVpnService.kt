@@ -9,15 +9,14 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.StrictMode
 import androidx.annotation.RequiresApi
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.AppConfig.LOOPBACK
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.colitu.app.ColituQuickStart
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
 import com.v2ray.ang.core.CoreServiceManager
@@ -31,18 +30,25 @@ import java.lang.ref.SoftReference
 
 @SuppressLint("VpnServicePolicy")
 class CoreVpnService : VpnService(), ServiceControl {
-    private lateinit var mInterface: ParcelFileDescriptor
-    private var isRunning = false
-    private var tun2SocksService: Tun2SocksControl? = null
+    /**
+     * Starts run on [startExecutor], stops on the main thread. Every start and
+     * every stop takes a new [generation] under [lock]; a start that finds
+     * its generation outdated (the user stopped while the interface or the
+     * core was still coming up) tears down what it built instead of leaving
+     * a tunnel running behind a "disconnected" app.
+     */
+    private val lock = Any()
+    @Volatile private var generation = 0L
+    private var vpnInterface: ParcelFileDescriptor? = null
+    @Volatile private var isRunning = false
+    @Volatile private var tun2SocksService: Tun2SocksControl? = null
 
-    /**destroy
+    /**
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
      *
      * This makes doing a requestNetwork with REQUEST necessary so that we don't get ALL possible networks that
      * satisfies default network capabilities but only THE default network. Unfortunately we need to have
      * android.permission.CHANGE_NETWORK_STATE to be able to call requestNetwork.
-     *
-     * Source: https://android.googlesource.com/platform/frameworks/base/+/2df4c7d/services/core/java/com/android/server/ConnectivityService.java#887
      */
     @delegate:RequiresApi(Build.VERSION_CODES.P)
     private val defaultNetworkRequest by lazy {
@@ -62,7 +68,6 @@ class CoreVpnService : VpnService(), ServiceControl {
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                // it's a good idea to refresh capabilities
                 setUnderlyingNetworks(arrayOf(network))
             }
 
@@ -70,6 +75,10 @@ class CoreVpnService : VpnService(), ServiceControl {
                 setUnderlyingNetworks(null)
             }
         }
+    }
+
+    private val startExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "colitu-vpn-start")
     }
 
     override fun onCreate() {
@@ -85,155 +94,132 @@ class CoreVpnService : VpnService(), ServiceControl {
         stopAllService()
     }
 
-//    override fun onLowMemory() {
-//        stopV2Ray()
-//        super.onLowMemory()
-//    }
-
     override fun onDestroy() {
         super.onDestroy()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
-
-        // Ensure VPN interface is properly closed when the service is destroyed without
-        // going through stopAllService() (e.g. when killed unexpectedly). isRunning is
-        // set to false at the start of stopAllService(), so this guard prevents a double-close.
-        if (isRunning) {
-            try {
-                if (::mInterface.isInitialized) {
-                    mInterface.close()
-                    LogUtil.i(AppConfig.TAG, "StartCore-VPN: VPN interface closed in onDestroy")
-                }
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface in onDestroy", e)
-            }
+        synchronized(lock) {
+            generation++
+            closeInterfaceLocked()
         }
-
+        startExecutor.shutdownNow()
         NotificationManager.cancelNotification()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service command received")
         NotificationManager.showNotification(null)
+
+        // Android starts the service by itself for Always-on VPN and after the
+        // process was killed (sticky restart). Those starts follow the same
+        // rule as the tile: only a Colitu profile that is still valid.
+        val systemStart = intent == null || intent.action == SERVICE_INTERFACE
+        if (systemStart) {
+            val guid = ColituQuickStart.startableGuid()
+            if (guid == null) {
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: no valid Colitu profile for a system start")
+                stopAllService()
+                return START_NOT_STICKY
+            }
+            MmkvManager.setSelectServer(guid)
+        }
+
+        val gen = synchronized(lock) { ++generation }
         // Building the interface and starting Xray + hev can take seconds on a
         // slow or busy phone. On the main thread that tripped Android's
-        // service-start watchdog (ANR) and the tunnel never came up, so the
-        // work runs on one background thread; starts stay in order.
-        startExecutor.execute {
-            setupVpnService()
-            startService()
-        }
+        // service-start watchdog (ANR), so the work runs on one background
+        // thread; starts stay in order.
+        startExecutor.execute { startGeneration(gen) }
         return START_STICKY
-        //return super.onStartCommand(intent, flags, startId)
     }
 
-    private val startExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "colitu-vpn-start")
-    }
-
-    override fun getService(): Service {
-        return this
-    }
-
-    override fun startService() {
-        if (!::mInterface.isInitialized) {
-            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Interface not initialized")
+    private fun startGeneration(gen: Long) {
+        if (gen != generation) return
+        if (prepare(this) != null) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
+            stopAllService()
             return
         }
-        if (!CoreServiceManager.startCoreLoop(mInterface)) {
+        val iface = configureVpnService(gen) ?: return
+        runTun2socks(iface)
+        if (gen != generation) {
+            teardownStale()
+            return
+        }
+        if (!CoreServiceManager.startCoreLoop(iface)) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
             stopAllService()
             return
         }
+        // A stop that arrived while the core was starting found nothing to
+        // stop yet; finish it now.
+        if (gen != generation) teardownStale()
+    }
+
+    private fun teardownStale() {
+        LogUtil.w(AppConfig.TAG, "StartCore-VPN: stopped while starting, tearing down")
+        tun2SocksService?.stopTun2Socks()
+        tun2SocksService = null
+        CoreServiceManager.stopCoreLoop()
+        synchronized(lock) { closeInterfaceLocked() }
+    }
+
+    override fun getService(): Service = this
+
+    override fun startService() {
+        val iface = synchronized(lock) { vpnInterface } ?: run {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Interface not initialized")
+            return
+        }
+        if (!CoreServiceManager.startCoreLoop(iface)) stopAllService()
     }
 
     override fun stopService() {
         stopAllService(true)
     }
 
-    override fun vpnProtect(socket: Int): Boolean {
-        return protect(socket)
-    }
+    override fun vpnProtect(socket: Int): Boolean = protect(socket)
 
     override fun attachBaseContext(newBase: Context?) {
-        val context = newBase?.let {
-            MyContextWrapper.wrap(newBase, SettingsManager.getLocale())
-        }
+        val context = newBase?.let { MyContextWrapper.wrap(newBase, SettingsManager.getLocale()) }
         super.attachBaseContext(context)
     }
 
-    /**
-     * Sets up the VPN service.
-     * Prepares the VPN and configures it if preparation is successful.
-     */
-    private fun setupVpnService() {
-        val prepare = prepare(this)
-        if (prepare != null) {
-            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
-            stopSelf()
-            return
-        }
-
-        if (configureVpnService() != true) {
-            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Configuration failed")
-            stopSelf()
-            return
-        }
-
-        runTun2socks()
-    }
-
-    /**
-     * Configures the VPN service.
-     * @return True if the VPN service was configured successfully, false otherwise.
-     */
-    private fun configureVpnService(): Boolean {
+    /** Builds the TUN interface; null when it failed or a stop superseded [gen]. */
+    private fun configureVpnService(gen: Long): ParcelFileDescriptor? {
         val builder = Builder()
-
-        // Configure network settings (addresses, routing and DNS)
         configureNetworkSettings(builder)
-
-        // Configure app-specific settings (session name and per-app proxy)
         configurePerAppProxy(builder)
-
-        // Close the old interface since the parameters have been changed
-        try {
-            if (::mInterface.isInitialized) {
-                mInterface.close()
-            }
-        } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Failed to close old interface", e)
-        }
-
-        // Configure platform-specific features
         configurePlatformFeatures(builder)
 
-        // Create a new interface using the builder and save the parameters
-        try {
-            mInterface = builder.establish()!!
-            isRunning = true
-            return true
+        val established = try {
+            builder.establish()
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to establish VPN interface", e)
-            stopAllService()
+            null
         }
-        return false
+        if (established == null) {
+            stopAllService()
+            return null
+        }
+        synchronized(lock) {
+            if (gen != generation) {
+                runCatching { established.close() }
+                return null
+            }
+            closeInterfaceLocked()
+            vpnInterface = established
+            isRunning = true
+        }
+        return established
     }
 
-    /**
-     * Configures the basic network settings for the VPN.
-     * This includes IP addresses, routing rules, and DNS servers.
-     *
-     * @param builder The VPN Builder to configure
-     */
     private fun configureNetworkSettings(builder: Builder) {
         val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
         val bypassLan = SettingsManager.routingRulesetsBypassLan()
 
-        // Configure IPv4 settings
         builder.setMtu(SettingsManager.getVpnMtu())
         builder.addAddress(vpnConfig.ipv4Client, 30)
 
-        // Configure routing rules
         if (bypassLan) {
             AppConfig.ROUTED_IP_LIST.forEach {
                 val addr = it.split('/')
@@ -243,8 +229,7 @@ class CoreVpnService : VpnService(), ServiceControl {
             builder.addRoute("0.0.0.0", 0)
         }
 
-        // Configure IPv6 if enabled
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true) {
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)) {
             builder.addAddress(vpnConfig.ipv6Client, 126)
             if (bypassLan) {
                 builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
@@ -254,26 +239,12 @@ class CoreVpnService : VpnService(), ServiceControl {
             }
         }
 
-        // Configure DNS servers
-        //if (MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED) == true) {
-        //  builder.addDnsServer(PRIVATE_VLAN4_ROUTER)
-        //} else {
         SettingsManager.getVpnDnsServers().forEach {
-            if (Utils.isPureIpAddress(it)) {
-                builder.addDnsServer(it)
-            }
+            if (Utils.isPureIpAddress(it)) builder.addDnsServer(it)
         }
-
-        //builder.setSession(V2RayServiceManager.getRunningServerName())
     }
 
-    /**
-     * Configures platform-specific VPN features for different Android versions.
-     *
-     * @param builder The VPN Builder to configure
-     */
     private fun configurePlatformFeatures(builder: Builder) {
-        // Android P (API 28) and above: Configure network callbacks
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 connectivity.requestNetwork(defaultNetworkRequest, defaultNetworkCallback)
@@ -281,91 +252,74 @@ class CoreVpnService : VpnService(), ServiceControl {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to request network", e)
             }
         }
-
-        // Android Q (API 29) and above: Configure metering and HTTP proxy
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
-            if (MmkvManager.decodeSettingsBool(AppConfig.PREF_APPEND_HTTP_PROXY)) {
-                builder.setHttpProxy(ProxyInfo.buildDirectProxy(LOOPBACK, SettingsManager.getHttpPort()))
-            }
         }
     }
 
     /**
-     * Configures per-app proxy rules for the VPN builder.
-     *
-     * - If per-app proxy is not enabled, disallow the VPN service's own package.
-     * - If no apps are selected, disallow the VPN service's own package.
-     * - If bypass mode is enabled, disallow all selected apps (including self).
-     * - If proxy mode is enabled, only allow the selected apps (excluding self).
-     *
-     * @param builder The VPN Builder to configure.
+     * The app itself stays outside the tunnel: Xray's own connections to the
+     * VPN server must not loop back into it. Colitu's API calls go through
+     * the tunnel anyway, via the authenticated local SOCKS inbound
+     * (ColituApiClient).
      */
     private fun configurePerAppProxy(builder: Builder) {
         val selfPackageName = BuildConfig.APPLICATION_ID
-
-        // If per-app proxy is not enabled, disallow the VPN service's own package and return
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY) == false) {
+        if (!MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY)) {
             builder.addDisallowedApplication(selfPackageName)
             return
         }
-
-        // If no apps are selected, disallow the VPN service's own package and return
         val apps = MmkvManager.decodeSettingsStringSet(AppConfig.PREF_PER_APP_PROXY_SET)
         if (apps.isNullOrEmpty()) {
             builder.addDisallowedApplication(selfPackageName)
             return
         }
-
         val bypassApps = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS)
-        // Handle the VPN service's own package according to the mode
         if (bypassApps) apps.add(selfPackageName) else apps.remove(selfPackageName)
-
         apps.forEach {
             try {
-                if (bypassApps) {
-                    // In bypass mode, disallow the selected apps
-                    builder.addDisallowedApplication(it)
-                } else {
-                    // In proxy mode, only allow the selected apps
-                    builder.addAllowedApplication(it)
-                }
+                if (bypassApps) builder.addDisallowedApplication(it) else builder.addAllowedApplication(it)
             } catch (e: PackageManager.NameNotFoundException) {
-                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to configure app", e)
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: app not installed, skipped")
             }
         }
     }
 
-    /**
-     * Runs the tun2socks process.
-     * Starts the tun2socks process with the appropriate parameters.
-     */
-    private fun runTun2socks() {
-        if (SettingsManager.isUsingHevTun()) {
-            tun2SocksService = TProxyService(
+    private fun runTun2socks(iface: ParcelFileDescriptor) {
+        tun2SocksService = if (SettingsManager.isUsingHevTun()) {
+            TProxyService(
                 context = applicationContext,
-                vpnInterface = mInterface,
+                vpnInterface = iface,
                 isRunningProvider = { isRunning },
-                restartCallback = { runTun2socks() }
+                restartCallback = { runTun2socks(iface) },
             )
         } else {
-            tun2SocksService = null
+            null
         }
-
         tun2SocksService?.startTun2Socks()
     }
 
+    private fun closeInterfaceLocked() {
+        val iface = vpnInterface ?: return
+        vpnInterface = null
+        try {
+            iface.close()
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: VPN interface closed")
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
+        }
+    }
+
     private fun stopAllService(isForced: Boolean = true) {
-//        val configName = defaultDPreference.getPrefString(PREF_CURR_CONFIG_GUID, "")
-//        val emptyInfo = VpnNetworkInfo()
-//        val info = loadVpnNetworkInfo(configName, emptyInfo)!! + (lastNetworkInfo ?: emptyInfo)
-//        saveVpnNetworkInfo(configName, info)
-        isRunning = false
+        synchronized(lock) {
+            generation++
+            isRunning = false
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 connectivity.unregisterNetworkCallback(defaultNetworkCallback)
             } catch (e: Exception) {
-                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Failed to unregister callback", e)
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: network callback was not registered")
             }
         }
 
@@ -375,30 +329,17 @@ class CoreVpnService : VpnService(), ServiceControl {
         CoreServiceManager.stopCoreLoop()
 
         if (isForced) {
-            //stopSelf has to be called ahead of mInterface.close(). otherwise v2ray core cannot be stooped
-            //It's strage but true.
-            //This can be verified by putting stopself() behind and call stopLoop and startLoop
-            //in a row for several times. You will find that later created v2ray core report port in use
-            //which means the first v2ray core somehow failed to stop and release the port.
+            // stopSelf has to come before closing the interface, otherwise the
+            // core does not release its port (seen upstream in v2rayNG).
             stopSelf()
-
-            // Add a small delay to allow the async core stop operation to complete
-            // before closing the VPN interface, preventing a race condition that can
-            // leave the VPN icon in the status bar after stopping the service.
+            // Give the asynchronous core stop a moment before the interface
+            // closes, so the VPN key icon does not linger in the status bar.
             try {
                 Thread.sleep(100)
             } catch (e: InterruptedException) {
-                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Sleep interrupted", e)
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: Sleep interrupted")
             }
-
-            try {
-                if (::mInterface.isInitialized) {
-                    mInterface.close()
-                    LogUtil.i(AppConfig.TAG, "StartCore-VPN: VPN interface closed")
-                }
-            } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to close interface", e)
-            }
+            synchronized(lock) { closeInterfaceLocked() }
         }
     }
 }
