@@ -76,6 +76,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private set
     var servers by mutableStateOf<List<ColituServer>>(emptyList())
         private set
+
+    /**
+     * Last measured ping per server id. Measured only while the VPN is off
+     * (through the tunnel it would be node-to-node) and kept between runs.
+     */
+    var pings by mutableStateOf(cachedPings())
+        private set
+    private var pingJob: Job? = null
+
+    fun pingOf(server: ColituServer): Int? = pings[server.id]
+
     var loading by mutableStateOf(true)
         private set
     var offline by mutableStateOf(false)
@@ -263,6 +274,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 onSuccess = { response ->
                     servers = response.servers
                     offline = false
+                    measurePings()
                     if (!autoSelection && selectedServer == null) {
                         autoSelection = true
                         store.encode(KEY_AUTO_SELECTION, true)
@@ -279,6 +291,26 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         loading = false
     }
+
+    /** Re-measures the pings unless a tunnel is up or starting. */
+    fun measurePings() {
+        if (status != VpnStatus.Disconnected || pingJob?.isActive == true) return
+        val list = servers
+        pingJob = viewModelScope.launch {
+            val measured = com.v2ray.ang.colitu.data.ColituLatency.measureAll(list)
+            if (measured.isEmpty() || status != VpnStatus.Disconnected) return@launch
+            pings = pings + measured
+            val json = com.google.gson.JsonObject().apply { pings.forEach { (id, ms) -> addProperty(id, ms) } }
+            store.encode(KEY_PINGS, json.toString())
+        }
+    }
+
+    private fun cachedPings(): Map<String, Int> = runCatching {
+        val raw = store.decodeString(KEY_PINGS) ?: return emptyMap()
+        com.google.gson.JsonParser.parseString(raw).asJsonObject.entrySet()
+            .mapNotNull { (id, value) -> value.takeIf { it.isJsonPrimitive }?.asInt?.let { id to it } }
+            .toMap()
+    }.getOrDefault(emptyMap())
 
     private suspend fun refreshPolicy() {
         val bootstrap = runCatching { ColituVpnRepository.fetchVpnStatus() }.getOrNull() ?: return
@@ -861,6 +893,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val KEY_CONNECTED_SERVER = "connected_server"
         private const val KEY_SYNCED_SERVER = "synced_server"
         private const val KEY_CAPS_VERSION = "device_caps_version"
+        private const val KEY_PINGS = "server_pings"
         private const val START_TIMEOUT_MS = 20_000L
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val VERIFY_TIMEOUT_MS = 12_000L

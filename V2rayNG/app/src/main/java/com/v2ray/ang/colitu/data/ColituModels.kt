@@ -34,6 +34,9 @@ data class ColituServer(
     val services: List<String> = emptyList(),
     /** Use-case categories from the panel: streaming, gaming, privacy, speed, torrent, ai. */
     val categories: List<String> = emptyList(),
+    /** Where the app measures this location's ping (TCP connect time). */
+    val latencyHost: String? = null,
+    val latencyPort: Int? = null,
 ) {
     val flagEmoji: String get() = countryCodeToFlag(countryCode)
     /** "AI" means the ones users ask for most: Gemini and ChatGPT both open. */
@@ -76,6 +79,8 @@ data class ColituServer(
                         ?.mapNotNull { value -> value.takeIf { it.isJsonPrimitive }?.asString?.lowercase() }
                         ?.distinct()
                         .orEmpty(),
+                    latencyHost = json.getString("latency_host"),
+                    latencyPort = json.getString("latency_port")?.toIntOrNull(),
                 )
             } catch (e: Exception) {
                 null

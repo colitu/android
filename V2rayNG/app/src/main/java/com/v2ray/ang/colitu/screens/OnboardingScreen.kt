@@ -156,11 +156,11 @@ private fun FlagsHero() {
         ColituParticles(mode = ParticleMode.Sphere, size = 250.dp, energy = 0.45f)
         val half = (250 - 40) / 2f
         listOf(
-            "🇪🇪" to (-0.78f to -0.55f),
-            "🇩🇪" to (0.82f to -0.35f),
-            "🇳🇱" to (-0.7f to 0.55f),
-            "🇺🇸" to (0.72f to 0.6f),
-            "🇹🇷" to (0.05f to -0.92f),
+            "EE" to (-0.78f to -0.55f),
+            "DE" to (0.82f to -0.35f),
+            "NL" to (-0.7f to 0.55f),
+            "US" to (0.72f to 0.6f),
+            "TR" to (0.05f to -0.92f),
         ).forEach { (flag, pos) ->
             Box(Modifier.offset((half * pos.first).dp, (half * pos.second).dp)) { ColituFlag(flag, 40.dp) }
         }

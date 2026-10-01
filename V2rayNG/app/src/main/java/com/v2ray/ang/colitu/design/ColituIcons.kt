@@ -512,6 +512,126 @@ object ColituIcons {
         }
     }
 
+    val Grid = icon("grid") {
+        stroke(1.9f) {
+            for ((x, y) in listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f)) {
+                moveTo(x + 1.5f, y)
+                horizontalLineTo(x + 5f)
+                arcTo(1.5f, 1.5f, 0f, false, true, x + 6.5f, y + 1.5f)
+                verticalLineTo(y + 5f)
+                arcTo(1.5f, 1.5f, 0f, false, true, x + 5f, y + 6.5f)
+                horizontalLineTo(x + 1.5f)
+                arcTo(1.5f, 1.5f, 0f, false, true, x, y + 5f)
+                verticalLineTo(y + 1.5f)
+                arcTo(1.5f, 1.5f, 0f, false, true, x + 1.5f, y)
+                close()
+            }
+        }
+    }
+
+    val Robot = icon("robot") {
+        stroke(1.9f) {
+            moveTo(8f, 8f)
+            horizontalLineTo(16f)
+            arcTo(3f, 3f, 0f, false, true, 19f, 11f)
+            verticalLineTo(16f)
+            arcTo(3f, 3f, 0f, false, true, 16f, 19f)
+            horizontalLineTo(8f)
+            arcTo(3f, 3f, 0f, false, true, 5f, 16f)
+            verticalLineTo(11f)
+            arcTo(3f, 3f, 0f, false, true, 8f, 8f)
+            close()
+            moveTo(12f, 8f)
+            verticalLineTo(5.2f)
+            moveTo(2.8f, 12.5f)
+            verticalLineTo(15f)
+            moveTo(21.2f, 12.5f)
+            verticalLineTo(15f)
+        }
+        fill {
+            circle(12f, 4f, 1.4f)
+            circle(9.5f, 13.2f, 1.4f)
+            circle(14.5f, 13.2f, 1.4f)
+        }
+    }
+
+    val Film = icon("film") {
+        stroke(1.9f) {
+            moveTo(4f, 10f)
+            horizontalLineTo(20f)
+            verticalLineTo(18.5f)
+            arcTo(1.5f, 1.5f, 0f, false, true, 18.5f, 20f)
+            horizontalLineTo(5.5f)
+            arcTo(1.5f, 1.5f, 0f, false, true, 4f, 18.5f)
+            close()
+            moveTo(4f, 10f)
+            lineTo(3.4f, 7f)
+            lineTo(18.6f, 3.8f)
+            lineTo(19.3f, 6.8f)
+            close()
+            moveTo(8.2f, 6.2f)
+            lineTo(10f, 8.9f)
+            moveTo(13.2f, 5.1f)
+            lineTo(15f, 7.8f)
+        }
+    }
+
+    val Gamepad = icon("gamepad") {
+        stroke(1.9f) {
+            moveTo(7.5f, 7.5f)
+            horizontalLineTo(16.5f)
+            curveTo(19.6f, 7.5f, 21.5f, 11f, 21.5f, 14.5f)
+            curveTo(21.5f, 16.8f, 20.2f, 18f, 18.8f, 18f)
+            curveTo(17.4f, 18f, 16.6f, 16.6f, 15.6f, 15.4f)
+            horizontalLineTo(8.4f)
+            curveTo(7.4f, 16.6f, 6.6f, 18f, 5.2f, 18f)
+            curveTo(3.8f, 18f, 2.5f, 16.8f, 2.5f, 14.5f)
+            curveTo(2.5f, 11f, 4.4f, 7.5f, 7.5f, 7.5f)
+            close()
+            moveTo(8f, 10.3f)
+            verticalLineTo(13.3f)
+            moveTo(6.5f, 11.8f)
+            horizontalLineTo(9.5f)
+        }
+        fill {
+            circle(15.4f, 10.8f, 1.1f)
+            circle(17.4f, 12.8f, 1.1f)
+        }
+    }
+
+    val Download = icon("download") {
+        stroke(1.9f) {
+            moveTo(12f, 4f)
+            verticalLineTo(15f)
+            moveTo(7.8f, 10.8f)
+            lineTo(12f, 15f)
+            lineTo(16.2f, 10.8f)
+            moveTo(5f, 15.5f)
+            verticalLineTo(19f)
+            horizontalLineTo(19f)
+            verticalLineTo(15.5f)
+        }
+    }
+
+    val Sort = icon("sort") {
+        stroke(2f) {
+            moveTo(4f, 7f)
+            horizontalLineTo(20f)
+            moveTo(4f, 12f)
+            horizontalLineTo(15f)
+            moveTo(4f, 17f)
+            horizontalLineTo(10f)
+        }
+    }
+
+    val ChevronDown = icon("chevron-down") {
+        stroke(2.2f) {
+            moveTo(5f, 9f)
+            lineTo(12f, 16f)
+            lineTo(19f, 9f)
+        }
+    }
+
     val Doc = icon("doc") {
         stroke {
             moveTo(6.5f, 3f)

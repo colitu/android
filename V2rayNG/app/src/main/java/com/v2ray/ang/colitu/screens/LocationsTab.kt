@@ -1,22 +1,30 @@
 package com.v2ray.ang.colitu.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -25,17 +33,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.data.ColituServer
-import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBadge
 import com.v2ray.ang.colitu.design.ColituChip
 import com.v2ray.ang.colitu.design.ColituColors
 import com.v2ray.ang.colitu.design.ColituField
 import com.v2ray.ang.colitu.design.ColituFlag
+import com.v2ray.ang.colitu.design.ColituGradients
 import com.v2ray.ang.colitu.design.ColituIcon
 import com.v2ray.ang.colitu.design.ColituIcons
 import com.v2ray.ang.colitu.design.ColituPanel
@@ -49,11 +72,13 @@ import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
 
 /**
- * Use-case categories from the panel ("all" plus streaming, gaming, privacy,
- * speed, torrent, ai). The panel adds streaming/ai itself when a node's
+ * Use-case categories from the panel ("all" plus ai, streaming, gaming,
+ * speed, privacy, torrent). The panel adds streaming/ai itself when a node's
  * service checks pass; older panels only sent services, so those still count.
  */
-private val categories = listOf("all", "streaming", "gaming", "privacy", "speed", "torrent", "ai")
+private val categories = listOf("all", "ai", "streaming", "gaming", "speed", "privacy", "torrent")
+
+private enum class SortBy { Ping, Name, Load }
 
 private fun ColituServer.inCategory(category: String): Boolean = when (category) {
     "all" -> true
@@ -73,38 +98,70 @@ private fun loadPercent(server: ColituServer): Int? = when (server.load) {
     else -> null
 }
 
+private fun categoryIcon(category: String): ImageVector = when (category) {
+    "all" -> ColituIcons.Grid
+    "ai" -> ColituIcons.Robot
+    "streaming" -> ColituIcons.Film
+    "gaming" -> ColituIcons.Gamepad
+    "speed" -> ColituIcons.Bolt
+    "privacy" -> ColituIcons.Shield
+    "torrent" -> ColituIcons.Download
+    else -> ColituIcons.Globe
+}
+
 /**
- * Server list: search, filter chips, the "best server" row and one round
- * flag row per location.
+ * Server list, the same as on iOS: title with the "fastest server" shortcut,
+ * search, category chips, a sort menu, the recommended locations and then
+ * every other one. Each card shows the round flag, the city, the ping and
+ * what opens there.
  */
 @Composable
 fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     val loc = ColituLoc
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf("all") }
+    var sort by rememberSaveable { mutableStateOf(SortBy.Ping) }
+    LaunchedEffect(Unit) { c.measurePings() }
     val q = fold(query.trim())
+    val byName = compareBy<ColituServer> { c.titleOf(it) }
     val items = c.servers
         .filter { server ->
             server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
         }
         .sortedWith(
-            compareBy<ColituServer> { if (it.isAvailable) 0 else 1 }
-                .thenBy { if (it.isRecommended) 0 else 1 }
-                .thenBy { c.titleOf(it) },
+            compareBy<ColituServer> { if (it.isAvailable) 0 else 1 }.then(
+                when (sort) {
+                    SortBy.Ping -> compareBy<ColituServer> { c.pingOf(it) ?: Int.MAX_VALUE }.then(byName)
+                    SortBy.Load -> compareBy<ColituServer> { loadPercent(it) ?: Int.MAX_VALUE }.then(byName)
+                    SortBy.Name -> byName
+                },
+            ),
         )
-    val online = c.servers.count { it.isAvailable }
+    val recommended = recommended(c, items)
+    val rest = items.filterNot { it in recommended }
 
     ShellScroll(tvMaxWidth = 900.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CText(loc["locations.title"], ColituText.h1, Modifier.weight(1f))
-            ColituBadge(loc.format("locations.online", "n" to online), BadgeTone.Neutral)
+            // Long translations shrink instead of being cut off.
+            BasicText(
+                loc["locations.title"],
+                Modifier.weight(1f),
+                style = ColituText.h1,
+                maxLines = 1,
+                softWrap = false,
+                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = 28.sp),
+            )
+            Spacer(Modifier.width(10.dp))
+            FastestButton(c)
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(4.dp))
+        CText(loc["locations.tagline"], ColituText.muted)
+        Spacer(Modifier.height(16.dp))
         ColituField(
             value = query,
             onChange = { query = it },
             label = null,
-            hint = loc["locations.search"],
+            hint = loc["locations.search"] + "…",
             prefix = ColituIcons.Search,
             pill = true,
             fill = ColituColors.surface2,
@@ -115,18 +172,20 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 ) { ColituIcon(ColituIcons.XCircleOutline, ColituColors.dim, 18.dp) }
             }),
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         Row(Modifier.horizontalScroll(rememberScrollState())) {
             categories.forEach { value ->
-                val count = c.servers.count { it.inCategory(value) }
-                val label = if (value == "all") loc["locations.all"] else "${loc["cat.$value"]}  $count"
-                Box(Modifier.alpha(if (value == "all" || count > 0 || filter == value) 1f else 0.5f)) {
-                    ColituChip(label, filter == value) { filter = value }
+                if (value == "all" || value == filter || c.servers.any { it.inCategory(value) }) {
+                    ColituChip(
+                        if (value == "all") loc["locations.all"] else loc["cat.$value"],
+                        filter == value,
+                        icon = categoryIcon(value),
+                    ) { filter = value }
+                    Spacer(Modifier.width(8.dp))
                 }
-                Spacer(Modifier.width(8.dp))
             }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(18.dp))
         if (!c.planActive) {
             ColituPanel(
                 padding = PaddingValues(start = 14.dp, top = 12.dp, end = 14.dp, bottom = 12.dp),
@@ -144,25 +203,54 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                     ColituIcon(ColituIcons.ChevronRight, ColituColors.dim, 16.dp)
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(14.dp))
         }
-        AutoRow(c)
-        Spacer(Modifier.height(8.dp))
         when {
             c.servers.isEmpty() -> EmptyText(if (c.planRequired) loc["plan.noneHint"] else loc["server.none"])
             items.isEmpty() -> EmptyText(if (filter != "all" && q.isEmpty()) loc["cat.empty"] else loc["locations.empty"])
-            // Two columns on a TV: the wide screen fits them and the remote needs fewer presses.
-            ColituTv.isTv -> items.chunked(2).forEach { pair ->
-                Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                    pair.forEach { server -> ServerRow(c, server, Modifier.weight(1f).fillMaxHeight()) }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+            else -> {
+                SectionHeader(if (recommended.isNotEmpty()) loc["locations.recommended"] else loc["locations.allServers"]) {
+                    SortButton(sort) { sort = it }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
+                ServerCards(c, recommended, startIndex = 0)
+                if (recommended.isNotEmpty() && rest.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    SectionHeader(loc["locations.allServers"])
+                    Spacer(Modifier.height(12.dp))
+                }
+                ServerCards(c, rest, startIndex = recommended.size)
             }
-            else -> items.forEachIndexed { i, server ->
-                ServerRow(c, server, Modifier.reveal(40 * i.coerceAtMost(8)))
-                Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/** The panel's recommended locations; without any, the three fastest. */
+private fun recommended(c: ColituController, items: List<ColituServer>): List<ColituServer> {
+    val flagged = items.filter { it.isRecommended && it.isAvailable }
+    if (flagged.isNotEmpty()) return flagged
+    val fastest = items.filter { it.isAvailable && c.pingOf(it) != null }
+        .sortedBy { c.pingOf(it) }
+        .take(3)
+        .toSet()
+    return items.filter { it in fastest }
+}
+
+@Composable
+private fun ServerCards(c: ColituController, servers: List<ColituServer>, startIndex: Int) {
+    if (ColituTv.isTv) {
+        // Two columns on a TV: the wide screen fits them and the remote needs fewer presses.
+        servers.chunked(2).forEach { pair ->
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                pair.forEach { server -> ServerCard(c, server, Modifier.weight(1f).fillMaxHeight()) }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
+            Spacer(Modifier.height(10.dp))
+        }
+    } else {
+        servers.forEachIndexed { i, server ->
+            ServerCard(c, server, Modifier.reveal(40 * (startIndex + i).coerceAtMost(8)))
+            Spacer(Modifier.height(10.dp))
         }
     }
 }
@@ -175,109 +263,332 @@ private fun EmptyText(text: String) {
 }
 
 @Composable
-private fun AutoRow(c: ColituController) {
-    val loc = ColituLoc
+private fun SectionHeader(title: String, trailing: (@Composable () -> Unit)? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CText(title, ColituText.h2.copy(fontSize = 20.sp), Modifier.weight(1f), maxLines = 1)
+        trailing?.invoke()
+    }
+}
+
+/** "Fastest server" in the title row: picks the server automatically. */
+@Composable
+private fun FastestButton(c: ColituController) {
     val active = c.autoSelection
-    ColituTile(
-        active = active,
-        onClick = { c.selectAuto() },
-        padding = PaddingValues(start = 12.dp, top = 12.dp, end = 14.dp, bottom = 12.dp),
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier
+            .pressable({ c.selectAuto() })
+            .clip(shape)
+            .background(if (active) ColituColors.violet.copy(alpha = 0.18f) else ColituColors.surface2)
+            .border(1.dp, if (active) ColituColors.violet else ColituColors.lineStrong, shape)
+            .padding(start = 12.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ColituRoundIcon(ColituIcons.Bolt, size = 44.dp, accent = true)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                CText(loc["home.fastest"], ColituText.label)
-                Spacer(Modifier.height(2.dp))
-                CText(loc["server.autoHint"], ColituText.small)
-            }
-            Spacer(Modifier.width(10.dp))
-            StateMark(
-                text = if (active) (if (c.connected) loc["server.connected"] else loc["server.selected"]) else "",
-                connected = active && c.connected,
-            )
-        }
+        ColituIcon(ColituIcons.Bolt, ColituColors.violet, 18.dp)
+        Spacer(Modifier.width(6.dp))
+        CText(ColituLoc["locations.fastest"], ColituText.label, size = 14.sp, maxLines = 1)
+        Spacer(Modifier.width(4.dp))
+        ColituIcon(
+            if (active) ColituIcons.Check else ColituIcons.ChevronRight,
+            if (active) ColituColors.lilac else ColituColors.muted,
+            14.dp,
+        )
     }
 }
 
 @Composable
-private fun ServerRow(c: ColituController, server: ColituServer, modifier: Modifier) {
+private fun SortButton(sort: SortBy, onChange: (SortBy) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val shape = RoundedCornerShape(50)
+    Box {
+        Row(
+            Modifier
+                .pressable({ open = !open })
+                .clip(shape)
+                .background(ColituColors.surface2)
+                .border(1.dp, ColituColors.line, shape)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ColituIcon(ColituIcons.Sort, ColituColors.muted, 16.dp)
+            Spacer(Modifier.width(6.dp))
+            CText(ColituLoc["locations.sort.${sort.name.lowercase()}"], ColituText.small, color = ColituColors.text, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+            ColituIcon(ColituIcons.ChevronDown, ColituColors.muted, 12.dp)
+        }
+        if (open) {
+            val offsetY = with(LocalDensity.current) { 44.dp.roundToPx() }
+            Popup(
+                alignment = Alignment.TopEnd,
+                offset = androidx.compose.ui.unit.IntOffset(0, offsetY),
+                onDismissRequest = { open = false },
+            ) {
+                Column(
+                    Modifier
+                        .width(IntrinsicSize.Max)
+                        .widthIn(min = 170.dp)
+                        .clip(RoundedCornerShape(ColituRadius.md))
+                        .background(ColituColors.surface2)
+                        .border(1.dp, ColituColors.lineStrong, RoundedCornerShape(ColituRadius.md))
+                        .padding(vertical = 6.dp),
+                ) {
+                    SortBy.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .pressable({ onChange(option); open = false })
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CText(
+                                ColituLoc["locations.sort.${option.name.lowercase()}"],
+                                ColituText.label,
+                                Modifier.weight(1f),
+                                size = 14.sp,
+                                color = if (option == sort) ColituColors.lilac else ColituColors.text,
+                            )
+                            if (option == sort) ColituIcon(ColituIcons.Check, ColituColors.lilac, 16.dp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class Tag(val label: String, val service: String? = null, val category: String? = null)
+
+/** Services the panel verified on this node first, then the use cases they do not already cover. */
+private fun tagsOf(server: ColituServer): List<Tag> {
+    val out = ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.map { (key, name) -> Tag(name, service = key) }.toMutableList()
+    val hasAi = server.services.any { it in ColituServer.REQUIRED_AI_SERVICES }
+    val hasStreaming = server.services.any { it in ColituServer.STREAMING_SERVICES }
+    categories.drop(1).forEach { category ->
+        if (category !in server.categories) return@forEach
+        if (category == "ai" && hasAi) return@forEach
+        if (category == "streaming" && hasStreaming) return@forEach
+        out += Tag(ColituLoc["cat.$category"], category = category)
+    }
+    return out
+}
+
+@Composable
+private fun ServerCard(c: ColituController, server: ColituServer, modifier: Modifier) {
     val loc = ColituLoc
     val selected = !c.autoSelection && c.selectedServerId == server.id
     val connected = c.connected && c.connectedServerId == server.id
     val selectable = server.isAvailable
-    val load = loadPercent(server)
-    val loadText = when {
-        !selectable -> loc["server.offline"]
-        load == null -> ""
-        load < 40 -> loc["server.load.low"]
-        load < 75 -> loc["server.load.medium"]
-        else -> loc["server.load.high"]
-    }
-    val loadColor = when {
-        load == null -> ColituColors.dim
-        load < 40 -> ColituColors.success
-        load < 75 -> ColituColors.warning
-        else -> ColituColors.danger
-    }
+    val country = server.countryCode?.let { loc.countryName(it) }?.takeIf { it.isNotBlank() } ?: server.displayName
+    val city = server.city?.trim().orEmpty()
+    val tags = tagsOf(server)
     ColituTile(
         modifier.alpha(if (selectable) 1f else 0.5f),
-        active = selected,
+        active = selected || connected,
         onClick = if (selectable) ({ c.selectServer(server) }) else null,
-        padding = PaddingValues(start = 12.dp, top = 10.dp, end = 14.dp, bottom = 10.dp),
+        padding = PaddingValues(14.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ColituFlag(server.flagEmoji)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                CText(c.titleOf(server), ColituText.label, maxLines = 1)
-                Spacer(Modifier.height(3.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (loadText.isNotEmpty()) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(if (selectable) loadColor else ColituColors.dim))
-                        Spacer(Modifier.width(6.dp))
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ColituFlag(server.countryCode, 46.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CText(country, ColituText.label, Modifier.weight(1f, fill = false), size = 17.sp, maxLines = 1)
+                        if (connected) {
+                            Spacer(Modifier.width(8.dp))
+                            Pill(loc["server.connected"], accent = true)
+                        }
                     }
-                    val city = server.city?.takeIf { it.isNotBlank() }
-                    CText(
-                        listOfNotNull(city, loadText.takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { server.countryCode.orEmpty() },
-                        ColituText.small,
-                        maxLines = 1,
-                    )
+                    if (city.isNotEmpty() && !city.equals(country, ignoreCase = true)) {
+                        Spacer(Modifier.height(2.dp))
+                        CText(city, ColituText.muted, maxLines = 1)
+                    }
                 }
-                val cats = server.categories.filter { it in categories }.map { loc["cat.$it"] }
-                if (cats.isNotEmpty()) {
-                    Spacer(Modifier.height(3.dp))
-                    CText(cats.joinToString(" · "), ColituText.small, color = ColituColors.muted, maxLines = 1)
-                }
-                val services = ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.values
-                if (services.isNotEmpty()) {
-                    Spacer(Modifier.height(3.dp))
-                    CText(services.joinToString(" · "), ColituText.small, color = ColituColors.lilac, maxLines = 1)
-                }
+                Spacer(Modifier.width(8.dp))
+                if (selectable) Ping(c.pingOf(server)) else CText(loc["server.offline"], ColituText.small)
+                Spacer(Modifier.width(12.dp))
+                GoButton(selected || connected)
             }
-            Spacer(Modifier.width(10.dp))
-            StateMark(
-                text = when {
-                    connected -> loc["server.connected"]
-                    selected -> loc["server.selected"]
-                    else -> ""
-                },
-                connected = connected,
-            )
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                TagLine(tags, Modifier.padding(start = 58.dp))
+            }
+        }
+    }
+}
+
+private val tagStyle = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = ColituColors.text)
+private val pillStyle = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = ColituColors.muted)
+private val tagIcon = 17.dp
+private val tagIconGap = 5.dp
+private val tagSpacing = 10.dp
+
+/** One line of tags: as many as fit, then "+N" for the rest. */
+@Composable
+private fun TagLine(tags: List<Tag>, modifier: Modifier) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val max = with(density) { maxWidth.toPx() }
+        fun textPx(text: String, style: TextStyle) = measurer.measure(text, style.copy(fontFamily = ColituText.label.fontFamily)).size.width.toFloat()
+        val slack = with(density) { 6.dp.toPx() }
+        val spacing = with(density) { tagSpacing.toPx() }
+        val fixed = with(density) { (tagIcon + tagIconGap).toPx() }
+        val pillPad = with(density) { 22.dp.toPx() }
+        var used = 0f
+        var count = 0
+        for (i in tags.indices) {
+            val width = slack + fixed + textPx(tags[i].label, tagStyle)
+            val next = used + (if (i == 0) 0f else spacing) + width
+            val left = tags.size - i - 1
+            val reserve = if (left > 0) spacing + textPx("+$left", pillStyle) + pillPad else 0f
+            if (next + reserve > max && i > 0) break
+            used = next
+            count = i + 1
+        }
+        val hidden = tags.size - count
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            for (i in 0 until count) {
+                if (i > 0) Spacer(Modifier.width(tagSpacing))
+                TagView(tags[i], Modifier.weight(1f, fill = false))
+            }
+            if (hidden > 0) {
+                Spacer(Modifier.width(tagSpacing))
+                Pill("+$hidden")
+            }
         }
     }
 }
 
 @Composable
-private fun StateMark(text: String, connected: Boolean) {
-    if (text.isEmpty()) {
-        ColituIcon(ColituIcons.Ellipsis, ColituColors.dim, 18.dp)
-        return
+private fun TagView(tag: Tag, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(tagIcon), contentAlignment = Alignment.Center) {
+            if (tag.service != null) ServiceMark(tag.service, tagIcon)
+            else ColituIcon(categoryIcon(tag.category.orEmpty()), ColituColors.text, tagIcon - 1.dp)
+        }
+        Spacer(Modifier.width(tagIconGap))
+        BasicText(tag.label, style = tagStyle.copy(fontFamily = ColituText.label.fontFamily), maxLines = 1)
     }
-    val color = if (connected) ColituColors.success else ColituColors.lilac
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        ColituIcon(if (connected) ColituIcons.ShieldCheck else ColituIcons.CheckCircle, color, 16.dp)
-        Spacer(Modifier.width(5.dp))
-        CText(text, ColituText.small, color = color, weight = FontWeight.SemiBold)
+}
+
+@Composable
+private fun Pill(text: String, accent: Boolean = false) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(if (accent) ColituColors.violet.copy(alpha = 0.22f) else ColituColors.surface2)
+            .then(if (accent) Modifier else Modifier.border(1.dp, ColituColors.line, shape))
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+    ) {
+        BasicText(
+            text,
+            style = pillStyle.copy(fontFamily = ColituText.label.fontFamily, color = if (accent) ColituColors.lilac else ColituColors.muted),
+            maxLines = 1,
+        )
+    }
+}
+
+/** Signal bars and the ping in milliseconds. */
+@Composable
+private fun Ping(ms: Int?) {
+    val color = when {
+        ms == null -> ColituColors.dim
+        ms < 60 -> ColituColors.success
+        ms < 150 -> ColituColors.warning
+        else -> ColituColors.danger
+    }
+    val bars = when {
+        ms == null -> 0
+        ms < 60 -> 4
+        ms < 100 -> 3
+        ms < 200 -> 2
+        else -> 1
+    }
+    Row(verticalAlignment = Alignment.Bottom) {
+        for (i in 0 until 4) {
+            Box(
+                Modifier
+                    .width(3.5.dp)
+                    .height((6 + i * 3).dp)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(if (i < bars) color else ColituColors.lineStrong),
+            )
+            if (i < 3) Spacer(Modifier.width(2.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        CText(if (ms == null) "—" else "$ms ms", ColituText.small, maxLines = 1)
+    }
+}
+
+@Composable
+private fun GoButton(active: Boolean) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .then(
+                if (active) Modifier.background(ColituGradients.accent)
+                else Modifier.background(ColituColors.surface2).border(1.dp, ColituColors.lineStrong, CircleShape),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        ColituIcon(ColituIcons.ChevronRight, if (active) ColituColors.onAccent else ColituColors.text, 17.dp)
+    }
+}
+
+/** Small marks for the services a node opens, drawn here rather than shipped as logo files. */
+@Composable
+private fun ServiceMark(service: String, size: Dp) {
+    when (service) {
+        "netflix" -> BasicText(
+            "N",
+            style = TextStyle(fontSize = (size.value * 1.05f).sp, fontWeight = FontWeight.Black, color = Color(0xFFE50914), fontFamily = ColituText.label.fontFamily),
+        )
+        "claude" -> BasicText(
+            "A\\",
+            style = TextStyle(fontSize = (size.value * 0.92f).sp, fontWeight = FontWeight.ExtraBold, color = ColituColors.text, letterSpacing = (-1).sp, fontFamily = ColituText.label.fontFamily),
+        )
+        "gemini" -> Canvas(Modifier.size(size)) {
+            val w = this.size.width
+            val c = w / 2
+            val path = Path().apply {
+                moveTo(c, 0f)
+                quadraticTo(c, c, w, c)
+                quadraticTo(c, c, c, w)
+                quadraticTo(c, c, 0f, c)
+                quadraticTo(c, c, c, 0f)
+                close()
+            }
+            drawPath(path, Brush.linearGradient(listOf(Color(0xFF4796E3), Color(0xFF9177C7)), start = Offset(0f, w), end = Offset(w, 0f)))
+        }
+        "youtube_premium" -> Canvas(Modifier.size(size)) {
+            val w = this.size.width
+            drawRoundRect(Color(0xFFFF0033), topLeft = Offset(0f, w * 0.18f), size = Size(w, w * 0.64f), cornerRadius = CornerRadius(w * 0.18f))
+            val play = Path().apply {
+                moveTo(w * 0.40f, w * 0.34f)
+                lineTo(w * 0.66f, w * 0.5f)
+                lineTo(w * 0.40f, w * 0.66f)
+                close()
+            }
+            drawPath(play, Color.White)
+        }
+        "chatgpt" -> Canvas(Modifier.size(size)) {
+            val w = this.size.width
+            val stroke = Stroke(width = w * 0.09f)
+            for (i in 0 until 6) {
+                rotate(i * 60f, pivot = Offset(w / 2, w / 2)) {
+                    drawRoundRect(
+                        ColituColors.text,
+                        topLeft = Offset(w / 2 - w * 0.15f, w / 2 - w * 0.16f - w * 0.28f),
+                        size = Size(w * 0.30f, w * 0.56f),
+                        cornerRadius = CornerRadius(w * 0.15f),
+                        style = stroke,
+                    )
+                }
+            }
+        }
+        else -> ColituIcon(ColituIcons.SealCheck, ColituColors.text, size)
     }
 }

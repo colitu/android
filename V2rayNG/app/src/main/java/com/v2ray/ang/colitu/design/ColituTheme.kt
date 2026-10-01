@@ -68,6 +68,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
@@ -611,9 +612,34 @@ fun ColituSpinner(size: Dp = 22.dp, color: Color = ColituColors.lilac) {
     }
 }
 
-/** Round flag well, like the country rows in the reference design. */
+/** Flag images from assets/flags (square flag-icons renders, MIT), decoded once. */
+private object FlagImages {
+    private val cache = HashMap<String, androidx.compose.ui.graphics.ImageBitmap?>()
+
+    fun get(context: android.content.Context, code: String): androidx.compose.ui.graphics.ImageBitmap? =
+        synchronized(cache) {
+            cache.getOrPut(code) {
+                runCatching<androidx.compose.ui.graphics.ImageBitmap?> {
+                    val bitmap: android.graphics.Bitmap? = context.assets.open("flags/$code.png").use { stream ->
+                        android.graphics.BitmapFactory.decodeStream(stream)
+                    }
+                    bitmap?.asImageBitmap()
+                }.getOrNull()
+            }
+        }
+}
+
+/**
+ * Round country flag, centred in its circle. Emoji flags render differently
+ * per font and not at all on some phones and TVs, so the bundled images are
+ * used; [countryCode] is ISO 3166-1 alpha-2 ("UK" counts as Great Britain).
+ */
 @Composable
-fun ColituFlag(emoji: String, size: Dp = 44.dp) {
+fun ColituFlag(countryCode: String?, size: Dp = 44.dp) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val code = countryCode?.trim()?.lowercase()?.let { if (it == "uk") "gb" else it }
+        ?.takeIf { Regex("^[a-z]{2}$").matches(it) }
+    val image = remember(code) { code?.let { FlagImages.get(context, it) } }
     Box(
         Modifier
             .size(size)
@@ -622,7 +648,17 @@ fun ColituFlag(emoji: String, size: Dp = 44.dp) {
             .border(1.dp, ColituColors.lineStrong, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        BasicText(emoji, style = TextStyle(fontSize = (size.value * 0.5f).sp, textAlign = TextAlign.Center))
+        if (image != null) {
+            androidx.compose.foundation.Image(
+                image,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                alignment = Alignment.Center,
+            )
+        } else {
+            ColituIcon(ColituIcons.Globe, ColituColors.muted, size * 0.55f)
+        }
     }
 }
 
@@ -700,9 +736,14 @@ fun <T> ColituSegment(
     }
 }
 
-/** Filter chip (locations). */
+/** Filter chip (locations), with an optional leading icon. */
 @Composable
-fun ColituChip(label: String, selected: Boolean, onClick: () -> Unit) {
+fun ColituChip(
+    label: String,
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(50)
     Box(
         Modifier
@@ -714,7 +755,14 @@ fun ColituChip(label: String, selected: Boolean, onClick: () -> Unit) {
             )
             .padding(horizontal = 18.dp, vertical = 10.dp),
     ) {
-        CText(label, ColituText.label, color = if (selected) ColituColors.onAccent else ColituColors.text, size = 13.5.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val color = if (selected) ColituColors.onAccent else ColituColors.text
+            if (icon != null) {
+                ColituIcon(icon, color, 18.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            CText(label, ColituText.label, color = color, size = 13.5.sp)
+        }
     }
 }
 

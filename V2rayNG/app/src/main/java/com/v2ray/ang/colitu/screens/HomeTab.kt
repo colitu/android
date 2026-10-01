@@ -231,7 +231,7 @@ private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Mo
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (auto) ColituRoundIcon(ColituIcons.Bolt, size = 44.dp, accent = true)
-                else ColituFlag(server?.flagEmoji ?: "🌐", 44.dp)
+                else ColituFlag(server?.countryCode, 44.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     CText(title, ColituText.label, maxLines = 1)
