@@ -196,10 +196,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
         }
         viewModelScope.launch {
-            // Devices that signed in before Hysteria2 support only advertised
-            // the TCP transports; tell the panel once so it offers QUIC too.
-            if (!store.decodeBool(KEY_CAPS_V2, false)) {
-                safeCall { ColituAuthRepository.refreshDeviceCapabilities() }.onSuccess { store.encode(KEY_CAPS_V2, true) }
+            // The device record carries the transports this build can run. A
+            // device signed in with an older build would otherwise never be
+            // offered what an update added (Hysteria2, then XHTTP), so the
+            // record is re-sent once per app version.
+            val version = com.v2ray.ang.BuildConfig.VERSION_CODE
+            if (store.decodeInt(KEY_CAPS_VERSION, 0) != version) {
+                safeCall { ColituAuthRepository.refreshDeviceCapabilities() }.onSuccess { store.encode(KEY_CAPS_VERSION, version) }
             }
         }
         viewModelScope.launch {
@@ -857,7 +860,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val KEY_GOOD_PREFIX = "good_transport_"
         private const val KEY_CONNECTED_SERVER = "connected_server"
         private const val KEY_SYNCED_SERVER = "synced_server"
-        private const val KEY_CAPS_V2 = "device_caps_hysteria2"
+        private const val KEY_CAPS_VERSION = "device_caps_version"
         private const val START_TIMEOUT_MS = 20_000L
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val VERIFY_TIMEOUT_MS = 12_000L
