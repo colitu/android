@@ -20,6 +20,13 @@ val releaseKeyPassword = secret("KEY_PASS", "COLITU_ANDROID_KEY_PASSWORD") ?: re
 val releaseSigningConfigured = listOf(releaseKeystorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }
 val releaseSigningRequired = providers.gradleProperty("COLITU_REQUIRE_RELEASE_SIGNING").orNull == "true" ||
     System.getenv("COLITU_REQUIRE_RELEASE_SIGNING") == "true"
+// Ad-blocking DNS-over-HTTPS URLs (comma separated). They point at Colitu's
+// own nodes, so they stay out of the public repository like the signing keys;
+// without them the ad-blocking switch is not shown.
+val adBlockDoh = secret("ADBLOCK_DOH", "COLITU_ADBLOCK_DOH").orEmpty()
+if (releaseSigningRequired && adBlockDoh.isBlank()) {
+    throw GradleException("ADBLOCK_DOH (signing.properties) or COLITU_ADBLOCK_DOH is required for a release build")
+}
 
 android {
     namespace = "com.v2ray.ang"
@@ -29,8 +36,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 24200
-        versionName = "2.4.2"
+        versionCode = 25000
+        versionName = "2.5.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -58,6 +65,7 @@ android {
         buildConfigField("boolean", "COLITU_FORCE_TV", "false")
         // Only the colitu.com APK ("direct") installs its own updates.
         buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
+        buildConfigField("String", "COLITU_ADBLOCK_DOH", "\"${adBlockDoh.replace("\"", "")}\"")
     }
 
     signingConfigs {

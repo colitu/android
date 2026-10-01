@@ -106,6 +106,7 @@ private fun categoryIcon(category: String): ImageVector = when (category) {
     "speed" -> ColituIcons.Bolt
     "privacy" -> ColituIcons.Shield
     "torrent" -> ColituIcons.Download
+    "adblock" -> ColituIcons.EyeSlash
     else -> ColituIcons.Globe
 }
 
@@ -360,7 +361,10 @@ private data class Tag(val label: String, val service: String? = null, val categ
 
 /** Services the panel verified on this node first, then the use cases they do not already cover. */
 private fun tagsOf(server: ColituServer): List<Tag> {
-    val out = ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.map { (key, name) -> Tag(name, service = key) }.toMutableList()
+    val out = mutableListOf<Tag>()
+    // First, so it never folds into the "+N" pill.
+    if (server.hostsAdBlockDns) out += Tag(ColituLoc["cat.adblock"], category = "adblock")
+    out += ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.map { (key, name) -> Tag(name, service = key) }
     val hasAi = server.services.any { it in ColituServer.REQUIRED_AI_SERVICES }
     val hasStreaming = server.services.any { it in ColituServer.STREAMING_SERVICES }
     categories.drop(1).forEach { category ->

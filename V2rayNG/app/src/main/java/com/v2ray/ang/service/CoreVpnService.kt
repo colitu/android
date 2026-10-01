@@ -17,6 +17,7 @@ import androidx.annotation.RequiresApi
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.colitu.app.ColituQuickStart
+import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
 import com.v2ray.ang.core.CoreServiceManager
@@ -239,8 +240,15 @@ class CoreVpnService : VpnService(), ServiceControl {
             }
         }
 
-        SettingsManager.getVpnDnsServers().forEach {
-            if (Utils.isPureIpAddress(it)) builder.addDnsServer(it)
+        if (ColituAdBlock.enabled) {
+            // Xray answers port 53 itself (ColituAdBlock). The tunnel's own
+            // peer address has no DoT/DoH, so Android's automatic Private DNS
+            // and Chrome's secure DNS cannot upgrade around the blocking.
+            builder.addDnsServer(vpnConfig.ipv4Router)
+        } else {
+            SettingsManager.getVpnDnsServers().forEach {
+                if (Utils.isPureIpAddress(it)) builder.addDnsServer(it)
+            }
         }
     }
 

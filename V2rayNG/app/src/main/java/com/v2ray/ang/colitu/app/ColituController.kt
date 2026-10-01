@@ -21,6 +21,7 @@ import com.v2ray.ang.colitu.api.ColituClock
 import com.v2ray.ang.colitu.api.ColituAuthEvents
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ClientBootstrapPolicy
+import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.data.ColituSubscription
 import com.v2ray.ang.colitu.data.ColituUser
@@ -110,6 +111,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
     var denial by mutableStateOf<String?>(null)
         private set
     var autoConnect by mutableStateOf(store.decodeBool(KEY_AUTO_CONNECT, false))
+        private set
+    var adBlock by mutableStateOf(ColituAdBlock.enabled)
         private set
     var uploadBps by mutableDoubleStateOf(0.0)
         private set
@@ -729,6 +732,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
     fun setAutoConnectEnabled(value: Boolean) {
         autoConnect = value
         store.encode(KEY_AUTO_CONNECT, value)
+    }
+
+    /** Ad blocking changes the tunnel's DNS, so a live connection is rebuilt. */
+    fun setAdBlockEnabled(value: Boolean) {
+        if (adBlock == value) return
+        adBlock = value
+        ColituAdBlock.enabled = value
+        if (connected || status == VpnStatus.Connecting) {
+            showToast(ColituLoc[if (value) "settings.adBlockOn" else "settings.adBlockOff"], error = false)
+            startConnectFlow()
+        }
     }
 
     fun showToast(text: String, error: Boolean) {

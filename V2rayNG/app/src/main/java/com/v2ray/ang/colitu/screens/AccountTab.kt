@@ -50,6 +50,7 @@ import com.v2ray.ang.colitu.design.ColituNotice
 import com.v2ray.ang.colitu.design.ColituPanel
 import com.v2ray.ang.colitu.design.ColituRadius
 import com.v2ray.ang.colitu.design.ColituRoundIcon
+import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.design.ColituSegment
 import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.ColituSpinner
@@ -177,6 +178,16 @@ fun AccountTab(
             value = c.autoConnect,
             onChange = { c.setAutoConnectEnabled(it) },
         )
+        if (ColituAdBlock.available) {
+            Spacer(Modifier.height(8.dp))
+            ColituSwitchRow(
+                icon = ColituIcons.EyeSlash,
+                title = loc["settings.adBlock"],
+                hint = loc["settings.adBlockHint"],
+                value = c.adBlock,
+                onChange = { c.setAdBlockEnabled(it) },
+            )
+        }
         Spacer(Modifier.height(8.dp))
         ColituSwitchRow(
             icon = ColituIcons.LockShield,

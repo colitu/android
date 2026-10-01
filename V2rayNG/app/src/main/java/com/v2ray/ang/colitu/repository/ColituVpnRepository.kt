@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.api.ColituApiClient
 import com.v2ray.ang.colitu.api.ColituLocalProxy
+import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.data.ColituVpnConfig
 import com.v2ray.ang.colitu.data.XrayMobileAdapter
 import com.v2ray.ang.dto.SubscriptionItem
@@ -30,7 +31,7 @@ object ColituVpnRepository {
             try {
                 val raw = config.rawConfig?.takeIf { it.isNotBlank() && config.revision != 0L }
                     ?: return@withContext Result.failure(Exception("CONFIG_NOT_READY"))
-                val runtime = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
+                val runtime = ColituAdBlock.apply(XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession()))
                 val subId = ensureColituSubscription()
                 MmkvManager.decodeServerList(subId).forEach { MmkvManager.removeServer(it) }
                 val profile = CustomFmt.parse(runtime).apply {

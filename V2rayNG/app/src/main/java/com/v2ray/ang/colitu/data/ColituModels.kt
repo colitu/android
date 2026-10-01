@@ -42,6 +42,8 @@ data class ColituServer(
     /** "AI" means the ones users ask for most: Gemini and ChatGPT both open. */
     val opensAi: Boolean get() = services.containsAll(REQUIRED_AI_SERVICES)
     val opensStreaming: Boolean get() = services.any { it in STREAMING_SERVICES }
+    /** The node runs one of Colitu's ad-blocking DNS servers (matched by its probe host). */
+    val hostsAdBlockDns: Boolean get() = latencyHost?.lowercase() in ColituAdBlock.dnsHosts
 
     companion object {
         fun fromJson(json: JsonObject): ColituServer? {
