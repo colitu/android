@@ -4,6 +4,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.api.ColituClock
 import com.v2ray.ang.colitu.api.LocalProxy
+import com.v2ray.ang.colitu.l10n.ColituLoc
 import java.time.Instant
 
 /** Maps the backend-owned xray-mobile-v1 profile to the existing Xray custom-config runtime. */
@@ -16,7 +17,8 @@ object XrayMobileAdapter {
     val transportRank = mapOf(
         "hysteria2" to 0,
         "vless-reality" to 1,
-        "trojan" to 2,
+        "vless-xhttp" to 2,
+        "trojan" to 3,
         "shadowsocks" to 4,
     )
 
@@ -69,17 +71,21 @@ object XrayMobileAdapter {
         val security = payload.getAsJsonObject("security") ?: error("CONFIG_SECURITY_MISSING")
         val transportType = transport.requiredString("type")
         require(
-            if (protocol == "hysteria2") transportType == "hysteria" else transportType in setOf("tcp", "ws", "grpc"),
+            when (protocol) {
+                "hysteria2" -> transportType == "hysteria"
+                "vless-xhttp" -> transportType == "xhttp" && transport.requiredString("path").startsWith("/")
+                else -> transportType in setOf("tcp", "ws", "grpc")
+            },
         ) { "CONFIG_TRANSPORT_UNSUPPORTED" }
         require(
             when (protocol) {
-                "vless-reality" -> security.requiredString("type") == "reality"
+                "vless-reality", "vless-xhttp" -> security.requiredString("type") == "reality"
                 "trojan", "hysteria2" -> security.requiredString("type") == "tls"
                 else -> security.requiredString("type") == "none"
             },
         ) { "CONFIG_SECURITY_INVALID" }
         val outbound = when (protocol) {
-            "vless-reality" -> vless(host, port, credentials, transport, security)
+            "vless-reality", "vless-xhttp" -> vless(host, port, credentials, transport, security)
             "trojan" -> trojan(host, port, credentials, transport, security)
             "hysteria2" -> hysteria2(host, port, credentials, security)
             else -> shadowsocks(host, port, credentials)
@@ -179,14 +185,14 @@ object XrayMobileAdapter {
         return number.toLong()
     }
 
-    /** Human name of a panel transport for the status line. */
+    /**
+     * Colitu's own name of a panel transport for the screens ("Fast" for
+     * Hysteria2 and so on): the technical protocol names stay out of the UI.
+     */
     fun transportName(protocol: String?): String = when (protocol) {
-        "hysteria2" -> "Hysteria2"
-        "vless-reality" -> "VLESS Reality"
-        "trojan" -> "Trojan"
-        "shadowsocks" -> "Shadowsocks"
-        null -> ""
-        else -> protocol
+        null, "" -> ""
+        in transportRank.keys -> ColituLoc["transport.$protocol"]
+        else -> ColituLoc["transport.other"]
     }
 
     private fun vless(host: String, port: Int, c: JsonObject, t: JsonObject, s: JsonObject) = JsonObject().apply {
@@ -266,6 +272,12 @@ object XrayMobileAdapter {
 
     private fun stream(t: JsonObject, s: JsonObject) = JsonObject().apply {
         addProperty("network", t.requiredString("type"))
+        if (t.requiredString("type") == "xhttp") {
+            add("xhttpSettings", JsonObject().apply {
+                addProperty("path", t.requiredString("path"))
+                addProperty("mode", t.get("mode")?.takeIf { it.isJsonPrimitive }?.asString ?: "auto")
+            })
+        }
         val type = s.requiredString("type")
         addProperty("security", type)
         if (type == "reality") {

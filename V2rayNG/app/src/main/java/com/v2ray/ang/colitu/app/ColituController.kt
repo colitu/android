@@ -347,7 +347,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun startConnectFlow(fresh: Boolean = false) {
+    /**
+     * Transports that came up but carried no traffic during the current
+     * connect. Each one is left out of the next attempt until every transport
+     * the server offers has been tried; a new connect by the user starts over.
+     */
+    private val stalledThisConnect = mutableSetOf<String>()
+
+    /** Transports the server offered on the last fresh profile. */
+    private var offeredTransports: Set<String> = emptySet()
+
+    private fun startConnectFlow(fresh: Boolean = false, continuing: Boolean = false) {
+        if (!continuing) stalledThisConnect.clear()
         connectJob?.cancel()
         verifyJob?.cancel()
         userStopped = false
@@ -403,13 +414,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
             delay(1500)
             candidates = safeCall { ColituServerRepository.fetchConfigCandidates() }
         }
-        val configs = candidates.getOrElse {
+        val offered = candidates.getOrElse {
             if (it.message == "auth_expired") endSession(ColituLoc["auth.expired"])
             fail(it.message)
             return
         }
+        offeredTransports = offered.mapNotNull { it.protocolType }.toSet()
+        // Leave out what already stalled in this connect; when nothing else is
+        // left the whole list is tried once more.
+        val configs = offered.filter { it.protocolType !in stalledThisConnect }.ifEmpty { offered }
 
-        if (tryStart(context, server, orderForStart(server, configs, probe = true), begin, fromCache = false, recover = !fresh)) return
+        if (tryStart(context, server, orderForStart(server, configs, probe = true), begin, fromCache = false)) return
         fail("UNREACHABLE")
     }
 
@@ -438,7 +453,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         (XrayMobileAdapter.transportRank[protocol] ?: 3) + if (protocol in stalled) 10 else 0
 
     /**
-     * Starts the transports in [order] until one comes up (at most three).
+     * Starts the transports in [order] until one comes up; every one is tried.
      * The UI shows "connected" as soon as the tunnel is up; the real-traffic
      * check runs afterwards and moves to another transport if needed.
      */
@@ -448,9 +463,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         order: List<ColituVpnConfig>,
         begin: Long,
         fromCache: Boolean,
-        recover: Boolean = true,
     ): Boolean {
-        for ((attempt, config) in order.take(3).withIndex()) {
+        for ((attempt, config) in order.withIndex()) {
             phase = if (attempt == 0) ConnectPhase.Starting else ConnectPhase.Switching
             if (attempt > 0) showToast(ColituLoc["home.switchingTransport"], error = false)
             val guid = ColituVpnRepository.importRuntimeConfig(context, config).getOrElse {
@@ -474,7 +488,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 "Colitu: connected via ${config.protocolType} in ${android.os.SystemClock.elapsedRealtime() - begin} ms (cached profile: $fromCache)",
             )
             verifyJob?.cancel()
-            verifyJob = viewModelScope.launch { verifyAfterConnect(actual, config, fromCache, recover) }
+            verifyJob = viewModelScope.launch { verifyAfterConnect(actual, config, fromCache) }
             return true
         }
         return false
@@ -483,9 +497,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /**
      * Real traffic through the tunnel, after "connected" is already shown.
      * A transport that carries nothing is remembered as stalled and the
-     * connection is rebuilt once from a fresh profile with a full probe.
+     * connection is rebuilt from a fresh profile with a full probe, without
+     * it, until every transport the server offers has been tried.
      */
-    private suspend fun verifyAfterConnect(server: ColituServer, config: ColituVpnConfig, fromCache: Boolean, recover: Boolean) {
+    private suspend fun verifyAfterConnect(server: ColituServer, config: ColituVpnConfig, fromCache: Boolean) {
         val delayMs = verifyTunnel()
         if (!connected) return
         if (delayMs >= 0) {
@@ -498,9 +513,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         LogUtil.w(AppConfig.TAG, "Colitu: ${config.protocolType} is up but carries no traffic")
         store.removeValueForKey(KEY_GOOD_PREFIX + server.id)
         store.encode(KEY_STALLED_TRANSPORT, config.protocolType)
-        if (recover) {
+        config.protocolType?.let { stalledThisConnect += it }
+        // A cached profile may be stale, so a fresh one is always worth one try.
+        val untried = fromCache || offeredTransports.isEmpty() || (offeredTransports - stalledThisConnect).isNotEmpty()
+        if (untried) {
             showToast(ColituLoc["home.switchingTransport"], error = false)
-            startConnectFlow(fresh = true)
+            startConnectFlow(fresh = true, continuing = true)
         } else {
             showToast(ColituLoc["err.verify"], error = true)
         }

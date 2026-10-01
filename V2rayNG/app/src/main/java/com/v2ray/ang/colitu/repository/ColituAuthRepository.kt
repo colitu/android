@@ -304,7 +304,7 @@ object ColituAuthRepository {
             hardwareId()?.let { addProperty("hardware_id", it) }
             add("capabilities",JsonObject().apply {
                 add("config_formats",com.google.gson.JsonArray().apply{add("xray-mobile-v1")})
-                add("protocols",com.google.gson.JsonArray().apply{add("vless-reality");add("hysteria2");add("trojan");add("shadowsocks")})
+                add("protocols",com.google.gson.JsonArray().apply{add("vless-reality");add("vless-xhttp");add("hysteria2");add("trojan");add("shadowsocks")})
             })
         }
         return when(val result=ColituApiClient.postRenewing("/devices/register",body)){

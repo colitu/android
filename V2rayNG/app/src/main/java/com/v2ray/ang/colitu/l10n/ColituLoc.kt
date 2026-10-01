@@ -194,6 +194,13 @@ object ColituLoc {
         "home.autoPicked" to arrayOf("Выбран автоматически", "Otomatik seçildi", "Auto-selected"),
         "home.changeServer" to arrayOf("Сменить сервер", "Sunucuyu değiştir", "Change server"),
         "home.protocol" to arrayOf("Протокол", "Protokol", "Protocol"),
+        // Colitu names of the transports; the technical names stay out of the UI.
+        "transport.hysteria2" to arrayOf("Быстрый", "Hızlı", "Fast"),
+        "transport.vless-reality" to arrayOf("Скрытный", "Gizli", "Stealth"),
+        "transport.vless-xhttp" to arrayOf("Устойчивый", "Dayanıklı", "Resilient"),
+        "transport.trojan" to arrayOf("Классический", "Klasik", "Classic"),
+        "transport.shadowsocks" to arrayOf("Лёгкий", "Hafif", "Light"),
+        "transport.other" to arrayOf("Резервный", "Yedek", "Backup"),
         "locations.all" to arrayOf("Все", "Tümü", "All"),
         "locations.ai" to arrayOf("Нейросети", "Yapay zeka", "AI"),
         "locations.streaming" to arrayOf("Кино и сериалы", "Dizi & film", "Movies & TV"),

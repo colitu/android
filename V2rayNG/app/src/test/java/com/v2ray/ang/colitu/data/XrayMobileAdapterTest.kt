@@ -168,8 +168,50 @@ class XrayMobileAdapterTest {
     fun hysteria2IsPreferredOverTcpTransports() {
         val rank = XrayMobileAdapter.transportRank
         assertTrue(rank.getValue("hysteria2") < rank.getValue("vless-reality"))
-        assertTrue(rank.getValue("vless-reality") < rank.getValue("trojan"))
+        assertTrue(rank.getValue("vless-reality") < rank.getValue("vless-xhttp"))
+        assertTrue(rank.getValue("vless-xhttp") < rank.getValue("trojan"))
         assertTrue(rank.getValue("trojan") < rank.getValue("shadowsocks"))
+    }
+
+    @Test
+    fun rendersVlessXhttpWithRealityAndNoVisionFlow() {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-xhttp")
+        payload.add("transport", JsonParser.parseString("""{"type":"xhttp","path":"/fixture-path","mode":"auto"}"""))
+        val result = XrayMobileAdapter.render(source, now)
+        assertEquals("vless-xhttp", result.protocolType)
+        val outbound = JsonParser.parseString(requireNotNull(result.rawConfig)).asJsonObject.getAsJsonArray("outbounds")[0].asJsonObject
+        assertEquals("vless", outbound.get("protocol").asString)
+        val stream = outbound.getAsJsonObject("streamSettings")
+        assertEquals("xhttp", stream.get("network").asString)
+        assertEquals("reality", stream.get("security").asString)
+        assertEquals("/fixture-path", stream.getAsJsonObject("xhttpSettings").get("path").asString)
+        assertEquals("auto", stream.getAsJsonObject("xhttpSettings").get("mode").asString)
+        val user = outbound.getAsJsonObject("settings").getAsJsonArray("vnext")[0].asJsonObject.getAsJsonArray("users")[0].asJsonObject
+        assertFalse(user.has("flow"))
+    }
+
+    // A missing field is reported like every other missing profile field.
+    @Test(expected = IllegalStateException::class)
+    fun rejectsVlessXhttpWithoutPath() {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-xhttp")
+        payload.add("transport", JsonParser.parseString("""{"type":"xhttp"}"""))
+        XrayMobileAdapter.render(source, now)
+    }
+
+    @Test
+    fun screensShowColituNamesInsteadOfProtocolNames() {
+        for (protocol in XrayMobileAdapter.transportRank.keys) {
+            val name = XrayMobileAdapter.transportName(protocol)
+            assertTrue("$protocol has no name", name.isNotBlank() && !name.startsWith("transport."))
+            for (technical in listOf("Hysteria", "VLESS", "Reality", "XHTTP", "Trojan", "Shadowsocks")) {
+                assertFalse("$protocol shows $technical", name.contains(technical, ignoreCase = true))
+            }
+        }
+        assertEquals("", XrayMobileAdapter.transportName(null))
     }
 
     private fun envelope() = JsonParser.parseString(

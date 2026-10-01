@@ -35,6 +35,7 @@ object ColituVpnRepository {
                 MmkvManager.decodeServerList(subId).forEach { MmkvManager.removeServer(it) }
                 val profile = CustomFmt.parse(runtime).apply {
                     subscriptionId = subId
+                    // Shown in the VPN notification: Colitu's transport name only.
                     remarks = listOf("Colitu", XrayMobileAdapter.transportName(config.protocolType))
                         .filter { it.isNotBlank() }
                         .joinToString(" · ")
