@@ -19,7 +19,7 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: gradle
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: android-actions/setup-android@v4
       - name: Verify prebuilt VPN core
         # The Xray AAR and hev-socks5-tunnel libraries are committed binaries
         # (docs/core-provenance.md); any change must update SHA256SUMS on purpose.

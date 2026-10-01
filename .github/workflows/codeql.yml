@@ -37,7 +37,7 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         if: matrix.build-mode == 'manual'
 
       - name: Initialise CodeQL
