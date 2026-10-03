@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -50,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.design.CText
@@ -66,7 +65,6 @@ import com.v2ray.ang.colitu.design.ColituRadius
 import com.v2ray.ang.colitu.design.ColituRoundIcon
 import com.v2ray.ang.colitu.design.ColituText
 import com.v2ray.ang.colitu.design.ColituTile
-import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.pressable
 import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
@@ -237,22 +235,16 @@ private fun recommended(c: ColituController, items: List<ColituServer>): List<Co
     return items.filter { it in fastest }
 }
 
+/**
+ * One column everywhere, TV included, like iOS. A TV used to get two columns
+ * in a Row(IntrinsicSize.Min), but the card's TagLine is a BoxWithConstraints,
+ * which cannot answer intrinsic measurements: opening Locations crashed.
+ */
 @Composable
 private fun ServerCards(c: ColituController, servers: List<ColituServer>, startIndex: Int) {
-    if (ColituTv.isTv) {
-        // Two columns on a TV: the wide screen fits them and the remote needs fewer presses.
-        servers.chunked(2).forEach { pair ->
-            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                pair.forEach { server -> ServerCard(c, server, Modifier.weight(1f).fillMaxHeight()) }
-                if (pair.size == 1) Spacer(Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(10.dp))
-        }
-    } else {
-        servers.forEachIndexed { i, server ->
-            ServerCard(c, server, Modifier.reveal(40 * (startIndex + i).coerceAtMost(8)))
-            Spacer(Modifier.height(10.dp))
-        }
+    servers.forEachIndexed { i, server ->
+        ServerCard(c, server, Modifier.reveal(40 * (startIndex + i).coerceAtMost(8)))
+        Spacer(Modifier.height(10.dp))
     }
 }
 
@@ -323,6 +315,8 @@ private fun SortButton(sort: SortBy, onChange: (SortBy) -> Unit) {
                 alignment = Alignment.TopEnd,
                 offset = androidx.compose.ui.unit.IntOffset(0, offsetY),
                 onDismissRequest = { open = false },
+                // Focusable so a TV remote can move into the menu and Back closes it.
+                properties = PopupProperties(focusable = true),
             ) {
                 Column(
                     Modifier
