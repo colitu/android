@@ -140,6 +140,8 @@ data class ColituServerListResponse(
 
 data class ColituVpnConfig(
     val serverId: String,
+    /** ISO country of the server ("RU"), when the panel sends it. */
+    val serverCountry: String? = null,
     val configType: String,
     val protocolType: String?,
     val rawConfig: String?,

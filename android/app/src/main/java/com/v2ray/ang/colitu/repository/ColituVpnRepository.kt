@@ -32,8 +32,9 @@ object ColituVpnRepository {
             try {
                 val raw = config.rawConfig?.takeIf { it.isNotBlank() && config.revision != 0L }
                     ?: return@withContext Result.failure(Exception("CONFIG_NOT_READY"))
+                val proxied = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
                 val runtime = ColituAdBlock.apply(
-                    ColituRuBypass.apply(XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())),
+                    if (ColituRuBypass.appliesTo(config.serverCountry)) ColituRuBypass.apply(proxied) else proxied,
                 )
                 val subId = ensureColituSubscription()
                 MmkvManager.decodeServerList(subId).forEach { MmkvManager.removeServer(it) }

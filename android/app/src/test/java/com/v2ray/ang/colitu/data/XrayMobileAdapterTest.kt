@@ -23,6 +23,13 @@ class XrayMobileAdapterTest {
     }
 
     @Test
+    fun readsTheServerCountry() {
+        assertEquals(null, XrayMobileAdapter.render(envelope(), now).serverCountry)
+        val russian = envelope().apply { getAsJsonObject("server").addProperty("country", "ru") }
+        assertEquals("RU", XrayMobileAdapter.render(russian, now).serverCountry)
+    }
+
+    @Test
     fun rejectsExpiredOfflineGrace() {
         try {
             XrayMobileAdapter.render(envelope(), Instant.parse("2026-09-13T10:00:01Z"))

@@ -15,6 +15,13 @@ object ColituRuBypass {
     internal const val RULE_TAG = "colitu-ru-direct"
 
     /**
+     * Through a server in Russia the Russian sites already see a Russian
+     * address, and someone abroad picks that server for exactly those sites:
+     * they stay in the tunnel.
+     */
+    fun appliesTo(serverCountry: String?): Boolean = !serverCountry.equals("RU", ignoreCase = true)
+
+    /**
      * [raw] with Russian domains (`geosite:category-ru`) and Russian IPs
      * (`geoip:ru`) routed to the `direct` outbound. The local SOCKS inbound
      * sniffs TLS/HTTP/QUIC host names for routing only, so a Russian service

@@ -52,4 +52,12 @@ class ColituRuBypassTest {
         assertEquals(2, rules.count { it.get("ruleTag")?.asString == ColituRuBypass.RULE_TAG })
         assertEquals(3, rules.size)
     }
+
+    @Test
+    fun russianServerKeepsRussianSitesInTheTunnel() {
+        assertTrue(!ColituRuBypass.appliesTo("RU"))
+        assertTrue(!ColituRuBypass.appliesTo("ru"))
+        assertTrue(ColituRuBypass.appliesTo("DE"))
+        assertTrue(ColituRuBypass.appliesTo(null))
+    }
 }

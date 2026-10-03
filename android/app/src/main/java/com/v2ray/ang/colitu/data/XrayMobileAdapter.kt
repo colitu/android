@@ -121,6 +121,8 @@ object XrayMobileAdapter {
         }
         return ColituVpnConfig(
             serverId = envelope.getAsJsonObject("server")?.get("id")?.asString ?: "",
+            serverCountry = envelope.getAsJsonObject("server")?.get("country")
+                ?.takeIf { it.isJsonPrimitive }?.asString?.trim()?.uppercase()?.takeIf { it.isNotEmpty() },
             configType = "xray-mobile-v1",
             protocolType = protocol,
             rawConfig = runtime.toString(),
