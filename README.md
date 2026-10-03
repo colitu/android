@@ -1,5 +1,10 @@
 # Colitu VPN for Android
 
+[![Build](https://img.shields.io/github/actions/workflow/status/colitu/colitu-android/ci.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/colitu-android/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/colitu/colitu-android?style=flat-square&labelColor=101014&color=7c6cff)](https://github.com/colitu/colitu-android/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0-7c6cff?style=flat-square&labelColor=101014)](LICENSE)
+[![Colitu Network](https://img.shields.io/endpoint?url=https%3A%2F%2Fstatus.colitu.com%2Fapi%2Fgithub-badge%3Fcomponent%3Dnetwork&style=flat-square)](https://status.colitu.com)
+
 **English** · [Русский](README.ru.md)
 
 The open-source Android client of [Colitu VPN](https://colitu.com). It pairs a
