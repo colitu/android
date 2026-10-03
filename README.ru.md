@@ -3,9 +3,9 @@
 [English](README.md) · **Русский**
 
 Android-клиент [Colitu VPN](https://colitu.com) с открытым исходным кодом.
-Интерфейс написан на Jetpack Compose, а VPN работает на проверенном ядре Xray и
-`VpnService` из [v2rayNG](https://github.com/2dust/v2rayNG). Все данные об
-аккаунте, тарифе и серверах приложение получает через Colitu API.
+Интерфейс написан на Jetpack Compose, а VPN работает на ядре Xray через
+`VpnService`. Все данные об аккаунте, тарифе и серверах приложение получает
+через Colitu API.
 
 | | |
 |---|---|
@@ -58,7 +58,7 @@ Android-клиент [Colitu VPN](https://colitu.com) с открытым исх
 ## Структура проекта
 
 ```
-V2rayNG/                      проект Android Studio (Gradle, Kotlin)
+android/                      проект Android Studio (Gradle, Kotlin)
   app/src/main/java/com/v2ray/ang/
     colitu/
       api/                    HTTP-клиент, менеджер токенов, защищённое хранилище
@@ -68,7 +68,7 @@ V2rayNG/                      проект Android Studio (Gradle, Kotlin)
       screens/                экраны Compose (главная, локации, тариф, аккаунт, поддержка…)
       l10n/                   строки ru / en / tr
       update/                 проверяемый механизм самообновления
-    …                         исходное ядро v2rayNG (core, service, fmt, handler)
+    …                         среда выполнения туннеля (core, service, fmt, handler)
   app/libs/                   готовые libv2ray.aar и libhev-socks5-tunnel.so
 AndroidLibXrayLite/           сабмодуль: исходники libv2ray.aar
 hev-socks5-tunnel/            сабмодуль: исходники libhev-socks5-tunnel.so
@@ -79,12 +79,12 @@ fastlane/                     метаданные для магазина
 ## Сборка
 
 Нужны JDK 21 и Android SDK (platform 36). Нативные библиотеки уже собраны и
-лежат в `V2rayNG/app/libs`, поэтому сабмодули нужны только для их пересборки
+лежат в `android/app/libs`, поэтому сабмодули нужны только для их пересборки
 (`compile-hevtun.sh`, AndroidLibXrayLite).
 
 ```sh
 git clone https://github.com/cyberlexs/colitu-android.git
-cd colitu-android/V2rayNG
+cd colitu-android/android
 ./gradlew assemblePlaystoreDebug          # debug APK
 ./gradlew testPlaystoreDebugUnitTest      # юнит-тесты
 ```
@@ -111,20 +111,14 @@ cd colitu-android/V2rayNG
 Если вы нашли уязвимость, пожалуйста, не создавайте публичный issue. Напишите
 на **support@colitu.com**, и мы с вами свяжемся.
 
-## Благодарности
-
-Colitu для Android основан на этих проектах:
-
-- [v2rayNG](https://github.com/2dust/v2rayNG) (GPL-3.0): форк, на котором построен клиент
-- [Xray-core](https://github.com/XTLS/Xray-core) и [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite)
-- [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)
-
 ## Лицензия
 
-Проект является форком v2rayNG и распространяется по лицензии
-[GNU General Public License v3.0](LICENSE). Уведомления о сторонних компонентах
-находятся в `app/src/main/assets/open_source_licenses.html`.
+Colitu VPN для Android распространяется по лицензии
+[GNU General Public License v3.0](LICENSE). В состав входят компоненты с
+открытым исходным кодом (Xray-core, hev-socks5-tunnel и другие), которые
+сохраняют свои лицензии; полный список — в файле [NOTICE](NOTICE). Те же
+уведомления приложение показывает из `app/src/main/assets/open_source_licenses.html`.
 
 Название и логотип «Colitu» являются товарными знаками Colitu и не подпадают
-под действие GPL. Если вы публикуете форк, используйте собственное название и
-оформление.
+под действие GPL. Если вы распространяете изменённую версию, используйте
+собственное название и оформление.

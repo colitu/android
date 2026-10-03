@@ -13,7 +13,7 @@ are welcome.
 ## Building
 
 ```
-cd V2rayNG
+cd android
 ./gradlew testPlaystoreDebugUnitTest assemblePlaystoreDebug
 ```
 

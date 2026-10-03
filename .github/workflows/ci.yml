@@ -23,10 +23,10 @@ jobs:
       - name: Verify prebuilt VPN core
         # The Xray AAR and hev-socks5-tunnel libraries are committed binaries
         # (docs/core-provenance.md); any change must update SHA256SUMS on purpose.
-        working-directory: V2rayNG/app/libs
+        working-directory: android/app/libs
         run: sha256sum -c SHA256SUMS
       - name: Unit, lint and unsigned PR artifact
-        working-directory: V2rayNG
+        working-directory: android
         run: |
           ./gradlew testPlaystoreDebugUnitTest lintPlaystoreRelease compilePlaystoreDebugAndroidTestKotlin assemblePlaystoreDebug --no-daemon
           sha256sum app/libs/libv2ray.aar > app/build/libv2ray.aar.sha256
@@ -34,16 +34,16 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: |
           python scripts/generate-android-sbom.py \
-            --dependencies V2rayNG/app/build/playstore-release-dependencies.txt \
-            --artifact "$(find V2rayNG/app/build/outputs/apk/playstore/debug -name '*_universal.apk' -print -quit)" \
-            --native-dir V2rayNG/app/libs \
-            --version "$(grep -oP 'versionName = "\K[^"]+' V2rayNG/app/build.gradle.kts | head -n 1)-ci" \
-            --output V2rayNG/app/build/colitu-android.cdx.json
+            --dependencies android/app/build/playstore-release-dependencies.txt \
+            --artifact "$(find android/app/build/outputs/apk/playstore/debug -name '*_universal.apk' -print -quit)" \
+            --native-dir android/app/libs \
+            --version "$(grep -oP 'versionName = "\K[^"]+' android/app/build.gradle.kts | head -n 1)-ci" \
+            --output android/app/build/colitu-android.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-ci-provenance
           path: |
-            V2rayNG/app/build/libv2ray.aar.sha256
-            V2rayNG/app/build/playstore-release-dependencies.txt
-            V2rayNG/app/build/colitu-android.cdx.json
+            android/app/build/libv2ray.aar.sha256
+            android/app/build/playstore-release-dependencies.txt
+            android/app/build/colitu-android.cdx.json
           if-no-files-found: error

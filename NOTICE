@@ -1,0 +1,22 @@
+Colitu VPN for Android
+Copyright (C) Colitu
+
+This program is free software, distributed under the GNU General Public
+License v3.0 (see LICENSE).
+
+It contains code from the following open-source projects. The parts taken
+from them have been modified by Colitu since May 2026.
+
+  v2rayNG             https://github.com/2dust/v2rayNG             GPL-3.0
+                      Copyright (C) 2dust
+                      (tunnel runtime in android/app/src/main/java/com/v2ray/ang)
+
+Bundled native libraries, each under its own license:
+
+  Xray-core           https://github.com/XTLS/Xray-core            MPL-2.0
+  AndroidLibXrayLite  https://github.com/2dust/AndroidLibXrayLite  (see its LICENSE)
+                      (libv2ray.aar, the Android binding of Xray-core)
+  hev-socks5-tunnel   https://github.com/heiher/hev-socks5-tunnel  MIT
+
+The full texts shown in the app are in
+android/app/src/main/assets/open_source_licenses.html.

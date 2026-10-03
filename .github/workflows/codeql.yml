@@ -49,7 +49,7 @@ jobs:
 
       - name: Build
         if: matrix.build-mode == 'manual'
-        working-directory: V2rayNG
+        working-directory: android
         run: ./gradlew compilePlaystoreDebugKotlin compilePlaystoreDebugJavaWithJavac --no-daemon
 
       - name: Analyse

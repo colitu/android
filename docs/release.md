@@ -54,6 +54,6 @@ if the API ever moves to another CA, add its root before switching.
 
 ## Prebuilt core
 
-`V2rayNG/app/libs/SHA256SUMS` lists the committed Xray AAR and
+`android/app/libs/SHA256SUMS` lists the committed Xray AAR and
 hev-socks5-tunnel libraries (see `core-provenance.md`). CI fails when a
 binary changes without that file being updated in the same commit.

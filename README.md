@@ -3,9 +3,8 @@
 **English** · [Русский](README.ru.md)
 
 The open-source Android client of [Colitu VPN](https://colitu.com). It pairs a
-Jetpack Compose interface with the proven Xray / `VpnService` runtime of
-[v2rayNG](https://github.com/2dust/v2rayNG), and gets every account, plan and
-server detail from the Colitu API.
+Jetpack Compose interface with an Xray / `VpnService` tunnel runtime, and gets
+every account, plan and server detail from the Colitu API.
 
 | | |
 |---|---|
@@ -59,7 +58,7 @@ is always the source of truth.
 ## Project layout
 
 ```
-V2rayNG/                      Android Studio project (Gradle, Kotlin)
+android/                      Android Studio project (Gradle, Kotlin)
   app/src/main/java/com/v2ray/ang/
     colitu/
       api/                    HTTP client, token manager, secure storage
@@ -69,7 +68,7 @@ V2rayNG/                      Android Studio project (Gradle, Kotlin)
       screens/                Compose screens (home, locations, plan, account, support…)
       l10n/                   ru / en / tr strings
       update/                 verified self-updater
-    …                         upstream v2rayNG runtime (core, service, fmt, handler)
+    …                         tunnel runtime (core, service, fmt, handler)
   app/libs/                   prebuilt libv2ray.aar and libhev-socks5-tunnel.so
 AndroidLibXrayLite/           submodule: source of libv2ray.aar
 hev-socks5-tunnel/            submodule: source of libhev-socks5-tunnel.so
@@ -80,12 +79,12 @@ fastlane/                     store metadata
 ## Building
 
 Requirements: JDK 21 and the Android SDK (platform 36). The native libraries
-are already prebuilt in `V2rayNG/app/libs`, so the submodules are only needed
+are already prebuilt in `android/app/libs`, so the submodules are only needed
 if you want to rebuild them (`compile-hevtun.sh`, AndroidLibXrayLite).
 
 ```sh
 git clone https://github.com/cyberlexs/colitu-android.git
-cd colitu-android/V2rayNG
+cd colitu-android/android
 ./gradlew assemblePlaystoreDebug          # debug APK
 ./gradlew testPlaystoreDebugUnitTest      # unit tests
 ```
@@ -111,19 +110,14 @@ git-ignored `signing.properties`. Keystores are never committed. See
 If you find a vulnerability, please do not open a public issue. Write to
 **support@colitu.com** with the details and we will get back to you.
 
-## Credits
-
-Colitu for Android is built on the work of these projects:
-
-- [v2rayNG](https://github.com/2dust/v2rayNG) (GPL-3.0): the app this client is forked from
-- [Xray-core](https://github.com/XTLS/Xray-core) and [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite)
-- [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel)
-
 ## License
 
-This project is a fork of v2rayNG and is distributed under the
-[GNU General Public License v3.0](LICENSE). Third-party notices ship in
+Colitu VPN for Android is distributed under the
+[GNU General Public License v3.0](LICENSE). It includes open-source components
+(Xray-core, hev-socks5-tunnel and others) that keep their own licenses; see
+[NOTICE](NOTICE). The app shows the same notices in
 `app/src/main/assets/open_source_licenses.html`.
 
 The "Colitu" name and logo are trademarks of Colitu and are not covered by the
-GPL. If you publish a fork, please use your own name and branding.
+GPL. If you redistribute a modified version, please use your own name and
+branding.

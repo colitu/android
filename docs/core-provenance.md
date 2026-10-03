@@ -2,7 +2,7 @@
 
 ## Android
 
-The checked-in `V2rayNG/app/libs/libv2ray.aar` has SHA-256:
+The checked-in `android/app/libs/libv2ray.aar` has SHA-256:
 
 ```text
 322A37E4F8D07C939D0AF85799D3692612834441CF36BEE5086F6B577C8E028A

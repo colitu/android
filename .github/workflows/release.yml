@@ -22,7 +22,7 @@ jobs:
       - name: Verify prebuilt VPN core
         # The Xray AAR and hev-socks5-tunnel libraries are committed binaries
         # (docs/core-provenance.md); any change must update SHA256SUMS on purpose.
-        working-directory: V2rayNG/app/libs
+        working-directory: android/app/libs
         run: sha256sum -c SHA256SUMS
       - name: Materialize temporary keystore
         env:
@@ -33,7 +33,7 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/colitu-signing/release.jks"
           chmod 600 "$RUNNER_TEMP/colitu-signing/release.jks"
       - name: Build signed bundle
-        working-directory: V2rayNG
+        working-directory: android
         env:
           COLITU_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/colitu-signing/release.jks
           COLITU_ANDROID_STORE_PASSWORD: ${{ secrets.COLITU_ANDROID_STORE_PASSWORD }}
@@ -44,24 +44,24 @@ jobs:
         run: ./gradlew testPlaystoreReleaseUnitTest lintPlaystoreRelease bundlePlaystoreRelease assembleDirectRelease --no-daemon
       - name: Verify signature
         run: |
-          out=V2rayNG/app/build/outputs/bundle/playstoreRelease
+          out=android/app/build/outputs/bundle/playstoreRelease
           jarsigner -verify -strict $out/app-playstore-release.aab
-          cp V2rayNG/app/build/outputs/apk/direct/release/*.apk $out/
+          cp android/app/build/outputs/apk/direct/release/*.apk $out/
           (cd $out && sha256sum *.apk > SHA256SUMS-direct)
           sha256sum $out/app-playstore-release.aab > $out/SHA256SUMS
-          sha256sum V2rayNG/app/libs/libv2ray.aar > $out/libv2ray.aar.sha256
-          cd V2rayNG && ./gradlew app:dependencies --configuration playstoreReleaseRuntimeClasspath > app/build/outputs/bundle/playstoreRelease/dependencies.txt
+          sha256sum android/app/libs/libv2ray.aar > $out/libv2ray.aar.sha256
+          cd android && ./gradlew app:dependencies --configuration playstoreReleaseRuntimeClasspath > app/build/outputs/bundle/playstoreRelease/dependencies.txt
       - name: Generate CycloneDX SBOM
         run: |
           python scripts/generate-android-sbom.py \
-            --dependencies V2rayNG/app/build/outputs/bundle/playstoreRelease/dependencies.txt \
-            --artifact V2rayNG/app/build/outputs/bundle/playstoreRelease/app-playstore-release.aab \
-            --native-dir V2rayNG/app/libs \
+            --dependencies android/app/build/outputs/bundle/playstoreRelease/dependencies.txt \
+            --artifact android/app/build/outputs/bundle/playstoreRelease/app-playstore-release.aab \
+            --native-dir android/app/libs \
             --version "${GITHUB_REF_NAME#v}" \
-            --output V2rayNG/app/build/outputs/bundle/playstoreRelease/colitu-android.cdx.json
+            --output android/app/build/outputs/bundle/playstoreRelease/colitu-android.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: colitu-android-${{ github.ref_name }}
-          path: V2rayNG/app/build/outputs/bundle/playstoreRelease/
+          path: android/app/build/outputs/bundle/playstoreRelease/
           if-no-files-found: error
           retention-days: 14
