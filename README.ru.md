@@ -3,7 +3,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/colitu/colitu-android/ci.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/colitu-android/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/colitu/colitu-android?style=flat-square&labelColor=101014&color=7c6cff)](https://github.com/colitu/colitu-android/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-7c6cff?style=flat-square&labelColor=101014)](LICENSE)
-[![Colitu Network](https://img.shields.io/endpoint?url=https%3A%2F%2Fstatus.colitu.com%2Fapi%2Fgithub-badge%3Fcomponent%3Dnetwork&style=flat-square)](https://status.colitu.com)
+[![Colitu Network](https://img.shields.io/endpoint?url=https://status.colitu.com/api/github-badge/network&style=flat-square)](https://status.colitu.com)
 
 [English](README.md) · **Русский**
 
@@ -86,6 +86,23 @@ fastlane/                     метаданные для магазина
 Нужны JDK 21 и Android SDK (platform 36). Нативные библиотеки уже собраны и
 лежат в `android/app/libs`, поэтому сабмодули нужны только для их пересборки
 (`compile-hevtun.sh`, AndroidLibXrayLite).
+
+### Сборка нативных библиотек из исходников
+
+Обе библиотеки собираются из закреплённых сабмодулей: `AndroidLibXrayLite`
+(Xray-core v26.5.9) и `hev-socks5-tunnel`. Нужны Go 1.26+, Android NDK r27 и SDK:
+
+```sh
+git submodule update --init --recursive
+export ANDROID_HOME=… ANDROID_NDK_HOME=… NDK_HOME=$ANDROID_NDK_HOME
+./compile-hevtun.sh      # android/app/libs/<abi>/libhev-socks5-tunnel.so
+./compile-libv2ray.sh    # android/app/libs/libv2ray.aar (gomobile)
+```
+
+`APP_ABI=arm64-v8a` и `GOMOBILE_TARGET=android/arm64` ограничивают сборку одной
+архитектурой. Так приложение собирает F-Droid, без готовых файлов; рецепт —
+в [`fdroid/com.colitulu.yml`](fdroid/com.colitulu.yml).
+
 
 ```sh
 git clone https://github.com/cyberlexs/colitu-android.git

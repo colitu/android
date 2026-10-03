@@ -3,7 +3,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/colitu/colitu-android/ci.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/colitu-android/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/colitu/colitu-android?style=flat-square&labelColor=101014&color=7c6cff)](https://github.com/colitu/colitu-android/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-7c6cff?style=flat-square&labelColor=101014)](LICENSE)
-[![Colitu Network](https://img.shields.io/endpoint?url=https%3A%2F%2Fstatus.colitu.com%2Fapi%2Fgithub-badge%3Fcomponent%3Dnetwork&style=flat-square)](https://status.colitu.com)
+[![Colitu Network](https://img.shields.io/endpoint?url=https://status.colitu.com/api/github-badge/network&style=flat-square)](https://status.colitu.com)
 
 **English** · [Русский](README.ru.md)
 
@@ -75,8 +75,9 @@ android/                      Android Studio project (Gradle, Kotlin)
       update/                 verified self-updater
     …                         tunnel runtime (core, service, fmt, handler)
   app/libs/                   prebuilt libv2ray.aar and libhev-socks5-tunnel.so
-AndroidLibXrayLite/           submodule: source of libv2ray.aar
-hev-socks5-tunnel/            submodule: source of libhev-socks5-tunnel.so
+AndroidLibXrayLite/           submodule: source of libv2ray.aar (compile-libv2ray.sh)
+hev-socks5-tunnel/            submodule: source of libhev-socks5-tunnel.so (compile-hevtun.sh)
+fdroid/                      F-Droid build recipe
 docs/                         release and store-listing notes
 fastlane/                     store metadata
 ```
@@ -85,7 +86,24 @@ fastlane/                     store metadata
 
 Requirements: JDK 21 and the Android SDK (platform 36). The native libraries
 are already prebuilt in `android/app/libs`, so the submodules are only needed
-if you want to rebuild them (`compile-hevtun.sh`, AndroidLibXrayLite).
+if you want to rebuild them.
+
+### Building the native libraries from source
+
+Both libraries come from pinned submodules: `AndroidLibXrayLite` (Xray-core
+v26.5.9) and `hev-socks5-tunnel`. With Go 1.26+, the Android NDK r27 and the
+SDK:
+
+```sh
+git submodule update --init --recursive
+export ANDROID_HOME=… ANDROID_NDK_HOME=… NDK_HOME=$ANDROID_NDK_HOME
+./compile-hevtun.sh      # android/app/libs/<abi>/libhev-socks5-tunnel.so
+./compile-libv2ray.sh    # android/app/libs/libv2ray.aar (gomobile)
+```
+
+`APP_ABI=arm64-v8a` and `GOMOBILE_TARGET=android/arm64` limit both scripts to
+one ABI. F-Droid builds the app this way, without the prebuilt files; its
+recipe is in [`fdroid/com.colitulu.yml`](fdroid/com.colitulu.yml).
 
 ```sh
 git clone https://github.com/cyberlexs/colitu-android.git
