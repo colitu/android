@@ -41,7 +41,7 @@ jobs:
         if: matrix.build-mode == 'manual'
 
       - name: Initialise CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -53,6 +53,6 @@ jobs:
         run: ./gradlew compilePlaystoreDebugKotlin compilePlaystoreDebugJavaWithJavac --no-daemon
 
       - name: Analyse
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
