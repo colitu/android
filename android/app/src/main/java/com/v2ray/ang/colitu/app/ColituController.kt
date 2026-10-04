@@ -316,6 +316,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
     }.getOrDefault(emptyMap())
 
     private suspend fun refreshPolicy() {
+        // The poll keeps running on the sign-in screen; without a session the
+        // 401 would end up in clear() and could wipe a sign-in in progress.
+        if (!ColituTokenManager.isLoggedIn()) return
         val bootstrap = runCatching { ColituVpnRepository.fetchVpnStatus() }.getOrNull() ?: return
         val policy = runCatching { ClientBootstrapPolicy.fromJson(bootstrap) }.getOrNull() ?: return
         ColituTokenManager.saveEntitlementStatus(policy.entitlementStatus)

@@ -65,6 +65,10 @@ import kotlinx.coroutines.withContext
 
 private enum class AuthMode { Login, Register }
 
+/** Input caps: RFC 5321 address length; passwords far above any real one. */
+internal const val MAX_EMAIL_LENGTH = 254
+internal const val MAX_PASSWORD_LENGTH = 256
+
 private val emailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 
 /**
@@ -79,8 +83,9 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     val scope = rememberCoroutineScope()
     var mode by rememberSaveable { mutableStateOf(if (register) AuthMode.Register else AuthMode.Login) }
     var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
-    var repeat by rememberSaveable { mutableStateOf("") }
+    // Passwords stay out of the saved-instance-state Bundle.
+    var password by remember { mutableStateOf("") }
+    var repeat by remember { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var acceptTerms by rememberSaveable { mutableStateOf(false) }
     // Not saveable: a request does not survive the process, so a restored
@@ -175,7 +180,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                 Spacer(Modifier.height(20.dp))
                 ColituField(
                     value = email,
-                    onChange = { email = it },
+                    onChange = { email = it.take(MAX_EMAIL_LENGTH) },
                     label = loc["auth.email"],
                     hint = loc["auth.emailHint"],
                     keyboardType = KeyboardType.Email,
@@ -186,7 +191,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                 Spacer(Modifier.height(14.dp))
                 ColituField(
                     value = password,
-                    onChange = { password = it },
+                    onChange = { password = it.take(MAX_PASSWORD_LENGTH) },
                     label = loc["auth.password"],
                     hint = loc["auth.passwordHint"],
                     password = !showPassword,
@@ -222,7 +227,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                     Spacer(Modifier.height(14.dp))
                     ColituField(
                         value = repeat,
-                        onChange = { repeat = it },
+                        onChange = { repeat = it.take(MAX_PASSWORD_LENGTH) },
                         label = loc["auth.passwordRepeat"],
                         password = !showPassword,
                         keyboardType = KeyboardType.Password,

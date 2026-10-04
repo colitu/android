@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -51,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
@@ -258,7 +260,21 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
         }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    // Approving signs another device into this account: no screenshots of it
+    // (it shows the e-mail), and no taps that arrive through an overlay.
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+            securePolicy = SecureFlagPolicy.SecureOn,
+        ),
+    ) {
+        val dialogView = LocalView.current
+        DisposableEffect(dialogView) {
+            dialogView.rootView.filterTouchesWhenObscured = true
+            onDispose { }
+        }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             if (permitted && request == null && !typing) {
                 QrCameraPreview(Modifier.fillMaxSize()) { text ->
@@ -383,7 +399,10 @@ private fun QrCameraPreview(modifier: Modifier, onText: (String) -> Unit) {
     DisposableEffect(lifecycleOwner) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
+        var disposed = false
         future.addListener({
+            // The scanner may already be closed: never bind the camera then.
+            if (disposed) return@addListener
             provider = runCatching { future.get() }.getOrNull() ?: return@addListener
             val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
             @Suppress("DEPRECATION")
@@ -398,6 +417,7 @@ private fun QrCameraPreview(modifier: Modifier, onText: (String) -> Unit) {
             }
         }, ContextCompat.getMainExecutor(context))
         onDispose {
+            disposed = true
             runCatching { provider?.unbindAll() }
             executor.shutdown()
         }

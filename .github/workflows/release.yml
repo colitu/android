@@ -18,7 +18,7 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: gradle
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
       - name: Verify prebuilt VPN core
         # The Xray AAR and hev-socks5-tunnel libraries are committed binaries
         # (docs/core-provenance.md); any change must update SHA256SUMS on purpose.
@@ -40,6 +40,8 @@ jobs:
           COLITU_ANDROID_KEY_ALIAS: ${{ secrets.COLITU_ANDROID_KEY_ALIAS }}
           COLITU_ANDROID_KEY_PASSWORD: ${{ secrets.COLITU_ANDROID_KEY_PASSWORD }}
           COLITU_REQUIRE_RELEASE_SIGNING: 'true'
+          # Ad-block DoH hosts (node domains) stay out of the repository.
+          COLITU_ADBLOCK_DOH: ${{ secrets.COLITU_ADBLOCK_DOH }}
         # Play: signed AAB. colitu.com: the self-updating "direct" APKs.
         run: ./gradlew testPlaystoreReleaseUnitTest lintPlaystoreRelease bundlePlaystoreRelease assembleDirectRelease --no-daemon
       - name: Verify signature

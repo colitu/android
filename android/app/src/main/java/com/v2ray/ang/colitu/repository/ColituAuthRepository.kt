@@ -219,21 +219,6 @@ object ColituAuthRepository {
             onFailure = { if (it.message == EMAIL_NOT_VERIFIED) Result.success(null) else Result.failure(it) },
         )
 
-    suspend fun refreshToken(): Boolean {
-        val refresh = ColituTokenManager.getRefreshToken() ?: return false
-        val body = JsonObject().apply { addProperty("refresh_token", refresh) }
-        return when (val result = ColituApiClient.post("/auth/refresh", body)) {
-            is ColituApiClient.ApiResult.Success -> {
-                val auth = ColituAuthResponse.fromJson(result.data)
-                if (!auth.accessToken.isNullOrBlank()) {
-                    ColituTokenManager.saveTokens(auth.accessToken, auth.refreshToken)
-                    true
-                } else false
-            }
-            is ColituApiClient.ApiResult.Error -> false
-        }
-    }
-
     suspend fun fetchMe(): ColituUser {
         val json = when (val result = ColituApiClient.get("/me")) {
             is ColituApiClient.ApiResult.Success -> result.data

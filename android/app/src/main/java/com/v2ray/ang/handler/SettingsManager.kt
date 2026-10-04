@@ -321,12 +321,14 @@ object SettingsManager {
      */
     fun initAssets(context: Context, assets: AssetManager) {
         val extFolder = Utils.userAssetPath(context)
+        val installedAt = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrDefault(0L)
 
         try {
             val geo = arrayOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT, AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT)
             assets.list("")
                 ?.filter { geo.contains(it) }
-                ?.filter { val f = File(extFolder, it); !f.exists() || f.length() == 0L }
+                // Also re-copied after an app update, so new routing data in the APK is used.
+                ?.filter { val f = File(extFolder, it); !f.exists() || f.length() == 0L || f.lastModified() < installedAt }
                 ?.forEach {
                     val target = File(extFolder, it)
                     assets.open(it).use { input ->

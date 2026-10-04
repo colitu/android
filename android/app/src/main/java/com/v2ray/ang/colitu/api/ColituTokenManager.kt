@@ -35,6 +35,18 @@ object ColituTokenManager {
         }
     }
 
+    /** Bumped by [clear]; a token refresh that started before a sign-out must not save its tokens. */
+    @Volatile private var generation = 0L
+    fun sessionGeneration(): Long = generation
+
+    /** Saves refreshed tokens unless the session was cleared since [startedAt] was read. */
+    @Synchronized
+    fun saveRefreshedTokens(startedAt: Long, accessToken: String, refreshToken: String?): Boolean {
+        if (startedAt != generation) return false
+        saveTokens(accessToken, refreshToken)
+        return true
+    }
+
     fun saveUserInfo(id: String, email: String, name: String, plan: String, entitlementStatus: String) {
         ColituSecureStore.put(KEY_USER_ID, id)
         ColituSecureStore.put(KEY_USER_EMAIL, email)
@@ -68,7 +80,9 @@ object ColituTokenManager {
      * the next account starts clean (no synced server, remembered transports
      * or auto-connect of the previous one, no quick start from the tile).
      */
+    @Synchronized
     fun clear() {
+        generation++
         com.v2ray.ang.core.CoreServiceManager.stopVService(com.v2ray.ang.AngApplication.application)
         com.v2ray.ang.colitu.app.ColituQuickStart.revoke()
         val settings = com.tencent.mmkv.MMKV.mmkvWithID("COLITU_SETTINGS", com.tencent.mmkv.MMKV.MULTI_PROCESS_MODE)

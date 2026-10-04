@@ -181,6 +181,12 @@ object ColituSupportRepository {
         "(\"(?:password|pass|user|uuid|id|auth|token|access_token|refresh_token|private_key|privateKey|public_key|publicKey|short_id|shortId)\"\\s*:\\s*)\"[^\"]*\"",
         RegexOption.IGNORE_CASE,
     )
+    // Share-link / URL parameters such as pbk=, sid=, password=, token=.
+    private val querySecret = Regex(
+        "\\b(password|pass|pwd|pbk|sid|token|access_token|refresh_token|key|auth|uuid)=[^&\\s\"]+",
+        RegexOption.IGNORE_CASE,
+    )
+    private val email = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}\\b")
     private val ipv4 = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
     private val ipv6 = Regex("\\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\\b", RegexOption.IGNORE_CASE)
 
@@ -188,6 +194,8 @@ object ColituSupportRepository {
         .replace(shareLink, "$1***@")
         .replace(bearer, "Bearer ***")
         .replace(jsonSecret, "$1\"***\"")
+        .replace(querySecret, "$1=***")
+        .replace(email, "***@***")
         .replace(ipv4, "x.x.x.x")
         .replace(ipv6, "x:x::x")
 }

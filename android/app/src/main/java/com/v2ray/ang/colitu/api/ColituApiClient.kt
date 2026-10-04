@@ -282,7 +282,9 @@ object ColituApiClient {
      * the session (and the running tunnel) alone.
      */
     private suspend fun handle401(req: Request, url: String, attempt: Int, allowRefresh: Boolean): ApiResult<JsonObject> {
-        if (!allowRefresh || noRefreshPaths.any { url.contains(it) }) {
+        // Signed out (or signed out while this request was in flight): there is
+        // no session to end, so don't clear() a sign-in that may be starting.
+        if (!allowRefresh || noRefreshPaths.any { url.contains(it) } || !ColituTokenManager.isLoggedIn()) {
             logFailedRequest(req, 401, attempt)
             return ApiResult.Error(401, "auth_expired", isAuthError = true)
         }
@@ -303,6 +305,7 @@ object ColituApiClient {
     }
 
     private suspend fun attemptTokenRefresh(): RefreshOutcome {
+        val generation = ColituTokenManager.sessionGeneration()
         val refreshToken = ColituTokenManager.getRefreshToken() ?: return RefreshOutcome.Rejected
         val now = System.currentTimeMillis()
         if (refreshToken == lastSuccessfulRefreshToken && now - lastSuccessfulRefreshMs < REFRESH_DEBOUNCE_MS) {
@@ -328,7 +331,10 @@ object ColituApiClient {
                     ?: return@use RefreshOutcome.Unavailable
                 val newAccess = json.tryString("access_token") ?: return@use RefreshOutcome.Unavailable
                 val newRefresh = json.tryString("refresh_token")
-                ColituTokenManager.saveTokens(newAccess, newRefresh)
+                // Signed out while the refresh was in flight: don't bring the session back.
+                if (!ColituTokenManager.saveRefreshedTokens(generation, newAccess, newRefresh)) {
+                    return@use RefreshOutcome.Unavailable
+                }
                 lastSuccessfulRefreshToken = newRefresh ?: refreshToken
                 lastSuccessfulRefreshMs = System.currentTimeMillis()
                 RefreshOutcome.Renewed

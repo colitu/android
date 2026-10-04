@@ -81,7 +81,7 @@ fun VerifyScreen(
     val scope = rememberCoroutineScope()
     val email = ColituTokenManager.getPendingVerificationEmail() ?: ColituTokenManager.getUserEmail().orEmpty()
     var code by rememberSaveable { mutableStateOf("") }
-    var loading by rememberSaveable { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var info by rememberSaveable { mutableStateOf<String?>(null) }
     var cooldown by rememberSaveable { mutableIntStateOf(if (codeJustSent) RESEND_COOLDOWN else 0) }

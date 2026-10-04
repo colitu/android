@@ -99,9 +99,10 @@ class ColituSecurityTest {
             Authorization: Bearer abc.def.ghi
             {"id":"uuid-1","password":"p","publicKey":"k","short_id":"s"}
             dial tcp 203.0.113.77:8443 failed, v6 2001:db8:21e0::98:36
+            https://node.example/sub?token=tok123&pbk=pbk456 sid=sid789 user mail@example.com
         """.trimIndent()
         val masked = ColituSupportRepository.redact(text)
-        for (secret in listOf("11111111-1111", "abc.def.ghi", "uuid-1", "\"p\"", "\"k\"", "\"s\"", "203.0.113.77", "2001:db8")) {
+        for (secret in listOf("11111111-1111", "abc.def.ghi", "uuid-1", "\"p\"", "\"k\"", "\"s\"", "203.0.113.77", "2001:db8", "tok123", "pbk456", "sid789", "mail@example.com")) {
             assertFalse("$secret leaked", masked.contains(secret))
         }
     }

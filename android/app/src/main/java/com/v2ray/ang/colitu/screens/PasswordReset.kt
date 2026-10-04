@@ -58,8 +58,9 @@ fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () 
     var email by rememberSaveable { mutableStateOf(initialEmail.trim()) }
     var codeSent by rememberSaveable { mutableStateOf(false) }
     var code by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
-    var repeat by rememberSaveable { mutableStateOf("") }
+    // Passwords stay out of the saved-instance-state Bundle.
+    var password by remember { mutableStateOf("") }
+    var repeat by remember { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     var cooldown by rememberSaveable { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
@@ -130,7 +131,7 @@ fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () 
             Spacer(Modifier.height(18.dp))
             ColituField(
                 value = email,
-                onChange = { email = it; emailError = null },
+                onChange = { email = it.take(MAX_EMAIL_LENGTH); emailError = null },
                 label = loc["auth.email"],
                 hint = loc["auth.emailHint"],
                 keyboardType = KeyboardType.Email,
@@ -154,7 +155,7 @@ fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () 
                 Spacer(Modifier.height(14.dp))
                 ColituField(
                     value = password,
-                    onChange = { password = it; passwordError = null },
+                    onChange = { password = it.take(MAX_PASSWORD_LENGTH); passwordError = null },
                     label = loc["reset.newPassword"],
                     hint = loc["auth.passwordHint"],
                     password = !showPassword,
@@ -179,7 +180,7 @@ fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () 
                 Spacer(Modifier.height(14.dp))
                 ColituField(
                     value = repeat,
-                    onChange = { repeat = it; repeatError = null },
+                    onChange = { repeat = it.take(MAX_PASSWORD_LENGTH); repeatError = null },
                     label = loc["auth.passwordRepeat"],
                     password = !showPassword,
                     keyboardType = KeyboardType.Password,

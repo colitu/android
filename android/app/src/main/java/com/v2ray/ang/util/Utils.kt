@@ -8,7 +8,6 @@ import android.content.res.Configuration.UI_MODE_NIGHT_MASK
 import android.content.res.Configuration.UI_MODE_NIGHT_NO
 import android.os.Build
 import android.os.LocaleList
-import android.provider.Settings
 import android.text.Editable
 import android.util.Base64
 import android.util.Patterns
@@ -30,6 +29,8 @@ import java.util.Locale
 import java.util.UUID
 
 object Utils {
+
+    private const val XUDP_BASE_KEY = "pref_xudp_base_key"
 
     private val IPV4_REGEX =
         Regex("^([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])$")
@@ -410,9 +411,11 @@ object Utils {
     fun userAssetPath(context: Context?): String {
         if (context == null) return ""
 
+        // App-private storage only: on Android 9 and older any app with
+        // WRITE_EXTERNAL_STORAGE could rewrite geoip.dat/geosite.dat in the
+        // external files dir and so change which traffic goes direct.
         return try {
-            context.getExternalFilesDir(AppConfig.DIR_ASSETS)?.absolutePath
-                ?: context.getDir(AppConfig.DIR_ASSETS, 0).absolutePath
+            context.getDir(AppConfig.DIR_ASSETS, Context.MODE_PRIVATE).absolutePath
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to get user asset path", e)
             ""
@@ -422,12 +425,17 @@ object Utils {
     /**
      * Get the device ID for XUDP base key.
      *
+     * A random 32-byte key made once per installation. (Upstream encoded the
+     * constant name Settings.Secure.ANDROID_ID, so every device had the same key.)
+     *
      * @return The device ID for XUDP base key.
      */
     fun getDeviceIdForXUDPBaseKey(): String {
         return try {
-            val androidId = Settings.Secure.ANDROID_ID.toByteArray(Charsets.UTF_8)
-            Base64.encodeToString(androidId.copyOf(32), Base64.NO_PADDING.or(Base64.URL_SAFE))
+            com.v2ray.ang.handler.MmkvManager.decodeSettingsString(XUDP_BASE_KEY)?.takeIf { it.isNotBlank() }
+                ?: ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+                    .let { Base64.encodeToString(it, Base64.NO_PADDING or Base64.URL_SAFE or Base64.NO_WRAP) }
+                    .also { com.v2ray.ang.handler.MmkvManager.encodeSettings(XUDP_BASE_KEY, it) }
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to generate device ID", e)
             ""

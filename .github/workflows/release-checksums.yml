@@ -28,16 +28,22 @@ jobs:
 
       - name: Pick the release
         id: release
+        # Tag names reach the shell through env, never through ${{ }} in the script.
+        env:
+          INPUT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          tag="$INPUT_TAG"
+          case "$tag" in ""|v[0-9]*) ;; *) echo "unexpected tag: $tag"; exit 1 ;; esac
           if [ -z "$tag" ]; then tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Release: $tag"
 
       - name: Download the release files
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p release
-          gh release download "${{ steps.release.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir release --pattern '*.exe' --pattern '*.apk' --pattern '*.aab' --pattern '*.zip' --skip-existing
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release --pattern '*.exe' --pattern '*.apk' --pattern '*.aab' --pattern '*.zip' --skip-existing
           ls -la release
 
       - name: Write SHA256SUMS
@@ -51,7 +57,7 @@ jobs:
           test -s SHA256SUMS
 
       - name: Source SBOM (SPDX)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: .
           format: spdx-json
@@ -60,7 +66,9 @@ jobs:
           upload-release-assets: false
 
       - name: Attach to the release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           files="release/SHA256SUMS"
           for sbom in release/*.spdx.json; do if [ -e "$sbom" ]; then files="$files $sbom"; fi; done
-          gh release upload "${{ steps.release.outputs.tag }}" $files --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber

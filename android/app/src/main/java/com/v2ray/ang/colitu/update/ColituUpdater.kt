@@ -78,7 +78,8 @@ object ColituUpdater {
                 url = url,
                 sha256 = sha.lowercase(),
                 sizeBytes = size,
-                force = json.get("forceUpdate")?.asBoolean == true,
+                // Same strict reading as the signed message: only a JSON true forces.
+                force = json.get("forceUpdate")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean == true,
             )
         }.onFailure { LogUtil.w(AppConfig.TAG, "Colitu update check failed: ${it.message}") }.getOrNull()
     }
