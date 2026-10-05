@@ -10,8 +10,8 @@ updates itself; the current version is listed on
 
 **Please do not open a public issue for security problems.**
 
-Send the details to **support@colitu.com** with `Security` in the subject, or
-use the form at <https://colitu.com/support>. Please include:
+Send the details to **security@colitu.com**. The full disclosure policy is at
+<https://colitu.com/security#disclosure>. Please include:
 
 - the affected version and Android and Android TV version,
 - steps to reproduce or a proof of concept,
@@ -38,8 +38,9 @@ problems in third-party components (report those to the project concerned,
 e.g. Xray-core or hev-socks5-tunnel).
 
 The machine-readable contact is at
-<https://colitu.com/.well-known/security.txt>, and the technical security
-overview is at <https://colitu.com/security>.
+<https://colitu.com/.well-known/security.txt>. The Colitu Security Whitepaper
+(architecture, threat model, logging, known limitations) is at
+<https://colitu.com/security>.
 
 ## Verifying a release
 
@@ -52,13 +53,13 @@ sha256sum Colitu-<version>.apk
 apksigner verify --print-certs Colitu-<version>.apk
 ```
 
-The app compares the new APK's SHA-256 and the SHA-256 fingerprint of its signing certificate with the release manifest before installing; Android also refuses an update signed with a different key.
+The update manifest (`latest.json`) is signed with ECDSA P-256. The app verifies the signature with the public key built into it, checks that the APK's SHA-256 matches the manifest and that the APK is signed with the same certificate as the installed app, and refuses older versions. Android itself also refuses an update signed with a different key.
 
 ---
 
 ## Сообщить об уязвимости
 
-Пожалуйста, не открывайте публичный issue. Напишите на **support@colitu.com**
-с темой `Security`, приложив версию, шаги воспроизведения и ожидаемое
-влияние. Мы ответим в течение 3 рабочих дней и просим не раскрывать детали
+Пожалуйста, не открывайте публичный issue. Напишите на **security@colitu.com**,
+приложив версию, шаги воспроизведения и ожидаемое влияние. Правила раскрытия:
+<https://colitu.com/ru/security#disclosure>. Мы ответим в течение 3 рабочих дней и просим не раскрывать детали
 до выхода исправленной версии.
