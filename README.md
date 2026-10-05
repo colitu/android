@@ -1,7 +1,7 @@
 # Colitu VPN for Android
 
-[![Build](https://img.shields.io/github/actions/workflow/status/colitu/colitu-android/ci.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/colitu-android/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/colitu/colitu-android?style=flat-square&labelColor=101014&color=7c6cff)](https://github.com/colitu/colitu-android/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/colitu/android/ci.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/android/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/colitu/android?style=flat-square&labelColor=101014&color=7c6cff)](https://github.com/colitu/android/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-7c6cff?style=flat-square&labelColor=101014)](LICENSE)
 [![Colitu Network](https://img.shields.io/endpoint?url=https://status.colitu.com/api/github-badge/network&style=flat-square)](https://status.colitu.com)
 
@@ -106,8 +106,8 @@ one ABI. F-Droid builds the app this way, without the prebuilt files; its
 recipe is in [`fdroid/com.colitulu.yml`](fdroid/com.colitulu.yml).
 
 ```sh
-git clone https://github.com/cyberlexs/colitu-android.git
-cd colitu-android/android
+git clone https://github.com/colitu/android.git
+cd android/android
 ./gradlew assemblePlaystoreDebug          # debug APK
 ./gradlew testPlaystoreDebugUnitTest      # unit tests
 ```

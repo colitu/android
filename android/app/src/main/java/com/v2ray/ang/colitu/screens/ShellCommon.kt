@@ -55,7 +55,7 @@ const val SUPPORT_EMAIL = "support@colitu.com"
 const val COMPANY_NAME = "Avenlith"
 
 /** The app is published under GPL-3.0; shown under About. */
-const val SOURCE_CODE_URL = "https://github.com/cyberlexs/colitu-android"
+const val SOURCE_CODE_URL = "https://github.com/colitu/android"
 
 /**
  * Shared scroll container for the tabs: page padding plus room for the
