@@ -105,6 +105,7 @@ object ColituTokenManager {
             KEY_DEVICE_ID,
             KEY_PENDING_EMAIL,
             "vpn_lkg_envelope",
+            "vpn_lkg_route",
         )
         // device_key identifies the installation and intentionally survives logout.
     }

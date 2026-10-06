@@ -87,6 +87,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -795,12 +796,12 @@ fun ColituSwitch(checked: Boolean, onChange: ((Boolean) -> Unit)?) {
 }
 
 @Composable
-private fun RowLabels(title: String, hint: String?, modifier: Modifier) {
+private fun RowLabels(title: String, hint: String?, modifier: Modifier, hintMaxLines: Int = 3) {
     Column(modifier) {
         CText(title, ColituText.label)
         if (!hint.isNullOrEmpty()) {
             Spacer(Modifier.height(2.dp))
-            CText(hint, ColituText.small, maxLines = 3)
+            CText(hint, ColituText.small, maxLines = hintMaxLines)
         }
     }
 }
@@ -814,6 +815,7 @@ fun ColituSwitchRow(
     value: Boolean,
     onChange: ((Boolean) -> Unit)?,
     trailing: (@Composable () -> Unit)? = null,
+    hintMaxLines: Int = 3,
 ) {
     ColituTile(
         onClick = onChange?.let { { it(!value) } },
@@ -822,7 +824,7 @@ fun ColituSwitchRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             ColituRoundIcon(icon)
             Spacer(Modifier.width(12.dp))
-            RowLabels(title, hint, Modifier.weight(1f))
+            RowLabels(title, hint, Modifier.weight(1f), hintMaxLines)
             Spacer(Modifier.width(10.dp))
             // On a TV the whole row is the one focus stop; the switch only shows the state.
             if (trailing != null) trailing() else ColituSwitch(value, if (ColituTv.isTv) null else onChange)
@@ -839,6 +841,7 @@ fun ColituActionRow(
     onClick: (() -> Unit)? = null,
     badge: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    hintMaxLines: Int = 3,
 ) {
     ColituTile(
         onClick = onClick,
@@ -847,7 +850,7 @@ fun ColituActionRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             ColituRoundIcon(icon)
             Spacer(Modifier.width(12.dp))
-            RowLabels(title, hint, Modifier.weight(1f))
+            RowLabels(title, hint, Modifier.weight(1f), hintMaxLines)
             Spacer(Modifier.width(10.dp))
             if (badge != null) {
                 badge()
@@ -876,6 +879,8 @@ fun ColituField(
     enabled: Boolean = true,
     pill: Boolean = false,
     fill: Color = ColituColors.field,
+    /** Autofill hint for the text field itself (e.g. one-time codes). */
+    autofill: androidx.compose.ui.autofill.ContentType? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val hasError = !error.isNullOrEmpty()
@@ -928,6 +933,7 @@ fun ColituField(
                     modifier = Modifier
                         .fillMaxWidth()
                         .tvFieldEscape()
+                        .then(if (autofill != null) Modifier.semantics { contentType = autofill } else Modifier)
                         .onFocusChanged { focused = it.isFocused },
                 )
             }

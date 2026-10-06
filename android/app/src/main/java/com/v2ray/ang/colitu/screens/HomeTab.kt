@@ -21,7 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -31,12 +34,16 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.v2ray.ang.colitu.api.ColituClock
 import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.app.ConnectPhase
 import com.v2ray.ang.colitu.app.VpnStatus
 import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planLeftOf
 import com.v2ray.ang.colitu.app.planNameOf
+import com.v2ray.ang.colitu.data.ColituMultihop
+import com.v2ray.ang.colitu.data.ColituRotation
+import com.v2ray.ang.colitu.data.ColituRotationStatus
 import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBadge
@@ -59,6 +66,8 @@ import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.PowerState
 import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
+import kotlinx.coroutines.delay
+import java.time.Duration
 
 /**
  * Connection screen, kept to one screen above the tab bar like on iOS: the
@@ -71,6 +80,8 @@ fun HomeTab(
     onToggle: () -> Unit,
     onChangeLocation: () -> Unit,
     onOpenPlan: () -> Unit,
+    onOpenPrivacy: () -> Unit = {},
+    onOpenSplit: () -> Unit = {},
 ) {
     val loc = ColituLoc
     if (c.loading && c.servers.isEmpty()) {
@@ -90,8 +101,20 @@ fun HomeTab(
         else -> loc["home.tap"]
     }
 
+    c.devicePause?.let { pause ->
+        // Paused over the device limit: nothing to connect until this device
+        // is made the active one (or the plan allows more).
+        ShellScroll {
+            Spacer(Modifier.height(8.dp))
+            PausedDevicePanel(c, pause)
+            Spacer(Modifier.height(12.dp))
+            PlanRow(c, onOpenPlan, Modifier)
+        }
+        return
+    }
+
     if (ColituTv.isTv) {
-        TvHome(c, on, connecting, disconnecting, if (on) loc["tv.pressOff"] else if (hint == loc["home.tap"]) loc["tv.press"] else hint, onToggle, onChangeLocation, onOpenPlan)
+        TvHome(c, on, connecting, disconnecting, if (on) loc["tv.pressOff"] else if (hint == loc["home.tap"]) loc["tv.press"] else hint, onToggle, onChangeLocation, onOpenPlan, onOpenPrivacy)
         return
     }
 
@@ -133,6 +156,22 @@ fun HomeTab(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
             }
+        }
+        if (c.ruDirectActive) {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                RuDirectChip(onOpenPrivacy)
+            }
+        }
+        if (c.splitTunnel.active) {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                SplitTunnelChip(c.splitTunnel, onOpenSplit)
+            }
+        }
+        c.trialEndBanner?.let { outlook ->
+            Spacer(Modifier.height(12.dp))
+            TrialEndBanner(outlook, onDismiss = { c.dismissTrialBanner() })
         }
         Spacer(Modifier.height(16.dp))
         Row {
@@ -231,6 +270,7 @@ private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Mo
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (auto) ColituRoundIcon(ColituIcons.Bolt, size = 44.dp, accent = true)
+                else if (server?.route != null) ColituFlag(server.route.exit.country, 44.dp)
                 else ColituFlag(server?.countryCode, 44.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -245,9 +285,79 @@ private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Mo
                     18.dp,
                 )
             }
+            ConnectionPathLines(c)
             Spacer(Modifier.height(12.dp))
             ColituButton(loc["home.changeServer"], onChange, height = 46.dp)
         }
+    }
+}
+
+/**
+ * What the running tunnel does beyond "connected": over a multihop route the
+ * entry and exit countries; on a rotating node the current exit with the
+ * countdown to the next change (or the note that the transport cannot rotate).
+ */
+@Composable
+private fun ConnectionPathLines(c: ColituController) {
+    val loc = ColituLoc
+    if (!c.connected) return
+    val route = c.connectedServer?.route
+    if (route != null) {
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ColituFlag(route.entry.country, 22.dp)
+            Spacer(Modifier.width(4.dp))
+            ColituIcon(ColituIcons.ArrowRight, ColituColors.muted, 12.dp)
+            Spacer(Modifier.width(4.dp))
+            ColituFlag(route.exit.country, 22.dp)
+            Spacer(Modifier.width(10.dp))
+            CText(
+                loc.format("multihop.home", "entry" to (route.entry.country ?: route.entry.label), "exit" to (route.exit.country ?: route.exit.label)),
+                ColituText.small,
+                Modifier.weight(1f),
+                color = ColituColors.text,
+                maxLines = 1,
+            )
+        }
+        return
+    }
+    if (!c.rotationActive) return
+    val status = c.rotationStatus
+    if (c.transport != null && !ColituMultihop.isVless(c.transport)) {
+        Spacer(Modifier.height(10.dp))
+        CText(loc["rotation.needsVless"], ColituText.small, maxLines = 2)
+    } else if (status != null && status.active) {
+        RotationLine(status)
+    }
+}
+
+/** Current exit and a ticking countdown to the panel's next change. */
+@Composable
+private fun RotationLine(status: ColituRotationStatus) {
+    val loc = ColituLoc
+    val exit = status.currentExit ?: return
+    val next = status.nextChangeAt ?: return
+    var now by remember { mutableStateOf(ColituClock.now()) }
+    LaunchedEffect(next) {
+        while (true) {
+            delay(1_000)
+            now = ColituClock.now()
+        }
+    }
+    val left = Duration.between(now, next)
+    val name = if (exit.country != null && exit.label != exit.country) "${exit.label} (${exit.country})" else exit.label
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        ColituFlag(exit.country, 22.dp)
+        Spacer(Modifier.width(10.dp))
+        CText(
+            if (left.isNegative || left.isZero) loc.format("rotation.homeDue", "exit" to name)
+            else loc.format("rotation.home", "exit" to name, "time" to ColituRotation.formatCountdown(left)),
+            ColituText.small,
+            Modifier.weight(1f),
+            color = ColituColors.text,
+            maxLines = 2,
+        )
     }
 }
 
@@ -318,6 +428,7 @@ private fun TvHome(
     onToggle: () -> Unit,
     onChangeLocation: () -> Unit,
     onOpenPlan: () -> Unit,
+    onOpenPrivacy: () -> Unit,
 ) {
     val loc = ColituLoc
     val power = remember { FocusRequester() }
@@ -367,6 +478,10 @@ private fun TvHome(
             if (on && c.transport != null) {
                 Spacer(Modifier.height(8.dp))
                 ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
+            }
+            if (c.ruDirectActive) {
+                Spacer(Modifier.height(8.dp))
+                RuDirectChip(onOpenPrivacy)
             }
         }
         Spacer(Modifier.width(28.dp))

@@ -141,6 +141,6 @@ Colitu VPN for Android is distributed under the
 [NOTICE](NOTICE). The app shows the same notices in
 `app/src/main/assets/open_source_licenses.html`.
 
-The "Colitu" name and logo are trademarks of Colitu and are not covered by the
+The "Colitu" name and logo are trademarks of COLITU LIMITED and are not covered by the
 GPL. If you redistribute a modified version, please use your own name and
 branding.

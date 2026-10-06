@@ -54,6 +54,8 @@ object ColituUpdater {
         val sha256: String,
         val sizeBytes: Long,
         val force: Boolean,
+        /** SHA-256 of the APK signing certificate, covered by signature_v2. */
+        val signingCertSha256: String,
     )
 
     /** The newer release on colitu.com, or null when this build is current or the check failed. */
@@ -61,8 +63,10 @@ object ColituUpdater {
         if (!enabled) return@withContext null
         runCatching {
             val json = JsonParser.parseString(fetchText("$MANIFEST_URL?t=${System.currentTimeMillis() / 60000}")).asJsonObject
-            if (!ColituUpdateSignature.verify(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })) {
-                LogUtil.w(AppConfig.TAG, "Colitu update manifest is not signed by the release key; ignored")
+            // 2.6.0+ trusts only signature_v2, which also binds the signing
+            // certificate and the sizes; the v1 "signature" is for older apps.
+            if (!ColituUpdateSignature.verifyV2(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })) {
+                LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v2; ignored")
                 return@runCatching null
             }
             val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
@@ -80,6 +84,7 @@ object ColituUpdater {
                 sizeBytes = size,
                 // Same strict reading as the signed message: only a JSON true forces.
                 force = json.get("forceUpdate")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean == true,
+                signingCertSha256 = ColituUpdateSignature.normalizeCert(json.get("signingCertSha256").asString),
             )
         }.onFailure { LogUtil.w(AppConfig.TAG, "Colitu update check failed: ${it.message}") }.getOrNull()
     }
@@ -125,7 +130,11 @@ object ColituUpdater {
                 partial.delete()
                 error("checksum mismatch")
             }
-            if (!signedLikeThisApp(context, partial)) {
+            if (update.sizeBytes > 0 && partial.length() != update.sizeBytes) {
+                partial.delete()
+                error("size mismatch")
+            }
+            if (!signedLikeThisApp(context, partial, update.signingCertSha256)) {
                 partial.delete()
                 error("signature mismatch")
             }
@@ -220,8 +229,11 @@ object ColituUpdater {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** The downloaded APK must carry the installed app's signing certificate. */
-    private fun signedLikeThisApp(context: Context, apk: File): Boolean {
+    /**
+     * The downloaded APK must carry exactly the certificate the signed
+     * manifest names, and that must be the installed app's certificate.
+     */
+    private fun signedLikeThisApp(context: Context, apk: File, signedCert: String): Boolean {
         val pm = context.packageManager
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
         val archive = pm.getPackageArchiveInfo(apk.path, flags) ?: return false
@@ -229,8 +241,12 @@ object ColituUpdater {
         val installed = pm.getPackageInfo(context.packageName, flags)
         val mine = certificates(installed)
         val theirs = certificates(archive)
-        return mine.isNotEmpty() && mine == theirs
+        return certificateMatches(mine, theirs, signedCert)
     }
+
+    /** Installed and downloaded certificates equal, and both exactly the signed one. */
+    internal fun certificateMatches(installed: Set<String>, downloaded: Set<String>, signedCert: String): Boolean =
+        installed.isNotEmpty() && installed == downloaded && downloaded == setOf(signedCert.lowercase())
 
     private fun certificates(info: PackageInfo): Set<String> {
         val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

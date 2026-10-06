@@ -18,6 +18,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.colitu.app.ColituQuickStart
 import com.v2ray.ang.colitu.data.ColituAdBlock
+import com.v2ray.ang.colitu.data.ColituSplitTunnel
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
 import com.v2ray.ang.core.CoreServiceManager
@@ -43,6 +44,22 @@ class CoreVpnService : VpnService(), ServiceControl {
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile private var isRunning = false
     @Volatile private var tun2SocksService: Tun2SocksControl? = null
+
+    /**
+     * Colitu server/transport switch: the core and hev are stopped but the
+     * interface stays established, so the routes keep pointing at the TUN and
+     * every packet is dropped instead of leaving over the plain network. The
+     * next start replaces the interface; [holdTimeout] ends a hold nobody
+     * follows up (the app died mid-switch).
+     */
+    @Volatile private var holding = false
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val holdTimeout = Runnable {
+        if (holding) {
+            LogUtil.w(AppConfig.TAG, "StartCore-VPN: hold expired without a new start, stopping")
+            stopAllService()
+        }
+    }
 
     /**
      * Unfortunately registerDefaultNetworkCallback is going to return our VPN interface: https://android.googlesource.com/platform/frameworks/base/+/dda156ab0c5d66ad82bdcf76cda07cbc0a9c8a2e
@@ -98,6 +115,8 @@ class CoreVpnService : VpnService(), ServiceControl {
     override fun onDestroy() {
         super.onDestroy()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
+        holding = false
+        mainHandler.removeCallbacks(holdTimeout)
         synchronized(lock) {
             generation++
             closeInterfaceLocked()
@@ -124,16 +143,20 @@ class CoreVpnService : VpnService(), ServiceControl {
             MmkvManager.setSelectServer(guid)
         }
 
+        val wasHolding = holding
+        holding = false
+        mainHandler.removeCallbacks(holdTimeout)
         val gen = synchronized(lock) { ++generation }
         // Building the interface and starting Xray + hev can take seconds on a
         // slow or busy phone. On the main thread that tripped Android's
         // service-start watchdog (ANR), so the work runs on one background
         // thread; starts stay in order.
-        startExecutor.execute { startGeneration(gen) }
+        startExecutor.execute { startGeneration(gen, wasHolding) }
         return START_STICKY
     }
 
-    private fun startGeneration(gen: Long) {
+    /** [fromHold]: a switch; a failed start keeps blocking instead of opening the gap. */
+    private fun startGeneration(gen: Long, fromHold: Boolean = false) {
         if (gen != generation) return
         if (prepare(this) != null) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
@@ -148,7 +171,7 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
         if (!CoreServiceManager.startCoreLoop(iface)) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
-            stopAllService()
+            if (fromHold && gen == generation) mainHandler.post { holdService() } else stopAllService()
             return
         }
         // A stop that arrived while the core was starting found nothing to
@@ -176,6 +199,35 @@ class CoreVpnService : VpnService(), ServiceControl {
 
     override fun stopService() {
         stopAllService(true)
+    }
+
+    /**
+     * Stops hev and the core but keeps [vpnInterface]: the switch to another
+     * server or transport never leaves a window in which apps fall back to
+     * the plain network. Runs on the main thread like [stopService].
+     */
+    override fun holdService() {
+        val hasInterface = synchronized(lock) {
+            generation++
+            isRunning = false
+            vpnInterface != null
+        }
+        if (!hasInterface) {
+            stopAllService()
+            return
+        }
+        holding = true
+        LogUtil.i(AppConfig.TAG, "StartCore-VPN: holding the interface for a switch")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching { connectivity.unregisterNetworkCallback(defaultNetworkCallback) }
+        }
+        tun2SocksService?.stopTun2Socks()
+        tun2SocksService = null
+        CoreServiceManager.stopCoreLoop(keepReceiver = true)
+        // Still a foreground service while the next start is on its way.
+        NotificationManager.showNotification(null)
+        mainHandler.removeCallbacks(holdTimeout)
+        mainHandler.postDelayed(holdTimeout, HOLD_TIMEOUT_MS)
     }
 
     override fun vpnProtect(socket: Int): Boolean = protect(socket)
@@ -273,6 +325,8 @@ class CoreVpnService : VpnService(), ServiceControl {
      */
     private fun configurePerAppProxy(builder: Builder) {
         val selfPackageName = BuildConfig.APPLICATION_ID
+        // Colitu split tunneling decides when it is on (ColituSplitTunnel).
+        if (ColituSplitTunnel.applyTo(builder, selfPackageName, packageManager)) return
         if (!MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY)) {
             builder.addDisallowedApplication(selfPackageName)
             return
@@ -319,6 +373,8 @@ class CoreVpnService : VpnService(), ServiceControl {
     }
 
     private fun stopAllService(isForced: Boolean = true) {
+        holding = false
+        mainHandler.removeCallbacks(holdTimeout)
         synchronized(lock) {
             generation++
             isRunning = false
@@ -349,5 +405,10 @@ class CoreVpnService : VpnService(), ServiceControl {
             }
             synchronized(lock) { closeInterfaceLocked() }
         }
+    }
+
+    private companion object {
+        /** Longer than the app's slowest switch step (fresh profile + start timeout). */
+        const val HOLD_TIMEOUT_MS = 60_000L
     }
 }

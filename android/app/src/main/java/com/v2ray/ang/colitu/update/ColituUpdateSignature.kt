@@ -48,6 +48,75 @@ object ColituUpdateSignature {
             }
         }.getOrDefault(false)
 
+    // ── v2: versioned payload that also binds the signing certificate ─────
+
+    /**
+     * The canonical text behind "signature_v2" (2.6.0+). Unlike v1 it covers
+     * every field the updater acts on, including the APK signing certificate
+     * ("signingCertSha256"), the sizes and minAndroid, as "key=value" lines
+     * so no field can bleed into another:
+     *
+     *     colitu-android-update-v2
+     *     latestVersionCode=<integer>
+     *     versionName=<text>
+     *     forceUpdate=<true|false>
+     *     minAndroid=<text>
+     *     downloadUrl=<url>
+     *     sha256=<lower-case hex>
+     *     sizeBytes=<integer>
+     *     signingCertSha256=<lower-case hex, no colons>
+     *     variant=<abi> <url> <lower-case sha256> <sizeBytes>   (ABIs in ordinal order)
+     *
+     * LF separated, no trailing newline, UTF-8. scripts/sign-update-manifest.ps1
+     * builds the same text. Null when a value contains a line break or space
+     * where it must not (such a manifest is never accepted).
+     */
+    fun messageV2(json: JsonObject): String? {
+        val lines = mutableListOf(
+            V2_HEADER,
+            "latestVersionCode=${json.long("latestVersionCode")}",
+            "versionName=${json.str("versionName")}",
+            "forceUpdate=${if (json.bool("forceUpdate")) "true" else "false"}",
+            "minAndroid=${json.str("minAndroid")}",
+            "downloadUrl=${json.str("downloadUrl")}",
+            "sha256=${json.str("sha256").lowercase()}",
+            "sizeBytes=${json.long("sizeBytes").coerceAtLeast(0)}",
+            "signingCertSha256=${normalizeCert(json.str("signingCertSha256"))}",
+        )
+        val variants = json.get("variants")?.takeIf { it.isJsonObject }?.asJsonObject
+        variants?.keySet()?.sorted()?.forEach { abi ->
+            val v = variants.get(abi)?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val parts = listOf(abi, v.str("url"), v.str("sha256").lowercase(), v.long("sizeBytes").coerceAtLeast(0).toString())
+            if (parts.any { ' ' in it }) return null
+            lines += "variant=${parts.joinToString(" ")}"
+        }
+        if (lines.any { '\n' in it || '\r' in it }) return null
+        return lines.joinToString("\n")
+    }
+
+    /** "AB:CD:…" or "abcd…" to lower-case hex without separators. */
+    fun normalizeCert(value: String): String = value.trim().replace(":", "").lowercase()
+
+    /**
+     * True when "signature_v2" is a valid release signature over [messageV2]
+     * and the manifest names a well-formed signing certificate (64 hex).
+     */
+    fun verifyV2(json: JsonObject, decode: (String) -> ByteArray, publicKeyB64: String = PUBLIC_KEY_B64): Boolean =
+        runCatching {
+            if (!CERT_PATTERN.matches(normalizeCert(json.str("signingCertSha256")))) return false
+            val signature = json.str("signature_v2").takeIf { it.isNotBlank() } ?: return false
+            val message = messageV2(json) ?: return false
+            val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(decode(publicKeyB64)))
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(key)
+                update(message.toByteArray(Charsets.UTF_8))
+                verify(decode(signature.trim()))
+            }
+        }.getOrDefault(false)
+
+    const val V2_HEADER = "colitu-android-update-v2"
+    private val CERT_PATTERN = Regex("^[0-9a-f]{64}$")
+
     private fun JsonObject.str(key: String): String =
         get(key)?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
 

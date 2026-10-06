@@ -5,6 +5,7 @@ import com.google.gson.JsonObject
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.colitu.api.ColituApiClient
 import com.v2ray.ang.colitu.api.ColituSecureStore
+import com.v2ray.ang.colitu.data.ColituMultihop
 import com.v2ray.ang.colitu.data.ColituServerListResponse
 import com.v2ray.ang.colitu.data.ColituVpnConfig
 import com.v2ray.ang.colitu.data.ClientBootstrapPolicy
@@ -19,6 +20,8 @@ object ColituServerRepository {
     private const val STORE_ID = "COLITU_SERVERS"
     private const val KEY_SELECTED_SERVER = "selected_server_id"
     private const val KEY_CONFIG_ETAG = "config_etag"
+    /** Last good envelope of a multihop route, kept apart from the node envelope (see [fetchRouteCandidates]). */
+    private const val KEY_ROUTE_ENVELOPE = "vpn_lkg_route"
 
     private val store by lazy { MMKV.mmkvWithID(STORE_ID, MMKV.MULTI_PROCESS_MODE) }
 
@@ -63,25 +66,36 @@ object ColituServerRepository {
                 ?: throw Exception(rendered.exceptionOrNull()?.message?.takeIf { it.startsWith("CONFIG_") } ?: "CONFIG_NOT_READY")
         }
 
-    private suspend fun fetchConfigEnvelope(): Result<JsonObject> = withContext(Dispatchers.IO) {
+    /**
+     * The bootstrap's verdict before a config is fetched: the failure code
+     * when it denies connecting (or fails for a reason the offline grace may
+     * not cover), null when the config may be requested.
+     */
+    private suspend fun bootstrapFailure(): String? =
         when (val bootstrap = ColituApiClient.get("/client/bootstrap")) {
             is ColituApiClient.ApiResult.Success -> {
                 val policy = runCatching { ClientBootstrapPolicy.fromJson(bootstrap.data) }.getOrNull()
-                    ?: return@withContext Result.failure(Exception("CONFIG_NOT_READY"))
+                    ?: return "CONFIG_NOT_READY"
                 if (policy.denial != null) {
-                    ColituSecureStore.remove("vpn_lkg_envelope")
-                    store.removeValueForKey(KEY_CONFIG_ETAG)
-                    return@withContext Result.failure(Exception(policy.denial))
-                }
+                    clearConfigCaches()
+                    policy.denial
+                } else null
             }
             is ColituApiClient.ApiResult.Error -> {
                 if (!ConfigCachePolicy.allowsFallback(bootstrap.code, bootstrap.isAuthError)) {
-                    ColituSecureStore.remove("vpn_lkg_envelope")
-                    store.removeValueForKey(KEY_CONFIG_ETAG)
-                    return@withContext Result.failure(Exception(bootstrap.message))
-                }
+                    clearConfigCaches()
+                    bootstrap.message
+                } else null
             }
         }
+
+    private fun clearConfigCaches() {
+        ColituSecureStore.remove("vpn_lkg_envelope", KEY_ROUTE_ENVELOPE)
+        store.removeValueForKey(KEY_CONFIG_ETAG)
+    }
+
+    private suspend fun fetchConfigEnvelope(): Result<JsonObject> = withContext(Dispatchers.IO) {
+        bootstrapFailure()?.let { return@withContext Result.failure(Exception(it)) }
         val etag = if (ColituSecureStore.get("vpn_lkg_envelope").isNullOrBlank()) {
             store.removeValueForKey(KEY_CONFIG_ETAG)
             null
@@ -145,6 +159,72 @@ object ColituServerRepository {
     private fun cachedEnvelope(): JsonObject? {
         val raw = ColituSecureStore.get("vpn_lkg_envelope") ?: return null
         val envelope = runCatching { com.google.gson.JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+        return envelope.takeIf { ColituVpnConfig.fromJson(it) != null }
+    }
+
+    // ── Multihop routes ──────────────────────────────────────────────────────────
+
+    /**
+     * Transports of a multihop route (`GET /multihop/routes/{id}/config`, the
+     * same envelope as /config), VLESS only. A route is not a node: it is
+     * never sent as preferred_node_id, and its last good envelope lives under
+     * its own key so it can never be mistaken for a node's. 404
+     * MULTIHOP_ROUTE_NOT_FOUND means the route is gone (refresh the list).
+     */
+    suspend fun fetchRouteCandidates(routeId: String): Result<List<ColituVpnConfig>> = withContext(Dispatchers.IO) {
+        bootstrapFailure()?.let { return@withContext Result.failure(Exception(it)) }
+        val path = "/multihop/routes/${java.net.URLEncoder.encode(routeId, "UTF-8").replace("+", "%20")}/config"
+        val envelope = when (val result = ColituApiClient.get(path)) {
+            is ColituApiClient.ApiResult.Success -> {
+                val rendered = runCatching { XrayMobileAdapter.renderCandidates(result.data) }
+                rendered.exceptionOrNull()?.let { Log.w(TAG, "route config did not render: ${it.message}") }
+                if (rendered.getOrNull().isNullOrEmpty()) {
+                    return@withContext Result.failure(Exception(rendered.exceptionOrNull()?.message?.takeIf { it.startsWith("CONFIG_") } ?: "CONFIG_NOT_READY"))
+                }
+                ColituSecureStore.put(KEY_ROUTE_ENVELOPE, routeEnvelopeRecord(routeId, result.data))
+                result.data
+            }
+            is ColituApiClient.ApiResult.Error -> {
+                if (result.message == "MULTIHOP_ROUTE_NOT_FOUND") {
+                    ColituSecureStore.remove(KEY_ROUTE_ENVELOPE)
+                    return@withContext Result.failure(Exception(result.message))
+                }
+                if (!ConfigCachePolicy.allowsFallback(result.code, result.isAuthError)) {
+                    return@withContext Result.failure(Exception(if (result.isAuthError) "auth_expired" else result.message))
+                }
+                cachedRouteEnvelope(routeId)
+                    ?: return@withContext Result.failure(Exception(result.message))
+            }
+        }
+        val restricted = ColituMultihop.restrictToVless(
+            runCatching { XrayMobileAdapter.renderCandidates(envelope) }.getOrDefault(emptyList()).filter { !it.rawConfig.isNullOrBlank() },
+        )
+        if (restricted.isEmpty()) Result.failure(Exception("MULTIHOP_NEEDS_VLESS")) else Result.success(restricted)
+    }
+
+    /** VLESS transports from the cached envelope of [routeId], without a round trip; null when none is valid. */
+    fun cachedRouteCandidates(routeId: String, now: java.time.Instant = com.v2ray.ang.colitu.api.ColituClock.now()): List<ColituVpnConfig>? {
+        val envelope = cachedRouteEnvelope(routeId) ?: return null
+        val expires = envelope.get("expires_at")?.takeIf { it.isJsonPrimitive }?.asString
+            ?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } ?: return null
+        if (!now.isBefore(expires)) return null
+        return runCatching { XrayMobileAdapter.renderCandidates(envelope, now) }.getOrNull()
+            ?.let { ColituMultihop.restrictToVless(it) }
+            ?.filter { !it.rawConfig.isNullOrBlank() }
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun routeEnvelopeRecord(routeId: String, envelope: JsonObject): String =
+        JsonObject().apply {
+            addProperty("route_id", routeId)
+            add("envelope", envelope)
+        }.toString()
+
+    private fun cachedRouteEnvelope(routeId: String): JsonObject? {
+        val raw = ColituSecureStore.get(KEY_ROUTE_ENVELOPE) ?: return null
+        val record = runCatching { com.google.gson.JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+        if (record.get("route_id")?.takeIf { it.isJsonPrimitive }?.asString != routeId) return null
+        val envelope = record.get("envelope")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
         return envelope.takeIf { ColituVpnConfig.fromJson(it) != null }
     }
 

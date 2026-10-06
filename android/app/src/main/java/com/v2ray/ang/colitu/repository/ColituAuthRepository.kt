@@ -16,6 +16,66 @@ object ColituAuthRepository {
     /** Thrown (as a failed result) when the account must confirm its e-mail first. */
     const val EMAIL_NOT_VERIFIED = "EMAIL_NOT_VERIFIED"
 
+    /** The password was right; the account wants its 2FA code ([pendingMfa] holds the challenge). */
+    const val MFA_REQUIRED = "MFA_REQUIRED"
+
+    /** Sign-in requests tell the panel this build has the 2FA code step. */
+    private val FEATURES = mapOf("X-Colitu-Features" to "mfa")
+
+    /** A 2FA challenge waiting for its code; only in memory, never stored. */
+    data class MfaChallenge(val token: String, val email: String, val expiresAtMs: Long, val sendCode: Boolean)
+
+    /** A failed code step; [attemptsLeft] from the panel's 401 MFA_INVALID_CODE body. */
+    class MfaException(code: String, val attemptsLeft: Int?) : Exception(code)
+
+    @Volatile var pendingMfa: MfaChallenge? = null
+        private set
+
+    fun clearMfa() {
+        pendingMfa = null
+    }
+
+    /**
+     * The challenge from a 403 MFA_REQUIRED body, or null when it carries no
+     * token. [nowMs] and the panel's mfa_expires_in (default 300 s) give the
+     * deadline the code screen counts down to.
+     */
+    internal fun mfaChallengeOf(body: JsonObject?, email: String, sendCode: Boolean, nowMs: Long = System.currentTimeMillis()): MfaChallenge? {
+        val token = body?.tryString("mfa_token") ?: return null
+        val ttl = (body.tryLong("mfa_expires_in") ?: 300L).coerceIn(30L, 3600L)
+        return MfaChallenge(token, email, nowMs + ttl * 1000, sendCode)
+    }
+
+    /** What the code field accepts: 6 digits, or a recovery code (letters/digits, dashes and spaces dropped). */
+    internal fun normalizeMfaCode(input: String, recovery: Boolean): String? {
+        if (!recovery) return input.filter { it.isDigit() }.takeIf { it.length == 6 }
+        val code = input.filter { it.isLetterOrDigit() }.lowercase()
+        return code.takeIf { it.length in 8..32 }
+    }
+
+    /**
+     * Second sign-in step: the 6-digit code from the authenticator app or a
+     * recovery code. Success finishes the sign-in exactly like a password
+     * sign-in. MFA_TOKEN_EXPIRED drops the challenge (back to the password).
+     */
+    suspend fun completeMfa(code: String): Result<ColituUser> {
+        val challenge = pendingMfa ?: return Result.failure(Exception("MFA_TOKEN_EXPIRED"))
+        val body = JsonObject().apply {
+            addProperty("mfa_token", challenge.token)
+            addProperty("code", code)
+        }
+        return when (val result = ColituApiClient.post("/auth/login/mfa", body, FEATURES)) {
+            is ColituApiClient.ApiResult.Success -> {
+                pendingMfa = null
+                finishSignIn(result.data, challenge.email, challenge.sendCode)
+            }
+            is ColituApiClient.ApiResult.Error -> {
+                if (result.message == "MFA_TOKEN_EXPIRED") pendingMfa = null
+                Result.failure(MfaException(result.message, result.body?.tryInt("attempts_left")))
+            }
+        }
+    }
+
     suspend fun login(email: String, password: String): Result<ColituUser> {
         val body = JsonObject().apply {
             addProperty("email", email)
@@ -40,9 +100,17 @@ object ColituAuthRepository {
      * endpoints need them) and fails with [EMAIL_NOT_VERIFIED].
      */
     private suspend fun signIn(path: String, body: JsonObject, email: String, sendCode: Boolean): Result<ColituUser> {
-        return when (val result = ColituApiClient.post(path, body)) {
+        pendingMfa = null
+        return when (val result = ColituApiClient.post(path, body, FEATURES)) {
             is ColituApiClient.ApiResult.Success -> finishSignIn(result.data, email, sendCode)
-            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+            is ColituApiClient.ApiResult.Error -> {
+                if (result.message == MFA_REQUIRED) {
+                    val challenge = mfaChallengeOf(result.body, email, sendCode)
+                        ?: return Result.failure(Exception("MFA_REQUIRED_UPDATE_APP"))
+                    pendingMfa = challenge
+                }
+                Result.failure(Exception(result.message))
+            }
         }
     }
 

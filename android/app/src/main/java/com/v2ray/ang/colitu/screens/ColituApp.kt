@@ -52,6 +52,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.tencent.mmkv.MMKV
@@ -65,7 +66,7 @@ import com.v2ray.ang.colitu.design.ColituNavItem
 import com.v2ray.ang.colitu.design.ColituToast
 import com.v2ray.ang.colitu.l10n.ColituLoc
 
-enum class ColituRoute { Onboarding, Auth, Verify, Shell, Replay }
+enum class ColituRoute { Onboarding, Auth, Verify, Mfa, Shell, Replay }
 
 enum class ColituTab { Home, Locations, Plan, Support, Account }
 
@@ -124,6 +125,22 @@ fun ColituApp(controller: ColituController) {
                     codeJustSent = true
                     route = ColituRoute.Verify
                 },
+                onMfa = {
+                    authMessage = null
+                    route = ColituRoute.Mfa
+                },
+            )
+            ColituRoute.Mfa -> MfaScreen(
+                onSignedIn = { route = ColituRoute.Shell },
+                onVerify = {
+                    codeJustSent = true
+                    route = ColituRoute.Verify
+                },
+                onBack = { message ->
+                    authMessage = message
+                    registerFirst = false
+                    route = ColituRoute.Auth
+                },
             )
             ColituRoute.Verify -> VerifyScreen(
                 codeJustSent = codeJustSent,
@@ -155,7 +172,12 @@ private val EaseOut = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
 private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> Unit, onHowItWorks: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(ColituTab.Home) }
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    /** The account page scrolls to the privacy mode switch once. */
+    var revealPrivacy by remember { mutableStateOf(false) }
+    var splitOpen by rememberSaveable { mutableStateOf(false) }
+    var rotationOpen by rememberSaveable { mutableStateOf(false) }
     val loc = ColituLoc
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         c.enterShell()
@@ -196,6 +218,11 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     onToggle = { toggle() },
                     onChangeLocation = { tab = ColituTab.Locations },
                     onOpenPlan = { tab = ColituTab.Plan },
+                    onOpenPrivacy = {
+                        revealPrivacy = true
+                        tab = ColituTab.Account
+                    },
+                    onOpenSplit = { splitOpen = true },
                 )
                 ColituTab.Locations -> LocationsTab(c, onOpenPlan = { tab = ColituTab.Plan })
                 ColituTab.Plan -> PlanTab(c)
@@ -206,6 +233,10 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     onOpenSupport = { tab = ColituTab.Support },
                     onSignOut = { confirmSignOut = true },
                     onHowItWorks = onHowItWorks,
+                    onOpenSplit = { splitOpen = true },
+                    onOpenRotation = { rotationOpen = true },
+                    revealPrivacy = revealPrivacy,
+                    onPrivacyRevealed = { revealPrivacy = false },
                 )
             }
         }
@@ -240,6 +271,25 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                 ColituNavBar(items, tab.ordinal, { tab = ColituTab.entries[it] })
             }
         }
+    }
+
+    if (splitOpen) {
+        SplitTunnelDialog(c.splitTunnel) { value ->
+            splitOpen = false
+            c.updateSplitTunnel(value)
+        }
+    }
+
+    if (rotationOpen) {
+        RotationDialog(c) { rotationOpen = false }
+    }
+
+    if (c.ruNoticeVisible) {
+        RuDirectNoticeDialog(
+            onKeep = { c.answerRuNotice(enablePrivacy = false) },
+            onEnablePrivacy = { c.answerRuNotice(enablePrivacy = true) },
+            onDetails = { openUrl(context, splitTunnelingUrl()) },
+        )
     }
 
     if (confirmSignOut) {

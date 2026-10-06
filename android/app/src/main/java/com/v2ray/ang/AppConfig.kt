@@ -164,6 +164,13 @@ object AppConfig {
     /** Colitu: result of [MSG_COLITU_VERIFY], the delay in ms or -1. */
     const val MSG_COLITU_VERIFY_RESULT = 83
 
+    /**
+     * Colitu: stop the core and hev for a server or transport switch but keep
+     * the VPN interface up, so nothing leaves outside the tunnel until the
+     * next start replaces it (answered with [MSG_STATE_STOP_SUCCESS]).
+     */
+    const val MSG_COLITU_HOLD = 84
+
     /** Colitu: MMKV key (settings store) with the time the tunnel came up. */
     const val PREF_COLITU_CONNECTED_AT = "colitu_connected_at"
 

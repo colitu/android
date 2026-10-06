@@ -34,5 +34,22 @@ object ColituAccountRepository {
         }
     }
 
+    /**
+     * Makes this device the active one when the plan allows fewer devices
+     * (POST /devices/{id}/activate); the panel pauses another one instead.
+     */
+    suspend fun activateThisDevice(): Result<Unit> {
+        val id = ColituTokenManager.getDeviceId() ?: return Result.failure(Exception("DEVICE_REQUIRED"))
+        return activateDevice(id)
+    }
+
+    /** Makes a paused device (this one or another) active; the panel pauses the least recently used one. */
+    suspend fun activateDevice(id: String): Result<Unit> {
+        return when (val result = ColituApiClient.post("/devices/${encode(id)}/activate", com.google.gson.JsonObject())) {
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 }

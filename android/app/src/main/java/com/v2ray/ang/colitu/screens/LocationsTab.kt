@@ -138,6 +138,19 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
         )
     val recommended = recommended(c, items)
     val rest = items.filterNot { it in recommended }
+    // Multihop routes have no use-case categories: they show under "All" only. The flag and name
+    // of the exit and the entry both count for the search.
+    val routeItems = if (filter != "all") emptyList() else c.routes
+        .filter { route ->
+            q.isEmpty() || fold("${route.displayName} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q)
+        }
+        .sortedWith(
+            when (sort) {
+                SortBy.Ping -> compareBy<ColituServer> { c.pingOf(it) ?: Int.MAX_VALUE }.then(byName)
+                SortBy.Load -> compareBy<ColituServer> { loadPercent(it) ?: Int.MAX_VALUE }.then(byName)
+                SortBy.Name -> byName
+            },
+        )
 
     ShellScroll(tvMaxWidth = 900.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -205,20 +218,33 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
             Spacer(Modifier.height(14.dp))
         }
         when {
-            c.servers.isEmpty() -> EmptyText(if (c.planRequired) loc["plan.noneHint"] else loc["server.none"])
-            items.isEmpty() -> EmptyText(if (filter != "all" && q.isEmpty()) loc["cat.empty"] else loc["locations.empty"])
+            c.servers.isEmpty() && c.routes.isEmpty() -> EmptyText(if (c.planRequired) loc["plan.noneHint"] else loc["server.none"])
+            items.isEmpty() && routeItems.isEmpty() -> EmptyText(if (filter != "all" && q.isEmpty()) loc["cat.empty"] else loc["locations.empty"])
             else -> {
-                SectionHeader(if (recommended.isNotEmpty()) loc["locations.recommended"] else loc["locations.allServers"]) {
-                    SortButton(sort) { sort = it }
-                }
-                Spacer(Modifier.height(12.dp))
-                ServerCards(c, recommended, startIndex = 0)
-                if (recommended.isNotEmpty() && rest.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    SectionHeader(loc["locations.allServers"])
+                if (items.isNotEmpty()) {
+                    SectionHeader(if (recommended.isNotEmpty()) loc["locations.recommended"] else loc["locations.allServers"]) {
+                        SortButton(sort) { sort = it }
+                    }
                     Spacer(Modifier.height(12.dp))
+                    ServerCards(c, recommended, startIndex = 0)
+                    if (recommended.isNotEmpty() && rest.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        SectionHeader(loc["locations.allServers"])
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    ServerCards(c, rest, startIndex = recommended.size)
                 }
-                ServerCards(c, rest, startIndex = recommended.size)
+                if (routeItems.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    SectionHeader(loc["multihop.section"]) {
+                        if (items.isEmpty()) SortButton(sort) { sort = it }
+                    }
+                    CText(loc["multihop.sectionHint"], ColituText.small, Modifier.padding(top = 4.dp, bottom = 12.dp))
+                    routeItems.forEachIndexed { i, route ->
+                        RouteCard(c, route, Modifier.reveal(40 * (items.size + i).coerceAtMost(8)))
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
             }
         }
     }
@@ -411,6 +437,46 @@ private fun ServerCard(c: ColituController, server: ColituServer, modifier: Modi
                 Spacer(Modifier.height(12.dp))
                 TagLine(tags, Modifier.padding(start = 58.dp))
             }
+        }
+    }
+}
+
+/**
+ * A multihop route: entry flag, arrow and exit flag, the route name and the
+ * ping to the entry node (an estimate: the second hop is not measured).
+ */
+@Composable
+private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifier) {
+    val loc = ColituLoc
+    val ends = route.route ?: return
+    val selected = !c.autoSelection && c.selectedServerId == route.id
+    val connected = c.connected && c.connectedServerId == route.id
+    ColituTile(
+        modifier,
+        active = selected || connected,
+        onClick = { c.selectServer(route) },
+        padding = PaddingValues(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ColituFlag(ends.entry.country, 30.dp)
+            Spacer(Modifier.width(4.dp))
+            ColituIcon(ColituIcons.ArrowRight, ColituColors.muted, 12.dp)
+            Spacer(Modifier.width(4.dp))
+            ColituFlag(ends.exit.country, 30.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                CText(route.displayName, ColituText.label, size = 16.sp, maxLines = 2)
+                Spacer(Modifier.height(2.dp))
+                CText(loc["multihop.ping"], ColituText.small, maxLines = 1)
+                if (connected) {
+                    Spacer(Modifier.height(4.dp))
+                    Pill(loc["server.connected"], accent = true)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Ping(c.pingOf(route))
+            Spacer(Modifier.width(12.dp))
+            GoButton(selected || connected)
         }
     }
 }

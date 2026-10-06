@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,10 +77,22 @@ fun AccountTab(
     onOpenSupport: () -> Unit,
     onSignOut: () -> Unit,
     onHowItWorks: () -> Unit,
+    onOpenSplit: () -> Unit = {},
+    onOpenRotation: () -> Unit = {},
+    revealPrivacy: Boolean = false,
+    onPrivacyRevealed: () -> Unit = {},
 ) {
     val loc = ColituLoc
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val privacyRow = remember { BringIntoViewRequester() }
+    // Opened from the home screen's "Russian sites outside VPN" line.
+    LaunchedEffect(revealPrivacy) {
+        if (!revealPrivacy) return@LaunchedEffect
+        kotlinx.coroutines.delay(300)
+        runCatching { privacyRow.bringIntoView() }
+        onPrivacyRevealed()
+    }
     var devices by remember { mutableStateOf<List<ColituDevice>>(emptyList()) }
     var loadingDevices by remember { mutableStateOf(true) }
     var devicesError by remember { mutableStateOf<String?>(null) }
@@ -171,6 +185,15 @@ fun AccountTab(
             trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) },
         )
         Spacer(Modifier.height(8.dp))
+        KillSwitchRow()
+        Spacer(Modifier.height(8.dp))
+        ColituActionRow(
+            icon = ColituIcons.Antenna,
+            title = loc["split.title"],
+            hint = splitSummary(c.splitTunnel),
+            onClick = onOpenSplit,
+        )
+        Spacer(Modifier.height(8.dp))
         ColituSwitchRow(
             icon = ColituIcons.Bolt,
             title = loc["settings.autoConnect"],
@@ -186,6 +209,23 @@ fun AccountTab(
                 hint = loc["settings.adBlockHint"],
                 value = c.adBlock,
                 onChange = { c.setAdBlockEnabled(it) },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.bringIntoViewRequester(privacyRow)) {
+            ColituSwitchRow(
+                icon = ColituIcons.ShieldCheck,
+                title = loc["privacy.title"],
+                hint = loc["privacy.hint"],
+                value = c.privacyMode,
+                onChange = { c.setPrivacyModeEnabled(it) },
+                hintMaxLines = 8,
+            )
+            ColituLinkButton(
+                loc["privacy.scope"],
+                { openUrl(context, splitTunnelingUrl()) },
+                Modifier.padding(start = 8.dp, top = 2.dp),
+                icon = ColituIcons.ArrowUpRightSquare,
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -207,6 +247,16 @@ fun AccountTab(
             hint = if (c.connected && c.transport != null) "${loc["account.protocolAuto"]} · ${c.transportName}" else loc["account.protocolAuto"],
             trailing = {},
         )
+        // An older panel has no rotation: the row stays hidden.
+        if (c.rotation != null) {
+            Spacer(Modifier.height(8.dp))
+            ColituActionRow(
+                icon = ColituIcons.Refresh,
+                title = loc["rotation.title"],
+                hint = rotationSummary(c),
+                onClick = onOpenRotation,
+            )
+        }
         Spacer(Modifier.height(8.dp))
         ColituTile(padding = PaddingValues(start = 12.dp, top = 11.dp, end = 12.dp, bottom = 12.dp)) {
             Column {
@@ -237,7 +287,7 @@ fun AccountTab(
             SectionTitle(loc["account.devices"], Modifier.weight(1f))
             if (!loadingDevices) {
                 CText(
-                    loc.format("account.devicesTitle", "used" to devices.size, "limit" to maxOf(limit, devices.size)),
+                    loc.format("account.devicesTitle", "used" to devices.count { !it.suspended }, "limit" to maxOf(limit, devices.count { !it.suspended })),
                     ColituText.small,
                     Modifier.padding(bottom = 8.dp),
                 )
@@ -247,7 +297,17 @@ fun AccountTab(
             loadingDevices -> Box(Modifier.fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) { ColituSpinner() }
             devicesError != null -> ColituNotice(devicesError!!) { ColituLinkButton(loc["pricing.retry"], { reload++ }) }
             else -> devices.forEach { device ->
-                DeviceRow(device) { removing = device }
+                DeviceRow(device, onActivate = {
+                    scope.launch {
+                        safeCall { ColituAccountRepository.activateDevice(device.id) }
+                            .onSuccess {
+                                c.showToast(loc["account.activated"], error = false)
+                                reload++
+                                if (device.current) c.load(showLoading = false)
+                            }
+                            .onFailure { c.showToast(colituErrorMessage(it.message), error = true) }
+                    }
+                }) { removing = device }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -270,6 +330,12 @@ fun AccountTab(
                 "Device ${ColituTokenManager.getDeviceId().orEmpty()}"
             if (!openSupportMail(context, body)) c.showToast(loc["account.mailUnavailable"], error = true)
         })
+        Spacer(Modifier.height(8.dp))
+        ColituActionRow(ColituIcons.LockShield, loc["mfa.setupRow"], loc["mfa.setupHint"], onClick = { openUrl(context, MFA_SETUP_URL) },
+            trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
+        Spacer(Modifier.height(8.dp))
+        ColituActionRow(ColituIcons.Code, loc["account.manualConfig"], loc["account.manualConfigHint"], onClick = { openUrl(context, MANUAL_CONFIG_URL) },
+            trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
         Spacer(Modifier.height(8.dp))
         ColituActionRow(ColituIcons.Doc, loc["settings.terms"], onClick = { openWeb(context, "/legal/terms") })
         Spacer(Modifier.height(8.dp))
@@ -342,7 +408,7 @@ fun AccountTab(
 }
 
 @Composable
-private fun DeviceRow(device: ColituDevice, onRemove: () -> Unit) {
+private fun DeviceRow(device: ColituDevice, onActivate: () -> Unit, onRemove: () -> Unit) {
     val loc = ColituLoc
     val icon = when (device.platform?.lowercase()) {
         "windows", "linux" -> ColituIcons.Desktop
@@ -357,11 +423,15 @@ private fun DeviceRow(device: ColituDevice, onRemove: () -> Unit) {
                 // The name gets the full width; the badge sits on the second line.
                 CText(device.name, ColituText.label, maxLines = 1)
                 val lastSeen = device.lastActiveAt?.let { raw -> runCatching { Instant.parse(raw) }.getOrNull() }
-                if (device.current || lastSeen != null) {
+                if (device.current || device.suspended || lastSeen != null) {
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (device.current) {
                             ColituBadge(loc["account.thisDevice"])
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        if (device.suspended) {
+                            ColituBadge(loc["account.paused"], BadgeTone.Warning)
                             Spacer(Modifier.width(8.dp))
                         }
                         lastSeen?.let {
@@ -369,6 +439,9 @@ private fun DeviceRow(device: ColituDevice, onRemove: () -> Unit) {
                         }
                     }
                 }
+            }
+            if (device.suspended) {
+                ColituLinkButton(loc["account.activate"], onActivate)
             }
             Box(
                 Modifier.size(40.dp).clip(CircleShape).pressable(onRemove),

@@ -51,8 +51,10 @@ const val WEB_BASE_URL = "https://colitu.com"
 
 /** Customer account: plans, renewals and devices are managed there, never in the app. */
 const val ACCOUNT_URL = "https://app.colitu.com"
+/** Config export (keys and links for other apps) is web only for now. */
+const val MANUAL_CONFIG_URL = "https://colitu.com/account/manual-config"
 const val SUPPORT_EMAIL = "support@colitu.com"
-const val COMPANY_NAME = "Avenlith"
+const val COMPANY_NAME = "COLITU LIMITED"
 
 /** The app is published under GPL-3.0; shown under About. */
 const val SOURCE_CODE_URL = "https://github.com/colitu/android"

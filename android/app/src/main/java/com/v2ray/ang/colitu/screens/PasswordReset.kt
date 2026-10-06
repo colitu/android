@@ -51,7 +51,7 @@ private val resetEmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
  * password sign this phone in. Every other session of the account ends.
  */
 @Composable
-fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () -> Unit, onVerify: () -> Unit) {
+fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () -> Unit, onVerify: () -> Unit, onMfa: () -> Unit = {}) {
     val loc = ColituLoc
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -119,6 +119,7 @@ fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () 
                 onSuccess = { onSignedIn() },
                 onFailure = {
                     if (it.message == ColituAuthRepository.EMAIL_NOT_VERIFIED) onVerify()
+                    else if (it.message == ColituAuthRepository.MFA_REQUIRED && ColituAuthRepository.pendingMfa != null) onMfa()
                     else message = colituErrorMessage(it.message)
                 },
             )

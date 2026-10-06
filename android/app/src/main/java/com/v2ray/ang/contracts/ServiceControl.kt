@@ -20,6 +20,12 @@ interface ServiceControl {
     fun stopService()
 
     /**
+     * Stops the core but keeps the VPN interface established (Colitu server
+     * or transport switch): traffic is dropped, never sent around the tunnel.
+     */
+    fun holdService()
+
+    /**
      * Protects the VPN socket.
      * @param socket The socket to protect.
      * @return True if the socket is protected, false otherwise.

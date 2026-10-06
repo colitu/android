@@ -76,7 +76,7 @@ private val emailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
  * successful sign-in is kept on the device until the user signs out.
  */
 @Composable
-fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Unit, onVerify: () -> Unit) {
+fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Unit, onVerify: () -> Unit, onMfa: () -> Unit = {}) {
     val loc = ColituLoc
     val context = LocalContext.current
     val focus = LocalFocusManager.current
@@ -147,6 +147,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                 onFailure = {
                     // The account exists but must confirm its e-mail: the code screen takes over.
                     if (it.message == ColituAuthRepository.EMAIL_NOT_VERIFIED) onVerify()
+                    else if (it.message == ColituAuthRepository.MFA_REQUIRED && ColituAuthRepository.pendingMfa != null) onMfa()
                     else message = colituErrorMessage(it.message, signingIn = true)
                 },
             )
@@ -165,7 +166,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
 
     val form: @Composable () -> Unit = {
         if (forgot) {
-            PasswordResetPanel(email, onBack = { forgot = false }, onSignedIn = onSignedIn, onVerify = onVerify)
+            PasswordResetPanel(email, onBack = { forgot = false }, onSignedIn = onSignedIn, onVerify = onVerify, onMfa = onMfa)
         } else if (ColituTv.isTv && !usePassword) {
             TvLinkPanel(onSignedIn = onSignedIn, onVerify = onVerify, onUsePassword = { usePassword = true })
         } else ColituPanel(padding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 20.dp)) {

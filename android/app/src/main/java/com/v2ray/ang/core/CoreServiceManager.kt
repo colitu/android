@@ -44,6 +44,8 @@ object CoreServiceManager {
 
     private val coreController: CoreController = CoreNativeManager.newCoreController(CoreCallback())
     private val mMsgReceive = ReceiveMessageHandler()
+    /** [mMsgReceive] stays registered through a hold (switch); never twice. */
+    @Volatile private var msgReceiverRegistered = false
     private var currentConfig: ProfileItem? = null
     private var processFinder: XrayProcessFinder? = null
     private var colituTrafficJob: Job? = null
@@ -78,6 +80,15 @@ object CoreServiceManager {
         MessageUtil.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
     }
 
+    /**
+     * Colitu switch: stops the core but keeps the VPN interface, so traffic is
+     * blocked rather than sent around the tunnel until the next
+     * [startVService] (see CoreVpnService.holdService).
+     */
+    fun holdVService(context: Context) {
+        MessageUtil.sendMsg2Service(context, AppConfig.MSG_COLITU_HOLD, "")
+    }
+
     /** True in the VPN process while the core runs; always false elsewhere. */
     fun isRunning() = coreController.isRunning
 
@@ -95,6 +106,12 @@ object CoreServiceManager {
     }
 
     fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
+        // After a hold the previous core may still be stopping (stopLoop runs
+        // asynchronously); give it a moment instead of failing the switch.
+        val deadline = SystemClock.elapsedRealtime() + CORE_STOP_WAIT_MS
+        while (coreController.isRunning && SystemClock.elapsedRealtime() < deadline) {
+            Thread.sleep(50)
+        }
         if (coreController.isRunning) {
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
             return false
@@ -126,7 +143,10 @@ object CoreServiceManager {
         val mFilter = IntentFilter(AppConfig.BROADCAST_ACTION_SERVICE)
         mFilter.addAction(Intent.ACTION_SCREEN_ON)
         mFilter.addAction(Intent.ACTION_SCREEN_OFF)
-        ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
+        if (!msgReceiverRegistered) {
+            ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
+            msgReceiverRegistered = true
+        }
 
         currentConfig = config
         // hev-socks5-tunnel reads the TUN; Xray only listens on its
@@ -145,7 +165,8 @@ object CoreServiceManager {
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 
-    fun stopCoreLoop(): Boolean {
+    /** [keepReceiver]: a hold, the service still has to hear the next stop or hold. */
+    fun stopCoreLoop(keepReceiver: Boolean = false): Boolean {
         val service = getService() ?: return false
 
         if (coreController.isRunning) {
@@ -164,10 +185,13 @@ object CoreServiceManager {
         WidgetProvider.refresh(service, false)
         NotificationManager.cancelNotification()
 
-        try {
-            service.unregisterReceiver(mMsgReceive)
-        } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "StartCore-Manager: receiver was not registered")
+        if (!keepReceiver) {
+            try {
+                service.unregisterReceiver(mMsgReceive)
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "StartCore-Manager: receiver was not registered")
+            }
+            msgReceiverRegistered = false
         }
         return true
     }
@@ -220,6 +244,8 @@ object CoreServiceManager {
     }
 
     private fun getService(): Service? = serviceControl?.get()?.getService()
+
+    private const val CORE_STOP_WAIT_MS = 3_000L
 
     private class CoreCallback : CoreCallbackHandler {
         override fun startup(): Long = 0
@@ -282,12 +308,22 @@ object CoreServiceManager {
                 AppConfig.MSG_STATE_RESTART -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Restart service")
                     val app = serviceControl.getService().applicationContext
-                    serviceControl.stopService()
-                    // A restart is a quick start: only while the profile is still valid.
-                    CoroutineScope(Dispatchers.Main).launch {
-                        delay(500L)
-                        ColituQuickStart.start(app)
+                    // A restart is a quick start: only while the profile is still
+                    // valid. The interface is held meanwhile, nothing leaks.
+                    if (ColituQuickStart.startableGuid() == null) {
+                        serviceControl.stopService()
+                    } else {
+                        serviceControl.holdService()
+                        CoroutineScope(Dispatchers.Main).launch {
+                            delay(500L)
+                            if (!ColituQuickStart.start(app)) serviceControl.stopService()
+                        }
                     }
+                }
+
+                AppConfig.MSG_COLITU_HOLD -> {
+                    LogUtil.i(AppConfig.TAG, "StartCore-Manager: Hold service")
+                    serviceControl.holdService()
                 }
 
                 AppConfig.MSG_COLITU_VERIFY -> verifyColituTunnel(intent.getSerializableExtra("content")?.toString().orEmpty())

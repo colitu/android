@@ -34,6 +34,22 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+        Split tunneling lists the apps that have a launcher icon. Package
+        visibility for exactly those comes from this intent query, so the app
+        needs no QUERY_ALL_PACKAGES permission.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+    </queries>
+
+    <!--
         Only Colitu's own screens and the VPN runtime are declared here. The
         imported v2rayNG screens, URL scheme, Tasker plug-in and boot receiver
         are not part of the product: they let other apps and web pages add

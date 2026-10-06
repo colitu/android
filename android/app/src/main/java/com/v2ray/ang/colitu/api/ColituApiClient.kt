@@ -70,7 +70,9 @@ object ColituApiClient {
         data class Error(
             val code: Int,
             val message: String,
-            val isAuthError: Boolean = false
+            val isAuthError: Boolean = false,
+            /** The JSON error body, for answers that carry data (MFA_REQUIRED, DEVICE_OVER_LIMIT). */
+            val body: JsonObject? = null,
         ) : ApiResult<Nothing>()
     }
 
@@ -89,9 +91,11 @@ object ColituApiClient {
         executeWithRetry(builder.build(), url, attempt = 0, allowRefresh = true)
     }
 
-    suspend fun post(path: String, body: JsonObject): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
+    suspend fun post(path: String, body: JsonObject, headers: Map<String, String> = emptyMap()): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
         val url = buildUrl(path)
-        executeWithRetry(Request.Builder().url(url).post(body.toString().toRequestBody(JSON_TYPE)).build(), url, 0, true)
+        val builder = Request.Builder().url(url).post(body.toString().toRequestBody(JSON_TYPE))
+        headers.forEach(builder::header)
+        executeWithRetry(builder.build(), url, 0, true)
     }
 
     suspend fun patch(path: String, body: JsonObject): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
@@ -230,7 +234,7 @@ object ColituApiClient {
         ColituClock.observe(response.headers.getDate("Date"))
 
         return when {
-            code == 401 -> handle401(req, url, attempt, allowRefresh)
+            code == 401 -> handle401(req, url, attempt, allowRefresh, bodyStr)
             code in RETRYABLE_STATUS -> handleRetryable(req, url, attempt, allowRefresh, code, response.header("Retry-After"))
             code == 304 -> ApiResult.Success(JsonObject(), code, response.header("ETag"))
             code !in 200..299 -> {
@@ -242,7 +246,7 @@ object ColituApiClient {
                     return ApiResult.Error(code, message, isAuthError = true)
                 }
                 rememberFriendlyError(message)
-                ApiResult.Error(code, message)
+                ApiResult.Error(code, message, body = parseObject(bodyStr))
             }
             code == 204 || bodyStr.isBlank() -> ApiResult.Success(JsonObject(), code, response.header("ETag"))
             else -> parseBody(bodyStr, code, response.header("ETag"))
@@ -272,7 +276,7 @@ object ColituApiClient {
     // ── 401 / token refresh ─────────────────────────────────────────────────────
 
     // Auth endpoints returning 401 mean bad credentials — don't try to refresh.
-    private val noRefreshPaths = listOf("/auth/refresh", "/auth/login", "/auth/register")
+    private val noRefreshPaths = listOf("/auth/refresh", "/auth/login", "/auth/register", "/auth/password/reset")
 
     /**
      * A 401 is decided by the auth middleware before the handler runs, so the
@@ -281,10 +285,17 @@ object ColituApiClient {
      * rejected; a network error or a server problem during the refresh leaves
      * the session (and the running tunnel) alone.
      */
-    private suspend fun handle401(req: Request, url: String, attempt: Int, allowRefresh: Boolean): ApiResult<JsonObject> {
+    private suspend fun handle401(req: Request, url: String, attempt: Int, allowRefresh: Boolean, bodyStr: String = ""): ApiResult<JsonObject> {
+        // Sign-in endpoints answer 401 with their own codes (wrong password,
+        // MFA_INVALID_CODE, MFA_TOKEN_EXPIRED); those are kept for the screen.
+        if (noRefreshPaths.any { url.contains(it) }) {
+            logFailedRequest(req, 401, attempt)
+            val panelCode = extractErrorCode(bodyStr)
+            return ApiResult.Error(401, panelCode ?: "auth_expired", isAuthError = panelCode == null, body = parseObject(bodyStr))
+        }
         // Signed out (or signed out while this request was in flight): there is
         // no session to end, so don't clear() a sign-in that may be starting.
-        if (!allowRefresh || noRefreshPaths.any { url.contains(it) } || !ColituTokenManager.isLoggedIn()) {
+        if (!allowRefresh || !ColituTokenManager.isLoggedIn()) {
             logFailedRequest(req, 401, attempt)
             return ApiResult.Error(401, "auth_expired", isAuthError = true)
         }
@@ -385,6 +396,9 @@ object ColituApiClient {
         rememberFriendlyError("parse_error")
         ApiResult.Error(code, "parse_error")
     }
+
+    private fun parseObject(body: String): JsonObject? =
+        runCatching { JsonParser.parseString(body).takeIf { it.isJsonObject }?.asJsonObject }.getOrNull()
 
     private fun extractErrorCode(body: String): String? = try {
         val json = JsonParser.parseString(body).asJsonObject

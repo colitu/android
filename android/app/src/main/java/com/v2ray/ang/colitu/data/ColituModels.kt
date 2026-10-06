@@ -37,7 +37,10 @@ data class ColituServer(
     /** Where the app measures this location's ping (TCP connect time). */
     val latencyHost: String? = null,
     val latencyPort: Int? = null,
+    /** Set for a multihop route (double VPN); [id] is then the route id, never a node id. */
+    val route: ColituRoute? = null,
 ) {
+    val isMultihop: Boolean get() = route != null
     val flagEmoji: String get() = countryCodeToFlag(countryCode)
     /** "AI" means the ones users ask for most: Gemini and ChatGPT both open. */
     val opensAi: Boolean get() = services.containsAll(REQUIRED_AI_SERVICES)
@@ -117,6 +120,8 @@ data class ColituServer(
 
 data class ColituServerListResponse(
     val servers: List<ColituServer>,
+    /** Multihop routes (`multihop` of the list; absent from an older panel). */
+    val multihop: List<ColituServer> = emptyList(),
 ) {
     companion object {
         /**
@@ -124,16 +129,17 @@ data class ColituServerListResponse(
          * already applied entitlement and node-health eligibility.
          */
         fun fromJson(json: JsonObject): ColituServerListResponse {
+            val routes = ColituMultihop.parseRoutes(json)
             val serversArray = if (json.has("servers") && json.get("servers").isJsonArray)
                 json.getAsJsonArray("servers")
             else
-                return ColituServerListResponse(emptyList())
+                return ColituServerListResponse(emptyList(), routes)
 
             val servers = serversArray.mapNotNull { elem ->
                 if (elem.isJsonObject) ColituServer.fromJson(elem.asJsonObject) else null
             }.mapIndexed { index, server -> server.copy(isRecommended = index == 0) }
 
-            return ColituServerListResponse(servers)
+            return ColituServerListResponse(servers, routes)
         }
     }
 }
@@ -195,6 +201,8 @@ data class ColituDevice(
     val current: Boolean,
     val lastActiveAt: String?,
     val platform: String? = null,
+    /** Paused over the plan's device limit (suspended_at set, reason "over_limit"). */
+    val suspended: Boolean = false,
 ) {
     companion object {
         fun fromJson(json: JsonObject, currentDeviceId: String? = null): ColituDevice? {
@@ -206,6 +214,7 @@ data class ColituDevice(
                 current = id == currentDeviceId,
                 lastActiveAt = json.tryString("last_seen_at"),
                 platform = json.tryString("platform"),
+                suspended = json.tryString("suspended_at") != null,
             )
         }
     }
