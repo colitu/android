@@ -47,7 +47,7 @@ class TProxyService(
             writeText(configContent)
         }
 //        LogUtil.i(AppConfig.TAG, "Config file created: ${configFile.absolutePath}")
-        LogUtil.d(AppConfig.TAG, "HevSocks5Tunnel Config content:\n$configContent")
+        // The config is not logged: it holds the SOCKS password.
 
         try {
 //            LogUtil.i(AppConfig.TAG, "TProxyStartService...")

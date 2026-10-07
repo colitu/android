@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.colitu.app.ColituQuickStart
+import com.v2ray.ang.colitu.repository.ColituVpnRepository
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ProfileItem
 import com.v2ray.ang.handler.MmkvManager
@@ -105,7 +106,8 @@ object CoreServiceManager {
         ContextCompat.startForegroundService(context, Intent(context.applicationContext, CoreVpnService::class.java))
     }
 
-    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
+    /** [reportFailure] false: the caller retries, only its last attempt reaches the UI. */
+    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?, reportFailure: Boolean = true): Boolean {
         // After a hold the previous core may still be stopping (stopLoop runs
         // asynchronously); give it a moment instead of failing the switch.
         val deadline = SystemClock.elapsedRealtime() + CORE_STOP_WAIT_MS
@@ -126,20 +128,17 @@ object CoreServiceManager {
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
-            MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
-            NotificationManager.cancelNotification()
+            if (reportFailure) {
+                MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
+                NotificationManager.cancelNotification()
+            }
             false
         }
     }
 
     @Throws(Exception::class)
     private fun doStartCoreLoop(service: Service, vpnInterface: ParcelFileDescriptor?) {
-        val guid = MmkvManager.getSelectServer() ?: error("NO_PROFILE")
-        val config = MmkvManager.decodeServerConfig(guid) ?: error("CONFIG_NOT_READY")
-
-        val result = CoreConfigManager.getV2rayConfig(service, guid)
-        if (!result.status) error(result.errorMessage.ifBlank { "ENGINE_FAILED" })
-
+        // Registered first: a failed start is held (CoreVpnService), and the UI's stop must still arrive.
         val mFilter = IntentFilter(AppConfig.BROADCAST_ACTION_SERVICE)
         mFilter.addAction(Intent.ACTION_SCREEN_ON)
         mFilter.addAction(Intent.ACTION_SCREEN_OFF)
@@ -147,6 +146,14 @@ object CoreServiceManager {
             ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
             msgReceiverRegistered = true
         }
+
+        val guid = MmkvManager.getSelectServer() ?: error("NO_PROFILE")
+        val config = MmkvManager.decodeServerConfig(guid) ?: error("CONFIG_NOT_READY")
+        // Every start, whatever started it, gets a new SOCKS port and account; never a reused, guessable port.
+        if (!ColituVpnRepository.renewLocalProxy(guid)) error("CONFIG_NOT_READY")
+
+        val result = CoreConfigManager.getV2rayConfig(service, guid)
+        if (!result.status) error(result.errorMessage.ifBlank { "ENGINE_FAILED" })
 
         currentConfig = config
         // hev-socks5-tunnel reads the TUN; Xray only listens on its

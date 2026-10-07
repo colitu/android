@@ -59,6 +59,20 @@ object ColituVpnRepository {
         }
 
     /**
+     * A fresh loopback SOCKS port and account in the stored profile [guid] and
+     * the settings hev reads. Runs before every core start (in-app, tile,
+     * widget, Always-on, restarts): a port from an earlier session may be
+     * held by another app by now, which would then receive hev's login and
+     * every destination. False when the profile cannot be rewritten.
+     */
+    fun renewLocalProxy(guid: String): Boolean {
+        val raw = MmkvManager.decodeServerRaw(guid) ?: return false
+        return runCatching {
+            MmkvManager.encodeServerRaw(guid, XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession()))
+        }.onFailure { Log.e(TAG, "local proxy renewal failed: ${it.javaClass.simpleName}") }.isSuccess
+    }
+
+    /**
      * Privacy mode changed while no tunnel runs: the stored Colitu profile,
      * which the quick-settings tile, the widget and Always-on start without
      * the app, is rebuilt for the new setting right away. Turning privacy mode

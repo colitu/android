@@ -98,6 +98,25 @@ class XrayMobileAdapterTest {
     }
 
     @Test
+    fun renewedLocalProxyReplacesPortAndAccountButKeepsSniffing() {
+        val raw = requireNotNull(XrayMobileAdapter.render(envelope(), now).rawConfig)
+        val first = JsonParser.parseString(
+            XrayMobileAdapter.withLocalProxy(raw, com.v2ray.ang.colitu.api.LocalProxy(34567, "user-a", "secret-b")),
+        ).asJsonObject
+        first.getAsJsonArray("inbounds")[0].asJsonObject.add("sniffing", JsonParser.parseString("""{"enabled":true}"""))
+
+        val renewed = JsonParser.parseString(
+            XrayMobileAdapter.withLocalProxy(first.toString(), com.v2ray.ang.colitu.api.LocalProxy(45678, "user-c", "secret-d")),
+        ).asJsonObject
+        val inbounds = renewed.getAsJsonArray("inbounds")
+        assertEquals(1, inbounds.size())
+        val socks = inbounds[0].asJsonObject
+        assertEquals(45678, socks.get("port").asInt)
+        assertEquals("user-c", socks.getAsJsonObject("settings").getAsJsonArray("accounts")[0].asJsonObject.get("user").asString)
+        assertTrue(socks.getAsJsonObject("sniffing").get("enabled").asBoolean)
+    }
+
+    @Test
     fun runtimeHasNoAccessLog() {
         val log = JsonParser.parseString(XrayMobileAdapter.render(envelope(), now).rawConfig).asJsonObject.getAsJsonObject("log")
         assertEquals("none", log.get("access").asString)

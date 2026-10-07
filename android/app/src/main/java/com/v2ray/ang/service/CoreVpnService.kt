@@ -143,7 +143,6 @@ class CoreVpnService : VpnService(), ServiceControl {
             MmkvManager.setSelectServer(guid)
         }
 
-        val wasHolding = holding
         holding = false
         mainHandler.removeCallbacks(holdTimeout)
         val gen = synchronized(lock) { ++generation }
@@ -151,12 +150,11 @@ class CoreVpnService : VpnService(), ServiceControl {
         // slow or busy phone. On the main thread that tripped Android's
         // service-start watchdog (ANR), so the work runs on one background
         // thread; starts stay in order.
-        startExecutor.execute { startGeneration(gen, wasHolding) }
+        startExecutor.execute { startGeneration(gen) }
         return START_STICKY
     }
 
-    /** [fromHold]: a switch; a failed start keeps blocking instead of opening the gap. */
-    private fun startGeneration(gen: Long, fromHold: Boolean = false) {
+    private fun startGeneration(gen: Long) {
         if (gen != generation) return
         if (prepare(this) != null) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Permission not granted")
@@ -164,18 +162,24 @@ class CoreVpnService : VpnService(), ServiceControl {
             return
         }
         val iface = configureVpnService(gen) ?: return
-        runTun2socks(iface)
-        if (gen != generation) {
-            teardownStale()
-            return
-        }
-        if (!CoreServiceManager.startCoreLoop(iface)) {
+        // Xray first, so hev only ever logs in to Xray's own freshly bound
+        // SOCKS port and never to another app sitting on it.
+        val coreStarted = CoreServiceManager.startCoreLoop(iface, reportFailure = false) ||
+            // Second try on a new port (renewed per start): the first may have been taken meanwhile.
+            (gen == generation && CoreServiceManager.startCoreLoop(iface))
+        if (!coreStarted) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
-            if (fromHold && gen == generation) mainHandler.post { holdService() } else stopAllService()
+            // No hev without Xray; the held TUN blocks traffic while the UI shows the error.
+            mainHandler.post { if (gen == generation) holdService() }
             return
         }
         // A stop that arrived while the core was starting found nothing to
         // stop yet; finish it now.
+        if (gen != generation) {
+            teardownStale()
+            return
+        }
+        runTun2socks(iface)
         if (gen != generation) teardownStale()
     }
 

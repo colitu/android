@@ -638,6 +638,7 @@ object ColituLoc {
 
     private val countries: Map<String, Array<String>> = hashMapOf(
         "AE" to arrayOf("ОАЭ", "BAE", "United Arab Emirates"),
+        "AL" to arrayOf("Албания", "Arnavutluk", "Albania"),
         "AM" to arrayOf("Армения", "Ermenistan", "Armenia"),
         "AR" to arrayOf("Аргентина", "Arjantin", "Argentina"),
         "AT" to arrayOf("Австрия", "Avusturya", "Austria"),

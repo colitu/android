@@ -136,16 +136,19 @@ object XrayMobileAdapter {
     /**
      * [raw] with its SOCKS inbound replaced by one on [proxy]'s port that
      * accepts only [proxy]'s account (hev-socks5-tunnel and the API client
-     * log in with it).
+     * log in with it). Also used on the stored profile before every core
+     * start (ColituVpnRepository.renewLocalProxy).
      */
     fun withLocalProxy(raw: String, proxy: LocalProxy): String {
         val json = com.google.gson.JsonParser.parseString(raw).asJsonObject
         val inbounds = JsonArray()
+        var sniffing: com.google.gson.JsonElement? = null
         json.get("inbounds")?.takeIf { it.isJsonArray }?.asJsonArray?.forEach { inbound ->
             val isSocks = inbound.isJsonObject && inbound.asJsonObject.get("protocol")?.takeIf { it.isJsonPrimitive }?.asString == "socks"
-            if (!isSocks) inbounds.add(inbound)
+            if (!isSocks) inbounds.add(inbound) else if (sniffing == null) sniffing = inbound.asJsonObject.get("sniffing")
         }
-        inbounds.add(socksInbound(proxy))
+        // RuBypass/SplitTunnel add sniffing to this inbound; a renewal at start must keep it.
+        inbounds.add(socksInbound(proxy).apply { sniffing?.let { add("sniffing", it) } })
         json.add("inbounds", inbounds)
         return json.toString()
     }
