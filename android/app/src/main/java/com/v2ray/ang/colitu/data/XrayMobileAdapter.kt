@@ -87,7 +87,7 @@ object XrayMobileAdapter {
         val outbound = when (protocol) {
             "vless-reality", "vless-xhttp" -> vless(host, port, credentials, transport, security)
             "trojan" -> trojan(host, port, credentials, transport, security)
-            "hysteria2" -> hysteria2(host, port, credentials, security)
+            "hysteria2" -> hysteria2(host, port, credentials, transport, security)
             else -> shadowsocks(host, port, credentials)
         }
         val runtime = JsonObject().apply {
@@ -238,7 +238,7 @@ object XrayMobileAdapter {
     }
 
     /** Xray's native Hysteria2 outbound (QUIC with TLS), as on iOS. */
-    private fun hysteria2(host: String, port: Int, c: JsonObject, s: JsonObject) = JsonObject().apply {
+    private fun hysteria2(host: String, port: Int, c: JsonObject, t: JsonObject, s: JsonObject) = JsonObject().apply {
         addProperty("tag", "proxy")
         addProperty("protocol", "hysteria")
         add("settings", JsonObject().apply {
@@ -257,7 +257,40 @@ object XrayMobileAdapter {
                 addProperty("version", 2)
                 addProperty("auth", c.requiredString("password"))
             })
+            // Port hopping: Russian mobile networks throttle one long-lived
+            // UDP flow, so the client moves to another port of the range every
+            // few seconds. Xray 26 reads it only from finalmask.quicParams
+            // (hysteriaSettings.udphop is silently ignored). settings.port
+            // stays the endpoint port.
+            hopPorts(t)?.let { ports ->
+                add("finalmask", JsonObject().apply {
+                    add("quicParams", JsonObject().apply {
+                        add("udpHop", JsonObject().apply {
+                            addProperty("ports", ports)
+                            addProperty("interval", hopInterval(t).toString())
+                        })
+                    })
+                })
+            }
         })
+    }
+
+    private val hopPortsPattern = Regex("""^(\d{4,5})-(\d{4,5})$""")
+
+    /** The panel's "hop_ports" range ("20000-40000"), or null when absent or malformed. */
+    internal fun hopPorts(t: JsonObject): String? {
+        val raw = t.get("hop_ports")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: return null
+        val match = hopPortsPattern.matchEntire(raw) ?: return null
+        val from = match.groupValues[1].toInt()
+        val to = match.groupValues[2].toInt()
+        if (from !in 1..65535 || to !in 1..65535 || from > to) return null
+        return raw
+    }
+
+    /** Seconds between hops; the panel's "hop_interval", 30 when absent or out of range. */
+    internal fun hopInterval(t: JsonObject): Int {
+        val value = t.get("hop_interval")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asInt
+        return value?.takeIf { it in 5..600 } ?: 30
     }
 
     private fun shadowsocks(host: String, port: Int, c: JsonObject) = JsonObject().apply {

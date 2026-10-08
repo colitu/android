@@ -5,7 +5,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.VpnService
+import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -628,23 +631,28 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * decides. The rest follow in preference order.
      */
     private suspend fun orderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
-        val stalled = setOfNotNull(store.decodeString(KEY_STALLED_TRANSPORT))
+        val stalled = stalledTransports(server.id)
         val lastGood = store.decodeString(KEY_GOOD_PREFIX + server.id)
-        val preferred = configs.firstOrNull { it.protocolType == lastGood && it.protocolType !in stalled }
-        // Hysteria2 is the fastest transport: a remembered TCP transport must
-        // not keep it from being tried again, so the probe decides whenever
-        // Hysteria2 is on offer and did not stall last time.
-        val hysteriaOffered = configs.any { it.protocolType == "hysteria2" && it.protocolType !in stalled }
-        if (preferred != null && (preferred.protocolType == "hysteria2" || !hysteriaOffered)) {
-            return listOf(preferred) + configs.filter { it !== preferred }.sortedBy { rankOf(it.protocolType, stalled) }
-        }
-        if (!probe) return configs.sortedBy { rankOf(it.protocolType, stalled) }
+        ColituTransportOrder.remembered(configs, lastGood, stalled)?.let { return it }
+        if (!probe) return ColituTransportOrder.byRank(configs, stalled)
         phase = ConnectPhase.Probing
         return rank(configs, stalled)
     }
 
-    private fun rankOf(protocol: String?, stalled: Set<String>) =
-        (XrayMobileAdapter.transportRank[protocol] ?: 3) + if (protocol in stalled) 10 else 0
+    /**
+     * The transport that stalled while connecting (any server, until it works
+     * again) plus, on [serverId] only, Hysteria2 while its mid-session stall
+     * from [watchHysteria] is younger than [MID_SESSION_STALL_PENALTY_MS].
+     */
+    private fun stalledTransports(serverId: String): Set<String> {
+        val key = ColituTransportOrder.midSessionStallKey(serverId, "hysteria2")
+        val until = store.decodeLong(key, 0L)
+        val midSession = until > 0L && System.currentTimeMillis() < until
+        if (until > 0L && !midSession) store.removeValueForKey(key)
+        return ColituTransportOrder.stalled(store.decodeString(KEY_STALLED_TRANSPORT), if (midSession) "hysteria2" else null)
+    }
+
+    private fun rankOf(protocol: String?, stalled: Set<String>) = ColituTransportOrder.rankOf(protocol, stalled)
 
     /**
      * Starts the transports in [order] until one comes up; every one is tried.
@@ -702,8 +710,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (delayMs >= 0) {
             store.encode(KEY_GOOD_PREFIX + server.id, config.protocolType)
             if (store.decodeString(KEY_STALLED_TRANSPORT) == config.protocolType) store.removeValueForKey(KEY_STALLED_TRANSPORT)
+            config.protocolType?.let { store.removeValueForKey(ColituTransportOrder.midSessionStallKey(server.id, it)) }
             // Keep the cached profile current for the next instant connect.
             if (fromCache) safeCall { fetchCandidates(server) }
+            if (config.protocolType == "hysteria2") watchHysteria(server)
             return
         }
         LogUtil.w(AppConfig.TAG, "Colitu: ${config.protocolType} is up but carries no traffic")
@@ -719,6 +729,72 @@ class ColituController(application: Application) : AndroidViewModel(application)
             showToast(ColituLoc["err.verify"], error = true)
         }
     }
+
+    /** elapsedRealtime of the last automatic mid-session transport switch. */
+    private var lastAutoSwitchAt = 0L
+
+    /**
+     * Russian mobile networks throttle a long-lived UDP flow after a while,
+     * which drops calls on Hysteria2 although the tunnel is still "up". Runs
+     * in [verifyJob] (so every connect, switch and disconnect stops it): a
+     * real request through the tunnel every [STALL_PROBE_INTERVAL_MS]; after
+     * [STALL_PROBE_FAILURES] misses in a row while the phone itself is online
+     * on an unchanged network, Hysteria2 goes last on this server only for
+     * [MID_SESSION_STALL_PENALTY_MS] and the same server is reconnected on the
+     * next transport, silently. At most one such switch per [AUTO_SWITCH_MIN_GAP_MS].
+     */
+    private suspend fun watchHysteria(server: ColituServer) {
+        var failures = 0
+        var lastNetworks: Set<String>? = null
+        while (connected && transport == "hysteria2" && connectedServerId == server.id) {
+            delay(STALL_PROBE_INTERVAL_MS)
+            if (!connected || transport != "hysteria2" || connectedServerId != server.id) return
+            val networks = underlyingNetworks()
+            // Offline, airplane mode, Doze or a network change in progress:
+            // the misses would say nothing about the transport.
+            if (networks == null || networks != lastNetworks || deviceIdle()) {
+                lastNetworks = networks
+                failures = 0
+                continue
+            }
+            if (verifyTunnel(STALL_PROBE_TIMEOUT_MS) >= 0) {
+                failures = 0
+                continue
+            }
+            if (++failures < STALL_PROBE_FAILURES) continue
+            failures = 0
+            if (!connected || underlyingNetworks() != lastNetworks) continue
+            val now = android.os.SystemClock.elapsedRealtime()
+            val nothingElse = offeredTransports.isNotEmpty() && offeredTransports.none { it != "hysteria2" }
+            if (nothingElse || (lastAutoSwitchAt > 0L && now - lastAutoSwitchAt < AUTO_SWITCH_MIN_GAP_MS)) continue
+            lastAutoSwitchAt = now
+            LogUtil.w(AppConfig.TAG, "Colitu: hysteria2 stalled mid-session ($STALL_PROBE_FAILURES probes failed), switching transport")
+            store.removeValueForKey(KEY_GOOD_PREFIX + server.id)
+            store.encode(
+                ColituTransportOrder.midSessionStallKey(server.id, "hysteria2"),
+                System.currentTimeMillis() + MID_SESSION_STALL_PENALTY_MS,
+            )
+            stalledThisConnect += "hysteria2"
+            // Cancels this job; the cached profile starts the next transport right away.
+            startConnectFlow(fresh = false, continuing = true)
+            return
+        }
+    }
+
+    /** Ids of the non-VPN networks with internet, or null when there is none. */
+    private fun underlyingNetworks(): Set<String>? = runCatching {
+        val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java)
+            ?: return@runCatching null
+        @Suppress("DEPRECATION")
+        cm.allNetworks.filter { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@filter false
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }.map { it.toString() }.toSet().takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
+    private fun deviceIdle(): Boolean = runCatching {
+        getApplication<Application>().getSystemService(PowerManager::class.java)?.isDeviceIdleMode == true
+    }.getOrDefault(false)
 
     private fun onConnected(server: ColituServer, config: ColituVpnConfig, guid: String) {
         val protocol = config.protocolType
@@ -835,11 +911,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
     }
 
     /** Real request through the running tunnel; the delay in ms or -1. */
-    private suspend fun verifyTunnel(): Long {
+    private suspend fun verifyTunnel(timeoutMs: Long = VERIFY_TIMEOUT_MS): Long {
         val result = CompletableDeferred<Long>().also { pendingVerify = it }
         val id = ++verifyId
         MessageUtil.sendMsg2Service(getApplication(), AppConfig.MSG_COLITU_VERIFY, id.toString())
-        val delayMs = withTimeoutOrNull(VERIFY_TIMEOUT_MS) { result.await() } ?: -1L
+        val delayMs = withTimeoutOrNull(timeoutMs) { result.await() } ?: -1L
         pendingVerify = null
         return delayMs
     }
@@ -1221,6 +1297,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val VERIFY_TIMEOUT_MS = 12_000L
         private const val PROBE_TIMEOUT_MS = 4_500L
         private const val TEARDOWN_SETTLE_MS = 600L
+        private const val STALL_PROBE_INTERVAL_MS = 5_000L
+        private const val STALL_PROBE_TIMEOUT_MS = 4_000L
+        private const val STALL_PROBE_FAILURES = 3
+        private const val AUTO_SWITCH_MIN_GAP_MS = 60_000L
+        private const val MID_SESSION_STALL_PENALTY_MS = 10 * 60_000L
     }
 }
 
@@ -1284,4 +1365,35 @@ fun planDetailOf(expires: Instant): String {
     val left = java.time.Duration.between(ColituClock.now(), expires)
     if (left.toDays() > LIFETIME_DAYS) return ColituLoc["plan.lifetime"]
     return "${ColituLoc.format("plan.until", "date" to ColituLoc.date(expires))} · ${ColituLoc.format("plan.left", "left" to leftText(left))}"
+}
+
+/**
+ * Start order of a server's transports, without Android state so it can be
+ * unit tested. "Stalled" transports go last.
+ */
+internal object ColituTransportOrder {
+    /** Store key: wall-clock ms until which [protocol] goes last on [serverId] after a mid-session stall. */
+    fun midSessionStallKey(serverId: String, protocol: String) = "stall_until_$serverId|$protocol"
+
+    fun stalled(connectTime: String?, midSession: String?): Set<String> = setOfNotNull(connectTime, midSession)
+
+    fun rankOf(protocol: String?, stalled: Set<String>) =
+        (XrayMobileAdapter.transportRank[protocol] ?: 3) + if (protocol in stalled) 10 else 0
+
+    fun byRank(configs: List<ColituVpnConfig>, stalled: Set<String>) = configs.sortedBy { rankOf(it.protocolType, stalled) }
+
+    /**
+     * The transport that last worked first (no probe), unless it is not
+     * Hysteria2 and Hysteria2 is on offer and not stalled; null means the
+     * probe (or [byRank] without one) decides.
+     */
+    fun remembered(configs: List<ColituVpnConfig>, lastGood: String?, stalled: Set<String>): List<ColituVpnConfig>? {
+        val preferred = configs.firstOrNull { it.protocolType == lastGood && it.protocolType !in stalled } ?: return null
+        // Hysteria2 is the fastest transport: a remembered TCP transport must
+        // not keep it from being tried again, so the probe decides whenever
+        // Hysteria2 is on offer and did not stall last time.
+        val hysteriaOffered = configs.any { it.protocolType == "hysteria2" && it.protocolType !in stalled }
+        if (preferred.protocolType != "hysteria2" && hysteriaOffered) return null
+        return listOf(preferred) + byRank(configs.filter { it !== preferred }, stalled)
+    }
 }

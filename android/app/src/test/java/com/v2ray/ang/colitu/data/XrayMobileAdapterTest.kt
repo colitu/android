@@ -240,6 +240,50 @@ class XrayMobileAdapterTest {
         assertEquals("", XrayMobileAdapter.transportName(null))
     }
 
+    @Test
+    fun hysteria2PortHoppingGoesIntoFinalmaskAndKeepsEndpointPort() {
+        val outbound = hysteria2Outbound("""{"type":"hysteria","hop_ports":"20000-40000","hop_interval":30}""")
+        assertEquals(8443, outbound.getAsJsonObject("settings").get("port").asInt)
+        val stream = outbound.getAsJsonObject("streamSettings")
+        val hop = stream.getAsJsonObject("finalmask").getAsJsonObject("quicParams").getAsJsonObject("udpHop")
+        assertEquals("20000-40000", hop.get("ports").asString)
+        // Xray 26 wants the interval as a string.
+        assertTrue(hop.get("interval").asJsonPrimitive.isString)
+        assertEquals("30", hop.get("interval").asString)
+        // The old shape is ignored by Xray 26 and must not be emitted.
+        assertFalse(stream.getAsJsonObject("hysteriaSettings").has("udphop"))
+    }
+
+    @Test
+    fun hysteria2HopIntervalDefaultsWhenMissing() {
+        val outbound = hysteria2Outbound("""{"type":"hysteria","hop_ports":"20000-40000"}""")
+        val hop = outbound.getAsJsonObject("streamSettings").getAsJsonObject("finalmask")
+            .getAsJsonObject("quicParams").getAsJsonObject("udpHop")
+        assertEquals("30", hop.get("interval").asString)
+    }
+
+    @Test
+    fun hysteria2WithoutOrWithMalformedHopPortsIsUnchanged() {
+        val plain = hysteria2Outbound("""{"type":"hysteria"}""").toString()
+        assertFalse(plain.contains("finalmask"))
+        for (bad in listOf("\"\"", "\"20000\"", "\"200-400\"", "\"20000-400000\"", "\"40000-20000\"", "\"70000-80000\"", "\"a-b\"", "20000", "null")) {
+            val outbound = hysteria2Outbound("""{"type":"hysteria","hop_ports":$bad,"hop_interval":30}""")
+            assertEquals("hop_ports=$bad", plain, outbound.toString())
+        }
+    }
+
+    private fun hysteria2Outbound(transport: String): com.google.gson.JsonObject {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "hysteria2")
+        payload.add("endpoint", JsonParser.parseString("""{"host":"hy.example.test","port":8443}"""))
+        payload.add("credentials", JsonParser.parseString("""{"password":"fixture-password"}"""))
+        payload.add("transport", JsonParser.parseString(transport))
+        payload.add("security", JsonParser.parseString("""{"type":"tls","server_name":"hy.example.test"}"""))
+        val result = XrayMobileAdapter.render(source, now)
+        return JsonParser.parseString(requireNotNull(result.rawConfig)).asJsonObject.getAsJsonArray("outbounds")[0].asJsonObject
+    }
+
     private fun envelope() = JsonParser.parseString(
         """{
           "revision":42,
