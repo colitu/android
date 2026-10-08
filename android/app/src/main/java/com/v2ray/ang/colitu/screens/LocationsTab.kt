@@ -1,5 +1,12 @@
 package com.v2ray.ang.colitu.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -65,6 +74,7 @@ import com.v2ray.ang.colitu.design.ColituRadius
 import com.v2ray.ang.colitu.design.ColituRoundIcon
 import com.v2ray.ang.colitu.design.ColituText
 import com.v2ray.ang.colitu.design.ColituTile
+import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.pressable
 import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
@@ -122,7 +132,8 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     var sort by rememberSaveable { mutableStateOf(SortBy.Ping) }
     LaunchedEffect(Unit) { c.measurePings() }
     val q = fold(query.trim())
-    val byName = compareBy<ColituServer> { c.titleOf(it) }
+    // Cities of one country tie on the title, so they sort by city inside a group.
+    val byName = compareBy<ColituServer> { c.titleOf(it) }.thenBy { it.city.orEmpty() }.thenBy { it.displayName }
     val items = c.servers
         .filter { server ->
             server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
@@ -138,6 +149,8 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
         )
     val recommended = recommended(c, items)
     val rest = items.filterNot { it in recommended }
+    // A search shows matches flat; otherwise a country with several servers becomes one expandable row.
+    val restEntries = groupByCountry(rest, if (c.autoSelection) null else c.selectedServerId, flat = q.isNotEmpty())
     // Multihop routes have no use-case categories: they show under "All" only. The flag and name
     // of the exit and the entry both count for the search.
     val routeItems = if (filter != "all") emptyList() else c.routes
@@ -232,7 +245,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                         SectionHeader(loc["locations.allServers"])
                         Spacer(Modifier.height(12.dp))
                     }
-                    ServerCards(c, rest, startIndex = recommended.size)
+                    ServerEntries(c, restEntries, startIndex = recommended.size)
                 }
                 if (routeItems.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
@@ -242,7 +255,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                     CText(loc["multihop.sectionHint"], ColituText.small, Modifier.padding(top = 4.dp, bottom = 12.dp))
                     routeItems.forEachIndexed { i, route ->
                         RouteCard(c, route, Modifier.reveal(40 * (items.size + i).coerceAtMost(8)))
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(listGap()))
                     }
                 }
             }
@@ -270,7 +283,194 @@ private fun recommended(c: ColituController, items: List<ColituServer>): List<Co
 private fun ServerCards(c: ColituController, servers: List<ColituServer>, startIndex: Int) {
     servers.forEachIndexed { i, server ->
         ServerCard(c, server, Modifier.reveal(40 * (startIndex + i).coerceAtMost(8)))
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(listGap()))
+    }
+}
+
+// Phones get dense rows (about twice as many fit on a screen); a TV keeps the large, remote-friendly sizes.
+@Composable
+private fun listGap(): Dp = if (ColituTv.isTv) 10.dp else 6.dp
+
+@Composable
+private fun rowPadding(): PaddingValues = if (ColituTv.isTv) PaddingValues(14.dp) else PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+
+@Composable
+private fun rowRadius(): Dp = if (ColituTv.isTv) ColituRadius.md else ColituRadius.sm
+
+@Composable
+private fun flagSize(): Dp = if (ColituTv.isTv) 46.dp else 36.dp
+
+@Composable
+private fun buttonSize(): Dp = if (ColituTv.isTv) 40.dp else 32.dp
+
+/**
+ * Country (or city) on one line with the secondary text after it ("Almanya · Frankfurt"). The
+ * name is measured first, so it is never cut for the sake of the secondary text; on a TV the
+ * secondary text keeps its own line below.
+ */
+@Composable
+private fun NameLine(primary: String, secondary: String?, connected: Boolean, secondaryBelow: Boolean = false) {
+    val loc = ColituLoc
+    if (!ColituTv.isTv && secondaryBelow && secondary != null) {
+        // Country headers: the "N locations" count always reads in full, on its own line.
+        CText(primary, ColituText.label, size = 15.5.sp, maxLines = 2)
+        CText(secondary, ColituText.small, maxLines = 1)
+        return
+    }
+    if (ColituTv.isTv) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CText(primary, ColituText.label, Modifier.weight(1f, fill = false), size = 17.sp, maxLines = 1)
+            if (connected) {
+                Spacer(Modifier.width(8.dp))
+                Pill(loc["server.connected"], accent = true)
+            }
+        }
+        if (secondary != null) {
+            Spacer(Modifier.height(2.dp))
+            CText(secondary, ColituText.muted, maxLines = 1)
+        }
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CText(primary, ColituText.label, size = 15.5.sp, maxLines = 2)
+        if (connected) {
+            Spacer(Modifier.width(6.dp))
+            Pill(loc["server.connected"], accent = true, small = true)
+        }
+        if (secondary != null) {
+            Spacer(Modifier.width(6.dp))
+            CText("· $secondary", ColituText.small, Modifier.weight(1f, fill = false), maxLines = 1)
+        }
+    }
+}
+
+/** The grouped "all servers" list: single rows as before, countries with several cities as expandable groups. */
+@Composable
+private fun ServerEntries(c: ColituController, entries: List<LocationEntry>, startIndex: Int) {
+    entries.forEachIndexed { i, entry ->
+        val modifier = Modifier.reveal(40 * (startIndex + i).coerceAtMost(8))
+        when (entry) {
+            is LocationEntry.Single -> key(entry.server.id) { ServerCard(c, entry.server, modifier) }
+            is LocationEntry.Group -> key("group-" + entry.countryCode) { CountryGroup(c, entry, modifier) }
+        }
+        Spacer(Modifier.height(listGap()))
+    }
+}
+
+/**
+ * A country with several servers: the header (flag, name, how many locations, best ping,
+ * chevron) expands to one indented row per city. Both are ordinary focusable tiles, so a
+ * TV remote opens the group with OK and walks into the cities with Down.
+ */
+@Composable
+private fun CountryGroup(c: ColituController, group: LocationEntry.Group, modifier: Modifier) {
+    val loc = ColituLoc
+    var expanded by rememberSaveable { mutableStateOf(group.expandedByDefault) }
+    val name = loc.countryName(group.countryCode).takeIf { it.isNotBlank() } ?: group.servers.first().displayName
+    val holdsChosen = group.servers.any { s ->
+        (!c.autoSelection && c.selectedServerId == s.id) || (c.connected && c.connectedServerId == s.id)
+    }
+    val best = bestPing(group.servers) { c.pingOf(it) }
+    val anyOnline = group.servers.any { it.isAvailable }
+    Column(modifier) {
+        ColituTile(
+            Modifier.alpha(if (anyOnline) 1f else 0.5f),
+            // A collapsed header carries the highlight of the chosen city inside it.
+            active = !expanded && holdsChosen,
+            onClick = { expanded = !expanded },
+            padding = rowPadding(),
+            radius = rowRadius(),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ColituFlag(group.countryCode, flagSize())
+                Spacer(Modifier.width(if (ColituTv.isTv) 12.dp else 10.dp))
+                Column(Modifier.weight(1f)) {
+                    // The name keeps priority (it wraps to two lines before it is cut: "Birleşik Krallık"
+                    // on a 360dp phone); the location count follows on the same line when there is room.
+                    NameLine(name, loc.count("locationCount", group.servers.size), connected = false, secondaryBelow = true)
+                }
+                Spacer(Modifier.width(8.dp))
+                if (anyOnline) Ping(best) else CText(loc["server.offline"], ColituText.small)
+                Spacer(Modifier.width(if (ColituTv.isTv) 12.dp else 8.dp))
+                ExpandButton(expanded, holdsChosen)
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(220)) + fadeIn(tween(220)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+        ) {
+            Column(Modifier.padding(start = if (ColituTv.isTv) 18.dp else 14.dp)) {
+                group.servers.forEach { server ->
+                    Spacer(Modifier.height(if (ColituTv.isTv) 8.dp else 5.dp))
+                    key(server.id) { CityRow(c, server) }
+                }
+            }
+        }
+    }
+}
+
+/** One city inside an expanded country: city name, ping, a check when it is the chosen one. */
+@Composable
+private fun CityRow(c: ColituController, server: ColituServer) {
+    val loc = ColituLoc
+    val selected = !c.autoSelection && c.selectedServerId == server.id
+    val connected = c.connected && c.connectedServerId == server.id
+    val selectable = server.isAvailable
+    val label = server.city?.trim().orEmpty().ifEmpty { server.displayName }
+    val tags = tagsOf(server)
+    ColituTile(
+        Modifier.alpha(if (selectable) 1f else 0.5f),
+        active = selected || connected,
+        onClick = if (selectable) ({ c.selectServer(server) }) else null,
+        padding = if (ColituTv.isTv) PaddingValues(horizontal = 14.dp, vertical = 12.dp) else PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        radius = ColituRadius.sm,
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    CText(label, ColituText.label, Modifier.weight(1f, fill = false), size = if (ColituTv.isTv) 16.sp else 15.sp, maxLines = 1)
+                    if (connected) {
+                        Spacer(Modifier.width(8.dp))
+                        Pill(loc["server.connected"], accent = true)
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                if (selectable) Ping(c.pingOf(server)) else CText(loc["server.offline"], ColituText.small)
+                Spacer(Modifier.width(10.dp))
+                Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    if (selected || connected) ColituIcon(ColituIcons.Check, ColituColors.lilac, 18.dp)
+                }
+            }
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(if (ColituTv.isTv) 10.dp else 5.dp))
+                TagLine(tags, Modifier, compact = !ColituTv.isTv)
+            }
+        }
+    }
+}
+
+/** The group header's round button: the look of [GoButton], with a chevron that turns over. */
+@Composable
+private fun ExpandButton(expanded: Boolean, active: Boolean) {
+    val turn by animateFloatAsState(if (expanded) 180f else 0f, tween(200), label = "chevron")
+    val lit = active && !expanded
+    Box(
+        Modifier
+            .size(buttonSize())
+            .clip(CircleShape)
+            .then(
+                if (lit) Modifier.background(ColituGradients.accent)
+                else Modifier.background(ColituColors.surface2).border(1.dp, ColituColors.lineStrong, CircleShape),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        ColituIcon(
+            ColituIcons.ChevronDown,
+            if (lit) ColituColors.onAccent else ColituColors.text,
+            if (ColituTv.isTv) 17.dp else 15.dp,
+            Modifier.graphicsLayer { rotationZ = turn },
+        )
     }
 }
 
@@ -382,9 +582,13 @@ private data class Tag(val label: String, val service: String? = null, val categ
 /** Services the panel verified on this node first, then the use cases they do not already cover. */
 private fun tagsOf(server: ColituServer): List<Tag> {
     val out = mutableListOf<Tag>()
-    // First, so it never folds into the "+N" pill.
+    val serviceTags = ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.map { (key, name) ->
+        Tag(if (key == "youtube_adfree") ColituLoc["service.youtube_adfree"] else name, service = key)
+    }
+    // Ad-free YouTube and the ad-block DNS come first, so they never fold into the "+N" pill.
+    out += serviceTags.filter { it.service == "youtube_adfree" }
     if (server.hostsAdBlockDns) out += Tag(ColituLoc["cat.adblock"], category = "adblock")
-    out += ColituServer.SERVICE_NAMES.filterKeys { it in server.services }.map { (key, name) -> Tag(name, service = key) }
+    out += serviceTags.filter { it.service != "youtube_adfree" }
     val hasAi = server.services.any { it in ColituServer.REQUIRED_AI_SERVICES }
     val hasStreaming = server.services.any { it in ColituServer.STREAMING_SERVICES }
     categories.drop(1).forEach { category ->
@@ -409,33 +613,24 @@ private fun ServerCard(c: ColituController, server: ColituServer, modifier: Modi
         modifier.alpha(if (selectable) 1f else 0.5f),
         active = selected || connected,
         onClick = if (selectable) ({ c.selectServer(server) }) else null,
-        padding = PaddingValues(14.dp),
+        padding = rowPadding(),
+        radius = rowRadius(),
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ColituFlag(server.countryCode, 46.dp)
-                Spacer(Modifier.width(12.dp))
+                ColituFlag(server.countryCode, flagSize())
+                Spacer(Modifier.width(if (ColituTv.isTv) 12.dp else 10.dp))
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CText(country, ColituText.label, Modifier.weight(1f, fill = false), size = 17.sp, maxLines = 1)
-                        if (connected) {
-                            Spacer(Modifier.width(8.dp))
-                            Pill(loc["server.connected"], accent = true)
-                        }
-                    }
-                    if (city.isNotEmpty() && !city.equals(country, ignoreCase = true)) {
-                        Spacer(Modifier.height(2.dp))
-                        CText(city, ColituText.muted, maxLines = 1)
-                    }
+                    NameLine(country, city.takeIf { it.isNotEmpty() && !it.equals(country, ignoreCase = true) }, connected)
                 }
                 Spacer(Modifier.width(8.dp))
                 if (selectable) Ping(c.pingOf(server)) else CText(loc["server.offline"], ColituText.small)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(if (ColituTv.isTv) 12.dp else 8.dp))
                 GoButton(selected || connected)
             }
             if (tags.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                TagLine(tags, Modifier.padding(start = 58.dp))
+                Spacer(Modifier.height(if (ColituTv.isTv) 12.dp else 5.dp))
+                TagLine(tags, Modifier.padding(start = if (ColituTv.isTv) 58.dp else 46.dp), compact = !ColituTv.isTv)
             }
         }
     }
@@ -455,8 +650,39 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
         modifier,
         active = selected || connected,
         onClick = { c.selectServer(route) },
-        padding = PaddingValues(14.dp),
+        padding = rowPadding(),
+        radius = rowRadius(),
     ) {
+        if (!ColituTv.isTv) {
+            // Phone: small flags, the route name on one line (ellipsis on the exit if it must), and
+            // the estimate note with the ping on the second line.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ColituFlag(ends.entry.country, 22.dp)
+                Spacer(Modifier.width(3.dp))
+                ColituIcon(ColituIcons.ArrowRight, ColituColors.muted, 10.dp)
+                Spacer(Modifier.width(3.dp))
+                ColituFlag(ends.exit.country, 22.dp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CText(route.displayName, ColituText.label, Modifier.weight(1f, fill = false), size = 14.5.sp, maxLines = 1)
+                        if (connected) {
+                            Spacer(Modifier.width(6.dp))
+                            Pill(loc["server.connected"], accent = true, small = true)
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CText(loc["multihop.ping"], ColituText.small, Modifier.weight(1f), size = 11.sp, maxLines = 1)
+                        Spacer(Modifier.width(6.dp))
+                        Ping(c.pingOf(route))
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                GoButton(selected || connected)
+            }
+            return@ColituTile
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             ColituFlag(ends.entry.country, 30.dp)
             Spacer(Modifier.width(4.dp))
@@ -475,7 +701,7 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
             }
             Spacer(Modifier.width(8.dp))
             Ping(c.pingOf(route))
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(if (ColituTv.isTv) 12.dp else 8.dp))
             GoButton(selected || connected)
         }
     }
@@ -489,23 +715,30 @@ private val tagSpacing = 10.dp
 
 /** One line of tags: as many as fit, then "+N" for the rest. */
 @Composable
-private fun TagLine(tags: List<Tag>, modifier: Modifier) {
+private fun TagLine(tags: List<Tag>, modifier: Modifier, compact: Boolean = false) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
+    // Compact (phone rows): smaller chips and at most two tags, then "+N".
+    val style = if (compact) tagStyle.copy(fontSize = 11.sp) else tagStyle
+    val icon = if (compact) 14.dp else tagIcon
+    val spacingDp = if (compact) 6.dp else tagSpacing
+    val limit = if (compact) 2 else Int.MAX_VALUE
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val max = with(density) { maxWidth.toPx() }
         fun textPx(text: String, style: TextStyle) = measurer.measure(text, style.copy(fontFamily = ColituText.label.fontFamily)).size.width.toFloat()
         val slack = with(density) { 6.dp.toPx() }
-        val spacing = with(density) { tagSpacing.toPx() }
-        val fixed = with(density) { (tagIcon + tagIconGap).toPx() }
-        val pillPad = with(density) { 22.dp.toPx() }
+        val spacing = with(density) { spacingDp.toPx() }
+        val fixed = with(density) { (icon + tagIconGap).toPx() }
+        val pillPad = with(density) { (if (compact) 16.dp else 22.dp).toPx() }
+        val pillText = if (compact) pillStyle.copy(fontSize = 11.sp) else pillStyle
         var used = 0f
         var count = 0
         for (i in tags.indices) {
-            val width = slack + fixed + textPx(tags[i].label, tagStyle)
+            if (i >= limit) break
+            val width = slack + fixed + textPx(tags[i].label, style)
             val next = used + (if (i == 0) 0f else spacing) + width
             val left = tags.size - i - 1
-            val reserve = if (left > 0) spacing + textPx("+$left", pillStyle) + pillPad else 0f
+            val reserve = if (left > 0) spacing + textPx("+$left", pillText) + pillPad else 0f
             if (next + reserve > max && i > 0) break
             used = next
             count = i + 1
@@ -513,42 +746,47 @@ private fun TagLine(tags: List<Tag>, modifier: Modifier) {
         val hidden = tags.size - count
         Row(verticalAlignment = Alignment.CenterVertically) {
             for (i in 0 until count) {
-                if (i > 0) Spacer(Modifier.width(tagSpacing))
-                TagView(tags[i], Modifier.weight(1f, fill = false))
+                if (i > 0) Spacer(Modifier.width(spacingDp))
+                // Wraps its content: a weighted chip would share the row equally and cut the first label.
+                TagView(tags[i], Modifier, style, icon)
             }
             if (hidden > 0) {
-                Spacer(Modifier.width(tagSpacing))
-                Pill("+$hidden")
+                Spacer(Modifier.width(spacingDp))
+                Pill("+$hidden", small = compact)
             }
         }
     }
 }
 
 @Composable
-private fun TagView(tag: Tag, modifier: Modifier) {
+private fun TagView(tag: Tag, modifier: Modifier, style: TextStyle = tagStyle, iconSize: Dp = tagIcon) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(tagIcon), contentAlignment = Alignment.Center) {
-            if (tag.service != null) ServiceMark(tag.service, tagIcon)
-            else ColituIcon(categoryIcon(tag.category.orEmpty()), ColituColors.text, tagIcon - 1.dp)
+        Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) {
+            if (tag.service != null) ServiceMark(tag.service, iconSize)
+            else ColituIcon(categoryIcon(tag.category.orEmpty()), ColituColors.text, iconSize - 1.dp)
         }
         Spacer(Modifier.width(tagIconGap))
-        BasicText(tag.label, style = tagStyle.copy(fontFamily = ColituText.label.fontFamily), maxLines = 1)
+        BasicText(tag.label, style = style.copy(fontFamily = ColituText.label.fontFamily), maxLines = 1)
     }
 }
 
 @Composable
-private fun Pill(text: String, accent: Boolean = false) {
+private fun Pill(text: String, accent: Boolean = false, small: Boolean = false) {
     val shape = RoundedCornerShape(50)
     Box(
         Modifier
             .clip(shape)
             .background(if (accent) ColituColors.violet.copy(alpha = 0.22f) else ColituColors.surface2)
             .then(if (accent) Modifier else Modifier.border(1.dp, ColituColors.line, shape))
-            .padding(horizontal = 9.dp, vertical = 3.dp),
+            .padding(horizontal = if (small) 7.dp else 9.dp, vertical = if (small) 2.dp else 3.dp),
     ) {
         BasicText(
             text,
-            style = pillStyle.copy(fontFamily = ColituText.label.fontFamily, color = if (accent) ColituColors.lilac else ColituColors.muted),
+            style = pillStyle.copy(
+                fontFamily = ColituText.label.fontFamily,
+                fontSize = if (small) 11.sp else pillStyle.fontSize,
+                color = if (accent) ColituColors.lilac else ColituColors.muted,
+            ),
             maxLines = 1,
         )
     }
@@ -590,7 +828,7 @@ private fun Ping(ms: Int?) {
 private fun GoButton(active: Boolean) {
     Box(
         Modifier
-            .size(40.dp)
+            .size(buttonSize())
             .clip(CircleShape)
             .then(
                 if (active) Modifier.background(ColituGradients.accent)
@@ -598,7 +836,7 @@ private fun GoButton(active: Boolean) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        ColituIcon(ColituIcons.ChevronRight, if (active) ColituColors.onAccent else ColituColors.text, 17.dp)
+        ColituIcon(ColituIcons.ChevronRight, if (active) ColituColors.onAccent else ColituColors.text, if (ColituTv.isTv) 17.dp else 15.dp)
     }
 }
 
@@ -627,7 +865,7 @@ private fun ServiceMark(service: String, size: Dp) {
             }
             drawPath(path, Brush.linearGradient(listOf(Color(0xFF4796E3), Color(0xFF9177C7)), start = Offset(0f, w), end = Offset(w, 0f)))
         }
-        "youtube_premium" -> Canvas(Modifier.size(size)) {
+        "youtube_premium", "youtube_adfree" -> Canvas(Modifier.size(size)) {
             val w = this.size.width
             drawRoundRect(Color(0xFFFF0033), topLeft = Offset(0f, w * 0.18f), size = Size(w, w * 0.64f), cornerRadius = CornerRadius(w * 0.18f))
             val play = Path().apply {

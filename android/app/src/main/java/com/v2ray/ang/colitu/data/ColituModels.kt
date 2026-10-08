@@ -103,6 +103,8 @@ data class ColituServer(
 
         /** Display names, in the order they are shown on a server row. */
         val SERVICE_NAMES = linkedMapOf(
+            // Not a streaming service for the category filter: it only marks ad-free YouTube on that node.
+            "youtube_adfree" to "Ad-free YouTube",
             "chatgpt" to "ChatGPT",
             "gemini" to "Gemini",
             "claude" to "Claude",
