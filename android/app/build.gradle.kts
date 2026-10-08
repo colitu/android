@@ -27,6 +27,11 @@ val adBlockDoh = secret("ADBLOCK_DOH", "COLITU_ADBLOCK_DOH").orEmpty()
 if (releaseSigningRequired && adBlockDoh.isBlank()) {
     throw GradleException("ADBLOCK_DOH (signing.properties) or COLITU_ADBLOCK_DOH is required for a release build")
 }
+// Mirror origins of the API (comma separated, https://host). Also kept out of the public repository.
+val mirrors = secret("MIRRORS", "COLITU_MIRRORS").orEmpty()
+if (releaseSigningRequired && mirrors.isBlank()) {
+    throw GradleException("MIRRORS (signing.properties) or COLITU_MIRRORS is required for a release build")
+}
 
 android {
     namespace = "com.v2ray.ang"
@@ -66,6 +71,7 @@ android {
         // Only the colitu.com APK ("direct") installs its own updates.
         buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
         buildConfigField("String", "COLITU_ADBLOCK_DOH", "\"${adBlockDoh.replace("\"", "")}\"")
+        buildConfigField("String", "COLITU_MIRRORS", "\"${mirrors.replace("\"", "")}\"")
     }
 
     signingConfigs {

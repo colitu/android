@@ -25,7 +25,8 @@ import javax.net.ssl.SSLException
 
 object ColituApiClient {
 
-    val BASE_URL: String get() = BuildConfig.COLITU_API_BASE_URL
+    /** The API base to build URLs with: the one that last worked (built-in or from the signed list). */
+    val BASE_URL: String get() = ColituEndpoints.preferredBase()
     private const val MAX_RETRY = 2
     private const val TAG = "ColituApiClient"
     private const val REFRESH_DEBOUNCE_MS = 10_000L
@@ -33,6 +34,7 @@ object ColituApiClient {
     private const val MAX_JSON_BYTES = 4L * 1024 * 1024
     /** Support attachments are at most 10 MB on upload; a little slack for the server's copy. */
     const val MAX_DOWNLOAD_BYTES = 12L * 1024 * 1024
+    private const val MAX_LIST_BYTES = 256L * 1024
     /** After the tunnel failed to carry an API call, go direct for this long. */
     private const val TUNNEL_BACKOFF_MS = 60_000L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -54,6 +56,23 @@ object ColituApiClient {
         .writeTimeout(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .build()
+
+    // Signed endpoint list files: no auth header, 10 s limit.
+    private val listClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
+
+    init {
+        ColituEndpoints.fetcher = { url ->
+            callOnce(Request.Builder().url(url).get().build(), listClient).use { response ->
+                if (!response.isSuccessful) null
+                else readLimited(response.body.byteStream(), MAX_LIST_BYTES)?.toString(Charsets.UTF_8)
+            }
+        }
+    }
 
     private val refreshMutex = Mutex()
     @Volatile private var lastSuccessfulRefreshMs = 0L
@@ -153,8 +172,12 @@ object ColituApiClient {
      * directly otherwise. When the tunnel cannot carry the call it is sent
      * directly once; only failures that happen before the request reached
      * the server qualify, so a mutation is never sent twice.
+     * On a network-level failure the next API base of the endpoint list is tried.
      */
-    private fun call(request: Request, base: OkHttpClient = httpClient): Response {
+    private fun call(request: Request, base: OkHttpClient = httpClient): Response =
+        ColituEndpoints.send(request) { callOnce(it, base) }
+
+    private fun callOnce(request: Request, base: OkHttpClient): Response {
         val proxy = ColituLocalProxy.activeTunnel()
         if (proxy == null || System.currentTimeMillis() - tunnelFailedAt < TUNNEL_BACKOFF_MS) {
             return base.newCall(request).execute()
