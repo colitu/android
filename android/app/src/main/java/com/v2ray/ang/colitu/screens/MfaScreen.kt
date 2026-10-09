@@ -71,6 +71,8 @@ fun MfaScreen(
     val challenge = ColituAuthRepository.pendingMfa
     var code by remember { mutableStateOf("") }
     var recovery by remember { mutableStateOf(false) }
+    // "email": the panel mailed a 6-digit code (sign-in from an unfamiliar country, no 2FA on the account).
+    val emailCode = challenge?.isEmailCode == true
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var lastAuto by remember { mutableStateOf("") }
@@ -145,10 +147,10 @@ fun MfaScreen(
             Spacer(Modifier.height(18.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ColituPill(loc["mfa.kicker"], kicker = true) }
             Spacer(Modifier.height(14.dp))
-            CText(loc["mfa.title"], ColituText.display.copy(fontSize = 30.sp, lineHeight = 34.sp), Modifier.fillMaxWidth(), align = TextAlign.Center)
+            CText(loc[if (emailCode) "mfa.emailTitle" else "mfa.title"], ColituText.display.copy(fontSize = 30.sp, lineHeight = 34.sp), Modifier.fillMaxWidth(), align = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
             CText(
-                loc[if (recovery) "mfa.subRecovery" else "mfa.sub"],
+                loc[if (emailCode) "mfa.emailBody" else if (recovery) "mfa.subRecovery" else "mfa.sub"],
                 ColituText.muted,
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                 align = TextAlign.Center,
@@ -171,7 +173,7 @@ fun MfaScreen(
                                 }
                             }
                         },
-                        label = loc[if (recovery) "mfa.recoveryLabel" else "mfa.codeLabel"],
+                        label = loc[if (emailCode) "verify.code" else if (recovery) "mfa.recoveryLabel" else "mfa.codeLabel"],
                         hint = if (recovery) "xxxx-xxxx-xx" else "••••••",
                         keyboardType = if (recovery) KeyboardType.Ascii else KeyboardType.NumberPassword,
                         imeAction = ImeAction.Done,
@@ -187,7 +189,8 @@ fun MfaScreen(
                     Spacer(Modifier.height(18.dp))
                     ColituButton(loc["mfa.submit"], { submit() }, loading = loading)
                     Spacer(Modifier.height(10.dp))
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    // An e-mailed sign-in code has no recovery-code alternative.
+                    if (!emailCode) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         ColituLinkButton(
                             loc[if (recovery) "mfa.useApp" else "mfa.useRecovery"],
                             if (loading) null else ({
@@ -200,8 +203,10 @@ fun MfaScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            CText(loc["mfa.hint"], ColituText.small, Modifier.fillMaxWidth().padding(horizontal = 12.dp), align = TextAlign.Center)
+            if (!emailCode) {
+                Spacer(Modifier.height(12.dp))
+                CText(loc["mfa.hint"], ColituText.small, Modifier.fillMaxWidth().padding(horizontal = 12.dp), align = TextAlign.Center)
+            }
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 ColituLinkButton(loc["mfa.back"], { back(null) })

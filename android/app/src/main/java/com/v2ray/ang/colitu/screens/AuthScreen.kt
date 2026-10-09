@@ -189,6 +189,9 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                     error = emailError,
                     enabled = !loading,
                 )
+                if (isRegister) {
+                    CText(loc["auth.registerHint"], ColituText.small, Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp))
+                }
                 Spacer(Modifier.height(14.dp))
                 ColituField(
                     value = password,

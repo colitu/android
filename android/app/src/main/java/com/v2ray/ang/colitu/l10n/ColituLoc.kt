@@ -569,6 +569,13 @@ object ColituLoc {
         "account.activate" to arrayOf("Активировать", "Etkinleştir", "Activate"),
         "account.activated" to arrayOf("Устройство активировано.", "Cihaz etkinleştirildi.", "Device activated."),
         "mfa.err.unavailable" to arrayOf("Проверка кода сейчас недоступна. Попробуйте чуть позже.", "Kod doğrulaması şu anda kullanılamıyor. Biraz sonra tekrar deneyin.", "Code check is unavailable right now. Try again shortly."),
+        // Sign-up guard: disposable e-mail, breached password, IP limit, e-mail sign-in code
+        "auth.registerHint" to arrayOf("Временные (одноразовые) адреса электронной почты не принимаются.", "Geçici (tek kullanımlık) e-posta adresleri kabul edilmez.", "Temporary (disposable) e-mail addresses are not accepted."),
+        "err.disposableEmail" to arrayOf("Временные адреса электронной почты не принимаются. Используйте постоянный адрес (например, Gmail, Outlook, Яндекс).", "Geçici e-posta adresleri kabul edilmiyor. Lütfen kalıcı bir e-posta adresi kullanın (ör. Gmail, Outlook, Yandex).", "Temporary e-mail addresses are not accepted. Please use a permanent address (e.g. Gmail, Outlook, Yandex)."),
+        "err.passwordBreached" to arrayOf("Этот пароль встречается в известной утечке данных. Выберите другой пароль.", "Bu şifre bilinen bir veri sızıntısında yer alıyor. Lütfen başka bir şifre seçin.", "This password appears in a known data breach. Please choose a different one."),
+        "err.signupIpLimit" to arrayOf("С этой сети недавно создано слишком много аккаунтов. Попробуйте позже.", "Bu ağdan kısa sürede çok fazla hesap oluşturuldu. Lütfen daha sonra tekrar deneyin.", "Too many accounts were created from this network recently. Please try again later."),
+        "mfa.emailTitle" to arrayOf("Это вы входите в аккаунт?", "Bu giriş siz misiniz?", "Is this you signing in?"),
+        "mfa.emailBody" to arrayOf("Вы входите из необычного места. Введите 6-значный код, который мы отправили на вашу почту.", "Alışılmadık bir konumdan giriş yapıyorsunuz. E-posta adresinize gönderdiğimiz 6 haneli kodu girin.", "You are signing in from an unusual location. Enter the 6-digit code we sent to your e-mail."),
         // Trial end and paused devices
         "trial.endsIn" to arrayOf("Пробный период закончится через {left}.", "Deneme süreniz {left} sonra bitiyor.", "Your trial ends in {left}."),
         "trial.toFree" to arrayOf("Вы перейдёте на бесплатный тариф ({detail}).", "Ücretsiz plana geçeceksiniz ({detail}).", "You’ll move to the free plan ({detail})."),

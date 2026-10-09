@@ -4,6 +4,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.tencent.mmkv.MMKV
+import com.v2ray.ang.colitu.api.ColituSecureStore
 
 /**
  * Russian sites and apps go out directly instead of through the tunnel, as on
@@ -21,16 +22,49 @@ object ColituRuBypass {
     private const val KEY_PRIVACY_MODE = "privacy_mode"
     private const val KEY_NOTICE_SHOWN = "ru_direct_notice_shown"
     private const val KEY_PROFILE_COUNTRY = "ru_direct_profile_country"
+    private const val KEY_LANGUAGE = "language"
+    private const val DEFAULT_PRIVACY_MODE_NEW_INSTALL = true
 
     // Same store as ColituController; the VPN service reads it in its own process.
     private val store by lazy { MMKV.mmkvWithID("COLITU_SETTINGS", MMKV.MULTI_PROCESS_MODE) }
 
-    /** Privacy mode: all traffic through the VPN. Off by default (today's behaviour). */
+    /**
+     * Privacy mode: all traffic through the VPN. New installs start with it on;
+     * installs that already had Colitu state before this default existed keep
+     * it off (their previous behaviour). Decided once, see [resolveInitialPrivacyMode].
+     */
     var privacyMode: Boolean
-        get() = store.decodeBool(KEY_PRIVACY_MODE, false)
+        get() {
+            if (!store.containsKey(KEY_PRIVACY_MODE)) resolveInitialPrivacyMode()
+            return store.decodeBool(KEY_PRIVACY_MODE, DEFAULT_PRIVACY_MODE_NEW_INSTALL)
+        }
         set(value) {
             store.encode(KEY_PRIVACY_MODE, value)
         }
+
+    /**
+     * Stores the initial privacy mode when it was never stored (idempotent):
+     * off when the install already has Colitu state, on for a fresh install.
+     * Runs on the first read, which the app does at start, before anything
+     * else writes to the store.
+     */
+    private fun resolveInitialPrivacyMode() {
+        if (store.containsKey(KEY_PRIVACY_MODE)) return
+        val loggedIn = runCatching { !ColituSecureStore.get("access_token").isNullOrBlank() || !ColituSecureStore.get("refresh_token").isNullOrBlank() }
+            .getOrDefault(false)
+        val prior = hasPriorState(store.allKeys(), loggedIn)
+        store.encode(KEY_PRIVACY_MODE, initialPrivacyMode(prior))
+    }
+
+    /** New installs get privacy mode on, installs with earlier Colitu state keep it off. */
+    internal fun initialPrivacyMode(hasPriorState: Boolean): Boolean = !hasPriorState
+
+    /**
+     * Whether the install predates the privacy default: a stored session, or
+     * any COLITU_SETTINGS key other than the language choice and privacy mode itself.
+     */
+    internal fun hasPriorState(settingsKeys: Array<String>?, loggedIn: Boolean): Boolean =
+        loggedIn || settingsKeys.orEmpty().any { it != KEY_PRIVACY_MODE && it != KEY_LANGUAGE }
 
     /** The one-time notice about the direct rule was answered (absent = not yet). */
     var noticeShown: Boolean

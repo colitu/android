@@ -23,7 +23,16 @@ object ColituAuthRepository {
     private val FEATURES = mapOf("X-Colitu-Features" to "mfa")
 
     /** A 2FA challenge waiting for its code; only in memory, never stored. */
-    data class MfaChallenge(val token: String, val email: String, val expiresAtMs: Long, val sendCode: Boolean)
+    data class MfaChallenge(
+        val token: String,
+        val email: String,
+        val expiresAtMs: Long,
+        val sendCode: Boolean,
+        /** "totp" (authenticator app / recovery code) or "email" (unfamiliar-country sign-in code). */
+        val method: String = "totp",
+    ) {
+        val isEmailCode: Boolean get() = method == "email"
+    }
 
     /** A failed code step; [attemptsLeft] from the panel's 401 MFA_INVALID_CODE body. */
     class MfaException(code: String, val attemptsLeft: Int?) : Exception(code)
@@ -43,7 +52,8 @@ object ColituAuthRepository {
     internal fun mfaChallengeOf(body: JsonObject?, email: String, sendCode: Boolean, nowMs: Long = System.currentTimeMillis()): MfaChallenge? {
         val token = body?.tryString("mfa_token") ?: return null
         val ttl = (body.tryLong("mfa_expires_in") ?: 300L).coerceIn(30L, 3600L)
-        return MfaChallenge(token, email, nowMs + ttl * 1000, sendCode)
+        val method = if (body.tryString("mfa_method")?.trim()?.lowercase() == "email") "email" else "totp"
+        return MfaChallenge(token, email, nowMs + ttl * 1000, sendCode, method)
     }
 
     /** What the code field accepts: 6 digits, or a recovery code (letters/digits, dashes and spaces dropped). */

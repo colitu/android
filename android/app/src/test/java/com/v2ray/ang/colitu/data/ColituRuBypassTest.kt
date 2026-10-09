@@ -151,4 +151,21 @@ class ColituRuBypassTest {
         assertTrue(ColituRuBypass.isRussian("domain", "domain:xn--p1ai"))
         assertFalse(ColituRuBypass.isRussian("domain", "domain:example.com"))
     }
+
+    @Test
+    fun freshInstallStartsWithPrivacyModeOn() {
+        val fresh = ColituRuBypass.hasPriorState(emptyArray(), loggedIn = false)
+        assertFalse(fresh)
+        assertTrue(ColituRuBypass.initialPrivacyMode(fresh))
+        // Only the language choice does not make an install "existing".
+        assertFalse(ColituRuBypass.hasPriorState(arrayOf("language"), loggedIn = false))
+        assertFalse(ColituRuBypass.hasPriorState(null, loggedIn = false))
+    }
+
+    @Test
+    fun existingInstallKeepsPrivacyModeOff() {
+        assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(emptyArray(), loggedIn = true)))
+        assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(arrayOf("ru_direct_notice_shown"), loggedIn = false)))
+        assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(arrayOf("language", "synced_server"), loggedIn = false)))
+    }
 }
