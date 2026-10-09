@@ -37,6 +37,8 @@ class ColituMainActivity : AppCompatActivity() {
         )
         super.onCreate(savedInstanceState)
         ColituLoc.load()
+        // Decided once, before a sign-in could make a new install look like an update.
+        com.v2ray.ang.colitu.data.ColituUiMode.resolve(com.v2ray.ang.colitu.api.ColituTokenManager.isLoggedIn())
         ColituPerformance.init(this)
         ColituTv.init(this)
         android.util.Log.i("Colitu", "performance tier ${ColituPerformance.tier}: ${ColituPerformance.reason}, tv=${ColituTv.isTv}")

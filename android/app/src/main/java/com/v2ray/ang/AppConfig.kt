@@ -171,6 +171,12 @@ object AppConfig {
      */
     const val MSG_COLITU_HOLD = 84
 
+    /** Colitu: "<id>": bytes the tunnel carried in the last 10 s (warm spare swap only when idle). */
+    const val MSG_COLITU_IDLE = 85
+
+    /** Colitu: result of [MSG_COLITU_IDLE], "<id>,<bytes>" (-1 when unknown). */
+    const val MSG_COLITU_IDLE_RESULT = 86
+
     /** Colitu: MMKV key (settings store) with the time the tunnel came up. */
     const val PREF_COLITU_CONNECTED_AT = "colitu_connected_at"
 

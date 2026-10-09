@@ -153,6 +153,79 @@ object XrayMobileAdapter {
         return json.toString()
     }
 
+    /** Inbound and rule tag of the connect-time traffic check. */
+    const val VERIFY_TAG = "colitu-verify"
+
+    /**
+     * [raw] with the traffic-check inbound on [verify]'s port (HTTP proxy,
+     * loopback, [verify]'s account only) and, first of all rules, the rule
+     * that sends it straight to the primary outbound `proxy`. The check then
+     * tests the primary alone: the warm spare cannot hide a dead primary.
+     * Runs last, before every core start, so no layer's rule gets in front.
+     */
+    /** Inbound and rule tag of the warm spare's own check (to `warm-spare` only). */
+    const val VERIFY_SPARE_TAG = "colitu-verify-spare"
+
+    /**
+     * Also, when [raw] carries a warm spare and [verifySpare] is given, a
+     * second check inbound ([VERIFY_SPARE_TAG]) routed straight to the
+     * spare, so the spare can be checked alone (parallel connect, spare
+     * health probe). Without a spare that inbound and its rule are removed:
+     * a rule to a missing outbound would stop the core from starting.
+     */
+    fun withVerifyInbound(raw: String, verify: LocalProxy, verifySpare: LocalProxy? = null): String {
+        val json = com.google.gson.JsonParser.parseString(raw).asJsonObject
+        val hasSpare = json.get("outbounds")?.takeIf { it.isJsonArray }?.asJsonArray?.any {
+            it.isJsonObject && it.asJsonObject.get("tag")?.takeIf { t -> t.isJsonPrimitive }?.asString == ColituWarmSpare.SPARE_TAG
+        } == true
+        val spareCheck = verifySpare?.takeIf { hasSpare }
+        val inbounds = JsonArray()
+        json.get("inbounds")?.takeIf { it.isJsonArray }?.asJsonArray?.forEach { inbound ->
+            val tag = inbound.takeIf { it.isJsonObject }?.asJsonObject?.get("tag")?.takeIf { it.isJsonPrimitive }?.asString
+            if (tag != VERIFY_TAG && tag != VERIFY_SPARE_TAG) inbounds.add(inbound)
+        }
+        inbounds.add(checkInbound(VERIFY_TAG, verify))
+        spareCheck?.let { inbounds.add(checkInbound(VERIFY_SPARE_TAG, it)) }
+        json.add("inbounds", inbounds)
+        val routing = json.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject ?: JsonObject()
+        val rules = JsonArray().apply {
+            add(checkRule(VERIFY_TAG, "proxy"))
+            if (spareCheck != null) add(checkRule(VERIFY_SPARE_TAG, ColituWarmSpare.SPARE_TAG))
+            routing.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.filterNot {
+                    val tag = it.takeIf { r -> r.isJsonObject }?.asJsonObject?.get("ruleTag")?.takeIf { t -> t.isJsonPrimitive }?.asString
+                    tag == VERIFY_TAG || tag == VERIFY_SPARE_TAG
+                }
+                ?.forEach(::add)
+        }
+        routing.add("rules", rules)
+        json.add("routing", routing)
+        return json.toString()
+    }
+
+    private fun checkInbound(tag: String, proxy: LocalProxy) = JsonObject().apply {
+        addProperty("tag", tag)
+        addProperty("listen", "127.0.0.1")
+        addProperty("port", proxy.port)
+        addProperty("protocol", "http")
+        add("settings", JsonObject().apply {
+            add("accounts", JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("user", proxy.user)
+                    addProperty("pass", proxy.password)
+                })
+            })
+            addProperty("allowTransparent", false)
+        })
+    }
+
+    private fun checkRule(tag: String, outbound: String) = JsonObject().apply {
+        addProperty("type", "field")
+        add("inboundTag", JsonArray().apply { add(tag) })
+        addProperty("outboundTag", outbound)
+        addProperty("ruleTag", tag)
+    }
+
     private fun socksInbound(proxy: LocalProxy) = JsonObject().apply {
         addProperty("tag", "socks")
         addProperty("listen", "127.0.0.1")

@@ -28,6 +28,60 @@ object ColituLocalProxy {
         return proxy
     }
 
+    /**
+     * The loopback HTTP inbound of the connect-time traffic check (tag
+     * `colitu-verify`, routed straight to the primary outbound, never to the
+     * warm spare's balancer). Fresh port and account at every core start,
+     * like the SOCKS inbound; read by the VPN process for the check.
+     */
+    fun newVerifySession(): LocalProxy {
+        val proxy = LocalProxy(port = freePort(), user = token(12), password = token(24))
+        colituStore().apply {
+            encode(KEY_VERIFY_PORT, proxy.port)
+            encode(KEY_VERIFY_USER, proxy.user)
+            encode(KEY_VERIFY_PASSWORD, proxy.password)
+        }
+        return proxy
+    }
+
+    /** The warm spare's own check inbound (`colitu-verify-spare`); fresh at every core start like the primary's. */
+    fun newVerifySpareSession(): LocalProxy {
+        val proxy = LocalProxy(port = freePort(), user = token(12), password = token(24))
+        colituStore().apply {
+            encode(KEY_VERIFY_SPARE_PORT, proxy.port)
+            encode(KEY_VERIFY_SPARE_USER, proxy.user)
+            encode(KEY_VERIFY_SPARE_PASSWORD, proxy.password)
+        }
+        return proxy
+    }
+
+    fun verifySpareProxy(): LocalProxy? = runCatching {
+        val store = colituStore()
+        val port = store.decodeInt(KEY_VERIFY_SPARE_PORT, 0).takeIf { it in 1..65535 } ?: return null
+        val user = store.decodeString(KEY_VERIFY_SPARE_USER)?.takeIf { it.isNotBlank() } ?: return null
+        val password = store.decodeString(KEY_VERIFY_SPARE_PASSWORD)?.takeIf { it.isNotBlank() } ?: return null
+        LocalProxy(port, user, password)
+    }.getOrNull()
+
+    private const val KEY_VERIFY_SPARE_PORT = "colitu_verify_spare_port"
+    private const val KEY_VERIFY_SPARE_USER = "colitu_verify_spare_user"
+    private const val KEY_VERIFY_SPARE_PASSWORD = "colitu_verify_spare_password"
+
+    /** The current check inbound, or null when the running profile has none (made before it existed). */
+    fun verifyProxy(): LocalProxy? = runCatching {
+        val store = colituStore()
+        val port = store.decodeInt(KEY_VERIFY_PORT, 0).takeIf { it in 1..65535 } ?: return null
+        val user = store.decodeString(KEY_VERIFY_USER)?.takeIf { it.isNotBlank() } ?: return null
+        val password = store.decodeString(KEY_VERIFY_PASSWORD)?.takeIf { it.isNotBlank() } ?: return null
+        LocalProxy(port, user, password)
+    }.getOrNull()
+
+    private const val KEY_VERIFY_PORT = "colitu_verify_port"
+    private const val KEY_VERIFY_USER = "colitu_verify_user"
+    private const val KEY_VERIFY_PASSWORD = "colitu_verify_password"
+
+    private fun colituStore() = MMKV.mmkvWithID("COLITU_SETTINGS", MMKV.MULTI_PROCESS_MODE)
+
     /** The session's proxy while the tunnel is up, else null. */
     fun activeTunnel(): LocalProxy? {
         val connectedAt = runCatching {

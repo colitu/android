@@ -110,6 +110,23 @@ object ColituApiClient {
         executeWithRetry(builder.build(), url, attempt = 0, allowRefresh = true)
     }
 
+    /**
+     * GET with the stored access token exactly as it is, for the VPN process
+     * (see [ColituPassiveCall]): no token refresh, no retry, no 401 handling,
+     * and it never touches the tokens or the session state. No token, a 401/403
+     * or any failure is just an [ApiResult.Error] for the caller to ignore.
+     */
+    suspend fun getPassive(path: String): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
+        if (ColituTokenManager.getAccessToken().isNullOrBlank()) return@withContext ColituPassiveCall.noToken
+        try {
+            call(Request.Builder().url(buildUrl(path)).get().build()).use { response ->
+                ColituPassiveCall.result(response.code, readBody(response))
+            }
+        } catch (e: IOException) {
+            ApiResult.Error(-1, "network_error")
+        }
+    }
+
     suspend fun post(path: String, body: JsonObject, headers: Map<String, String> = emptyMap()): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
         val url = buildUrl(path)
         val builder = Request.Builder().url(url).post(body.toString().toRequestBody(JSON_TYPE))

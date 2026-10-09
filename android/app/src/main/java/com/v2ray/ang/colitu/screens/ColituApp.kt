@@ -223,6 +223,11 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                         tab = ColituTab.Account
                     },
                     onOpenSplit = { splitOpen = true },
+                    // "Advanced settings on" (Simple mode): the settings, in Advanced mode.
+                    onOpenAdvanced = {
+                        c.setAdvancedMode(true)
+                        tab = ColituTab.Account
+                    },
                 )
                 ColituTab.Locations -> LocationsTab(c, onOpenPlan = { tab = ColituTab.Plan })
                 ColituTab.Plan -> PlanTab(c)

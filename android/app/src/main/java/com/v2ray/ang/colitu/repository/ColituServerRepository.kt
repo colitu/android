@@ -22,6 +22,8 @@ object ColituServerRepository {
     private const val KEY_CONFIG_ETAG = "config_etag"
     /** Last good envelope of a multihop route, kept apart from the node envelope (see [fetchRouteCandidates]). */
     private const val KEY_ROUTE_ENVELOPE = "vpn_lkg_route"
+    /** Last good envelope of the warm spare's server, kept apart from the primary's (see [fetchNodeCandidates]). */
+    private const val KEY_SPARE_ENVELOPE = "vpn_lkg_spare"
 
     private val store by lazy { MMKV.mmkvWithID(STORE_ID, MMKV.MULTI_PROCESS_MODE) }
 
@@ -90,7 +92,7 @@ object ColituServerRepository {
         }
 
     private fun clearConfigCaches() {
-        ColituSecureStore.remove("vpn_lkg_envelope", KEY_ROUTE_ENVELOPE)
+        ColituSecureStore.remove("vpn_lkg_envelope", KEY_ROUTE_ENVELOPE, KEY_SPARE_ENVELOPE)
         store.removeValueForKey(KEY_CONFIG_ETAG)
     }
 
@@ -161,6 +163,52 @@ object ColituServerRepository {
         val envelope = runCatching { com.google.gson.JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
         return envelope.takeIf { ColituVpnConfig.fromJson(it) != null }
     }
+
+    // ── Warm spare ───────────────────────────────────────────────────────────────
+
+    /**
+     * Every transport of [nodeId] for the warm spare (`GET /config?node=`):
+     * the panel answers for that node for this request only, the stored
+     * preference stays the primary's. Its envelope is cached under its own
+     * key, never as the primary's, and used when the panel cannot be reached.
+     */
+    suspend fun fetchNodeCandidates(nodeId: String): Result<List<ColituVpnConfig>> = withContext(Dispatchers.IO) {
+        val path = "/config?node=${java.net.URLEncoder.encode(nodeId, "UTF-8")}"
+        val envelope = when (val result = ColituApiClient.get(path)) {
+            is ColituApiClient.ApiResult.Success -> {
+                // An older panel ignores node= and answers for the preferred node: no spare then.
+                if (envelopeServer(result.data) != nodeId) return@withContext Result.failure(Exception("SPARE_NOT_OFFERED"))
+                ColituSecureStore.put(KEY_SPARE_ENVELOPE, result.data.toString())
+                result.data
+            }
+            is ColituApiClient.ApiResult.Error -> {
+                if (!ConfigCachePolicy.allowsFallback(result.code, result.isAuthError)) {
+                    ColituSecureStore.remove(KEY_SPARE_ENVELOPE)
+                    return@withContext Result.failure(Exception(result.message))
+                }
+                return@withContext cachedNodeCandidates(nodeId)?.let { Result.success(it) } ?: Result.failure(Exception(result.message))
+            }
+        }
+        val rendered = runCatching { XrayMobileAdapter.renderCandidates(envelope) }.getOrNull()
+            ?.filter { !it.rawConfig.isNullOrBlank() }
+        if (rendered.isNullOrEmpty()) Result.failure(Exception("CONFIG_NOT_READY")) else Result.success(rendered)
+    }
+
+    /** Transports of the cached spare envelope for [nodeId], without a round trip; null when none is valid. */
+    fun cachedNodeCandidates(nodeId: String, now: java.time.Instant = com.v2ray.ang.colitu.api.ColituClock.now()): List<ColituVpnConfig>? {
+        val raw = ColituSecureStore.get(KEY_SPARE_ENVELOPE) ?: return null
+        val envelope = runCatching { com.google.gson.JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return null
+        if (envelopeServer(envelope) != nodeId) return null
+        val expires = envelope.get("expires_at")?.takeIf { it.isJsonPrimitive }?.asString
+            ?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() } ?: return null
+        if (!now.isBefore(expires)) return null
+        return runCatching { XrayMobileAdapter.renderCandidates(envelope, now) }.getOrNull()
+            ?.filter { !it.rawConfig.isNullOrBlank() }
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun envelopeServer(envelope: JsonObject): String? =
+        envelope.getAsJsonObject("server")?.get("id")?.takeIf { it.isJsonPrimitive }?.asString
 
     // ── Multihop routes ──────────────────────────────────────────────────────────
 

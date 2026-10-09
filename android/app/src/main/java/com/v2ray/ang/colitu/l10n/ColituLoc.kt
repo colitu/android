@@ -189,6 +189,8 @@ object ColituLoc {
         "home.phase.starting" to arrayOf("Запускаем туннель…", "Tünel başlatılıyor…", "Starting the tunnel…"),
         "home.phase.verifying" to arrayOf("Проверяем трафик…", "Trafik doğrulanıyor…", "Verifying traffic…"),
         "home.phase.switching" to arrayOf("Пробуем другой протокол…", "Başka protokol deneniyor…", "Trying another protocol…"),
+        "home.phase.switchingServer" to arrayOf("Пробуем другой сервер…", "Başka sunucu deneniyor…", "Trying another server…"),
+        "home.phase.reconnecting" to arrayOf("Соединение прервалось, переподключаемся…", "Bağlantı koptu, yeniden bağlanılıyor…", "Connection dropped, reconnecting…"),
         "home.switchingTransport" to arrayOf("Протокол не отвечает, пробуем другой…", "Protokol yanıt vermiyor, başkası deneniyor…", "Protocol isn’t responding, trying another…"),
         "home.fastest" to arrayOf("Самый быстрый сервер", "En hızlı sunucu", "Fastest server"),
         "home.autoPicked" to arrayOf("Выбран автоматически", "Otomatik seçildi", "Auto-selected"),
@@ -350,6 +352,13 @@ object ColituLoc {
         "settings.dnsHint" to arrayOf("DNS-запросы идут только через VPN. Всегда включено.", "DNS sorguları yalnızca VPN üzerinden gider. Her zaman açık.", "DNS lookups only go through the VPN. Always on."),
         "settings.autoConnect" to arrayOf("Автоподключение", "Otomatik bağlan", "Auto-connect"),
         "settings.autoConnectHint" to arrayOf("Подключаться сразу после запуска приложения.", "Uygulama açılır açılmaz bağlan.", "Connect as soon as the app starts."),
+        "home.tryFastest" to arrayOf("Попробовать самый быстрый сервер", "En hızlı sunucuyu dene", "Try the fastest server"),
+        "mode.advanced" to arrayOf("Расширенный режим", "Gelişmiş mod", "Advanced mode"),
+        "mode.advancedHint" to arrayOf("Раздельное туннелирование, выбор протокола и другое", "Bölünmüş tünel, protokol seçimi ve diğer ayarlar", "Split tunnelling, protocol choice and more"),
+        "mode.advancedOn" to arrayOf("Расширенный режим включён", "Gelişmiş mod açıldı", "Advanced mode is on"),
+        "mode.advancedSettingsOn" to arrayOf("Включены расширенные настройки", "Gelişmiş ayarlar etkin", "Advanced settings on"),
+        "settings.warmSpare" to arrayOf("Резервный канал", "Yedek hat", "Warm spare"),
+        "settings.warmSpareHint" to arrayOf("Второй канал готов заранее: если основной перестаёт отвечать, трафик за несколько секунд переходит на него, VPN не отключается. Проверка канала — до 2 МБ в час.", "İkinci bir hat önceden hazır bekler: ana hat yanıt vermezse trafik birkaç saniyede ona geçer, VPN kopmaz. Hat kontrolü saatte en fazla 2 MB kullanır.", "A second path is ready in advance: if the main one stops answering, traffic moves to it within seconds and the VPN stays on. Checking the path uses up to 2 MB an hour."),
         "settings.adBlock" to arrayOf("Блокировка рекламы", "Reklam engelleme", "Ad blocking"),
         "settings.adBlockHint" to arrayOf("Реклама и трекеры блокируются на DNS-серверах Colitu, во всех приложениях. Журнал запросов не ведётся. Если какой-то сайт сломается, выключите.", "Reklam ve izleyiciler tüm uygulamalarda Colitu DNS sunucularında engellenir. Sorgu kaydı tutulmaz. Bir site bozulursa kapatın.", "Ads and trackers are blocked on Colitu’s DNS servers, in every app. No query log is kept. If a site breaks, turn it off."),
         "settings.adBlockOn" to arrayOf("Блокировка рекламы включена, переподключаемся…", "Reklam engelleme açıldı, yeniden bağlanılıyor…", "Ad blocking is on, reconnecting…"),
@@ -645,6 +654,10 @@ object ColituLoc {
         "tv.qr.title" to arrayOf("Откройте на телефоне", "Telefonunuzda açın", "Open on your phone"),
         "tv.qr.sub" to arrayOf("Наведите камеру телефона на QR-код.", "Telefonunuzun kamerasını QR koda tutun.", "Point your phone’s camera at the QR code."),
         "tv.qr.close" to arrayOf("Закрыть", "Kapat", "Close"),
+        // Panel announcements (banner + notification channel)
+        "notice.channel" to arrayOf("Объявления", "Duyurular", "Announcements"),
+        "notice.close" to arrayOf("Закрыть объявление", "Duyuruyu kapat", "Dismiss announcement"),
+        "notice.open" to arrayOf("Открыть", "Aç", "Open"),
     )
 
     private val countries: Map<String, Array<String>> = hashMapOf(

@@ -22,13 +22,15 @@ object ColituLatency {
         tries.filterNotNull().minOrNull()
     }
 
-    /** Pings of every server with a probe address, by server id. */
-    suspend fun measureAll(servers: List<ColituServer>): Map<String, Int> = coroutineScope {
+    /**
+     * Pings of every server with a probe address, by server id; null when the
+     * probe timed out or was refused (automatic mode tries that server last).
+     */
+    suspend fun measureAll(servers: List<ColituServer>): Map<String, Int?> = coroutineScope {
         servers
             .filter { !it.latencyHost.isNullOrBlank() && (it.latencyPort ?: 0) in 1..65535 }
             .map { server -> async { server.id to measure(server.latencyHost!!, server.latencyPort!!) } }
             .awaitAll()
-            .mapNotNull { (id, ms) -> ms?.let { id to it } }
             .toMap()
     }
 

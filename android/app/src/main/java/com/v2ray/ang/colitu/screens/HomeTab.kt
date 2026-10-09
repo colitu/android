@@ -53,6 +53,7 @@ import com.v2ray.ang.colitu.design.ColituColors
 import com.v2ray.ang.colitu.design.ColituFlag
 import com.v2ray.ang.colitu.design.ColituIcon
 import com.v2ray.ang.colitu.design.ColituIcons
+import com.v2ray.ang.colitu.design.ColituLinkButton
 import com.v2ray.ang.colitu.design.ColituNotice
 import com.v2ray.ang.colitu.design.ColituPanel
 import com.v2ray.ang.colitu.design.ColituPowerButton
@@ -82,8 +83,10 @@ fun HomeTab(
     onOpenPlan: () -> Unit,
     onOpenPrivacy: () -> Unit = {},
     onOpenSplit: () -> Unit = {},
+    onOpenAdvanced: () -> Unit = {},
 ) {
     val loc = ColituLoc
+    val advanced = c.advancedMode
     if (c.loading && c.servers.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { ColituSpinner() }
         return
@@ -114,7 +117,7 @@ fun HomeTab(
     }
 
     if (ColituTv.isTv) {
-        TvHome(c, on, connecting, disconnecting, if (on) loc["tv.pressOff"] else if (hint == loc["home.tap"]) loc["tv.press"] else hint, onToggle, onChangeLocation, onOpenPlan, onOpenPrivacy)
+        TvHome(c, on, connecting, disconnecting, if (on) loc["tv.pressOff"] else if (hint == loc["home.tap"]) loc["tv.press"] else hint, onToggle, onChangeLocation, onOpenPlan, onOpenPrivacy, onOpenAdvanced)
         return
     }
 
@@ -151,19 +154,25 @@ fun HomeTab(
                 maxLines = 2,
             )
         }
-        if (on && c.transport != null) {
+        if (advanced && on && c.transport != null) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
             }
         }
-        if (c.ruDirectActive) {
+        if (advanced && c.ruDirectActive) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 RuDirectChip(onOpenPrivacy)
             }
         }
-        if (c.splitTunnel.active) {
+        if (!advanced && c.advancedSettingsOn) {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                ColituLinkButton(loc["mode.advancedSettingsOn"], onOpenAdvanced, icon = ColituIcons.Info)
+            }
+        }
+        if (advanced && c.splitTunnel.active) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 SplitTunnelChip(c.splitTunnel, onOpenSplit)
@@ -173,15 +182,25 @@ fun HomeTab(
             Spacer(Modifier.height(12.dp))
             TrialEndBanner(outlook, onDismiss = { c.dismissTrialBanner() })
         }
-        Spacer(Modifier.height(16.dp))
-        Row {
-            StatTile(ColituIcons.ArrowUp, loc["home.upload"], loc.speed(if (on) c.uploadBps else 0.0), on, Modifier.weight(1f).reveal(0))
-            Spacer(Modifier.width(12.dp))
-            StatTile(ColituIcons.ArrowDown, loc["home.download"], loc.speed(if (on) c.downloadBps else 0.0), on, Modifier.weight(1f).reveal(60))
+        ColituNoticeSlot()
+        if (advanced) {
+            Spacer(Modifier.height(16.dp))
+            Row {
+                StatTile(ColituIcons.ArrowUp, loc["home.upload"], loc.speed(if (on) c.uploadBps else 0.0), on, Modifier.weight(1f).reveal(0))
+                Spacer(Modifier.width(12.dp))
+                StatTile(ColituIcons.ArrowDown, loc["home.download"], loc.speed(if (on) c.downloadBps else 0.0), on, Modifier.weight(1f).reveal(60))
+            }
+        } else {
+            Spacer(Modifier.height(4.dp))
         }
         c.error?.let {
             Spacer(Modifier.height(12.dp))
             ColituNotice(it)
+            if (c.offerFastest) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    ColituLinkButton(loc["home.tryFastest"], { c.tryFastest() }, icon = ColituIcons.Bolt)
+                }
+            }
         }
         if (c.offline) {
             Spacer(Modifier.height(12.dp))
@@ -191,6 +210,18 @@ fun HomeTab(
         LocationCard(c, onChangeLocation, Modifier.reveal(120))
         Spacer(Modifier.height(12.dp))
         PlanRow(c, onOpenPlan, Modifier.reveal(160))
+        if (!advanced) {
+            Spacer(Modifier.height(10.dp))
+            AdvancedModeButton(c, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** Simple mode's one tap to Advanced mode: on right away, the new items appear here. */
+@Composable
+private fun AdvancedModeButton(c: ColituController, modifier: Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.Center) {
+        ColituLinkButton(ColituLoc["mode.advanced"], { c.setAdvancedMode(true, fromHome = true) }, icon = ColituIcons.Grid)
     }
 }
 
@@ -201,6 +232,8 @@ private fun phaseText(phase: ConnectPhase): String = when (phase) {
     ConnectPhase.Starting -> ColituLoc["home.phase.starting"]
     ConnectPhase.Verifying -> ColituLoc["home.phase.verifying"]
     ConnectPhase.Switching -> ColituLoc["home.phase.switching"]
+    ConnectPhase.SwitchingServer -> ColituLoc["home.phase.switchingServer"]
+    ConnectPhase.Reconnecting -> ColituLoc["home.phase.reconnecting"]
     ConnectPhase.Idle -> ColituLoc["home.sub.connecting"]
 }
 
@@ -259,7 +292,7 @@ private fun StatTile(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
 private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Modifier) {
     val loc = ColituLoc
     val server = if (c.connected) c.connectedServer ?: c.effectiveServer else c.effectiveServer
-    val auto = c.autoSelection
+    val auto = c.connectsAutomatically
     val title = if (auto) loc["home.fastest"] else c.titleOf(server)
     val subtitle = if (auto) {
         if (server == null) loc["home.autoPicked"] else "${loc["home.autoPicked"]} · ${c.titleOf(server)}"
@@ -429,6 +462,7 @@ private fun TvHome(
     onChangeLocation: () -> Unit,
     onOpenPlan: () -> Unit,
     onOpenPrivacy: () -> Unit,
+    onOpenAdvanced: () -> Unit,
 ) {
     val loc = ColituLoc
     val power = remember { FocusRequester() }
@@ -475,13 +509,17 @@ private fun TvHome(
                 align = TextAlign.Center,
                 maxLines = 2,
             )
-            if (on && c.transport != null) {
+            if (c.advancedMode && on && c.transport != null) {
                 Spacer(Modifier.height(8.dp))
                 ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
             }
-            if (c.ruDirectActive) {
+            if (c.advancedMode && c.ruDirectActive) {
                 Spacer(Modifier.height(8.dp))
                 RuDirectChip(onOpenPrivacy)
+            }
+            if (!c.advancedMode && c.advancedSettingsOn) {
+                Spacer(Modifier.height(8.dp))
+                ColituLinkButton(loc["mode.advancedSettingsOn"], onOpenAdvanced, icon = ColituIcons.Info)
             }
         }
         Spacer(Modifier.width(28.dp))
@@ -489,15 +527,19 @@ private fun TvHome(
             Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row {
-                StatTile(ColituIcons.ArrowUp, loc["home.upload"], loc.speed(if (on) c.uploadBps else 0.0), on, Modifier.weight(1f))
-                Spacer(Modifier.width(12.dp))
-                StatTile(ColituIcons.ArrowDown, loc["home.download"], loc.speed(if (on) c.downloadBps else 0.0), on, Modifier.weight(1f))
+            if (c.advancedMode) {
+                Row {
+                    StatTile(ColituIcons.ArrowUp, loc["home.upload"], loc.speed(if (on) c.uploadBps else 0.0), on, Modifier.weight(1f))
+                    Spacer(Modifier.width(12.dp))
+                    StatTile(ColituIcons.ArrowDown, loc["home.download"], loc.speed(if (on) c.downloadBps else 0.0), on, Modifier.weight(1f))
+                }
             }
             c.error?.let { ColituNotice(it) }
+            if (c.error != null && c.offerFastest) ColituLinkButton(loc["home.tryFastest"], { c.tryFastest() }, icon = ColituIcons.Bolt)
             if (c.offline) ColituNotice(loc["home.offline"], error = false)
             LocationCard(c, onChangeLocation, Modifier)
             PlanRow(c, onOpenPlan, Modifier)
+            if (!c.advancedMode) AdvancedModeButton(c, Modifier.fillMaxWidth())
         }
     }
 }

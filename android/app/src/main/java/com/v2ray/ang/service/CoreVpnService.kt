@@ -109,6 +109,8 @@ class CoreVpnService : VpnService(), ServiceControl {
 
     override fun onRevoke() {
         LogUtil.w(AppConfig.TAG, "StartCore-VPN: Permission revoked")
+        // Another VPN took over: the Colitu app must not reconnect over it.
+        CoreServiceManager.colituStopReason = CoreServiceManager.STOP_REVOKED
         stopAllService()
     }
 

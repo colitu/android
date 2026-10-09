@@ -117,8 +117,18 @@ fun AccountTab(
     val active = c.planActive
     val limit = (user?.deviceLimit ?: 1).coerceAtLeast(1)
 
+    val advanced = c.advancedMode
     ShellScroll {
         CText(loc["account.title"], ColituText.h1)
+        Spacer(Modifier.height(14.dp))
+        // One tap between Simple and Advanced mode; nothing reconnects.
+        ColituSwitchRow(
+            icon = ColituIcons.Grid,
+            title = loc["mode.advanced"],
+            hint = loc["mode.advancedHint"],
+            value = advanced,
+            onChange = { c.setAdvancedMode(it) },
+        )
         Spacer(Modifier.height(14.dp))
         // Profile
         ColituPanel(padding = PaddingValues(14.dp), radius = ColituRadius.md) {
@@ -184,15 +194,17 @@ fun AccountTab(
             },
             trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) },
         )
-        Spacer(Modifier.height(8.dp))
-        KillSwitchRow()
-        Spacer(Modifier.height(8.dp))
-        ColituActionRow(
-            icon = ColituIcons.Antenna,
-            title = loc["split.title"],
-            hint = splitSummary(c.splitTunnel),
-            onClick = onOpenSplit,
-        )
+        if (advanced) {
+            Spacer(Modifier.height(8.dp))
+            KillSwitchRow()
+            Spacer(Modifier.height(8.dp))
+            ColituActionRow(
+                icon = ColituIcons.Antenna,
+                title = loc["split.title"],
+                hint = splitSummary(c.splitTunnel),
+                onClick = onOpenSplit,
+            )
+        }
         Spacer(Modifier.height(8.dp))
         ColituSwitchRow(
             icon = ColituIcons.Bolt,
@@ -200,6 +212,17 @@ fun AccountTab(
             hint = loc["settings.autoConnectHint"],
             value = c.autoConnect,
             onChange = { c.setAutoConnectEnabled(it) },
+        )
+        // Simple mode: split tunneling, the spare, ad blocking, privacy mode,
+        // DNS, the transport and rotation are hidden but keep working.
+        if (advanced) {
+        Spacer(Modifier.height(8.dp))
+        ColituSwitchRow(
+            icon = ColituIcons.Antenna,
+            title = loc["settings.warmSpare"],
+            hint = loc["settings.warmSpareHint"],
+            value = c.warmSpare,
+            onChange = { c.setWarmSpareEnabled(it) },
         )
         if (ColituAdBlock.available) {
             Spacer(Modifier.height(8.dp))
@@ -237,27 +260,30 @@ fun AccountTab(
             onChange = null,
             trailing = { ColituIcon(ColituIcons.SealCheck, ColituColors.success, 22.dp) },
         )
+        }
         Spacer(Modifier.height(18.dp))
 
         // Connection
         SectionTitle(loc["account.connection"])
-        ColituActionRow(
-            icon = ColituIcons.Antenna,
-            title = loc["account.protocol"],
-            hint = if (c.connected && c.transport != null) "${loc["account.protocolAuto"]} · ${c.transportName}" else loc["account.protocolAuto"],
-            trailing = {},
-        )
-        // An older panel has no rotation: the row stays hidden.
-        if (c.rotation != null) {
-            Spacer(Modifier.height(8.dp))
+        if (advanced) {
             ColituActionRow(
-                icon = ColituIcons.Refresh,
-                title = loc["rotation.title"],
-                hint = rotationSummary(c),
-                onClick = onOpenRotation,
+                icon = ColituIcons.Antenna,
+                title = loc["account.protocol"],
+                hint = if (c.connected && c.transport != null) "${loc["account.protocolAuto"]} · ${c.transportName}" else loc["account.protocolAuto"],
+                trailing = {},
             )
+            // An older panel has no rotation: the row stays hidden.
+            if (c.rotation != null) {
+                Spacer(Modifier.height(8.dp))
+                ColituActionRow(
+                    icon = ColituIcons.Refresh,
+                    title = loc["rotation.title"],
+                    hint = rotationSummary(c),
+                    onClick = onOpenRotation,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
         }
-        Spacer(Modifier.height(8.dp))
         ColituTile(padding = PaddingValues(start = 12.dp, top = 11.dp, end = 12.dp, bottom = 12.dp)) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -333,9 +359,11 @@ fun AccountTab(
         Spacer(Modifier.height(8.dp))
         ColituActionRow(ColituIcons.LockShield, loc["mfa.setupRow"], loc["mfa.setupHint"], onClick = { openUrl(context, MFA_SETUP_URL) },
             trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
-        Spacer(Modifier.height(8.dp))
-        ColituActionRow(ColituIcons.Code, loc["account.manualConfig"], loc["account.manualConfigHint"], onClick = { openUrl(context, MANUAL_CONFIG_URL) },
-            trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
+        if (advanced) {
+            Spacer(Modifier.height(8.dp))
+            ColituActionRow(ColituIcons.Code, loc["account.manualConfig"], loc["account.manualConfigHint"], onClick = { openUrl(context, MANUAL_CONFIG_URL) },
+                trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
+        }
         Spacer(Modifier.height(8.dp))
         ColituActionRow(ColituIcons.Doc, loc["settings.terms"], onClick = { openWeb(context, "/legal/terms") })
         Spacer(Modifier.height(8.dp))

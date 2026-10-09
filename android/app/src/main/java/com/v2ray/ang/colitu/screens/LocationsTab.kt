@@ -128,8 +128,12 @@ private fun categoryIcon(category: String): ImageVector = when (category) {
 fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     val loc = ColituLoc
     var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableStateOf("all") }
-    var sort by rememberSaveable { mutableStateOf(SortBy.Ping) }
+    var chosenFilter by rememberSaveable { mutableStateOf("all") }
+    var chosenSort by rememberSaveable { mutableStateOf(SortBy.Ping) }
+    // Simple mode: one flat list by ping, no categories, sort menu or multihop routes.
+    val advanced = c.advancedMode
+    val filter = if (advanced) chosenFilter else "all"
+    val sort = if (advanced) chosenSort else SortBy.Ping
     LaunchedEffect(Unit) { c.measurePings() }
     val q = fold(query.trim())
     // Cities of one country tie on the title, so they sort by city inside a group.
@@ -153,7 +157,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     val restEntries = groupByCountry(rest, if (c.autoSelection) null else c.selectedServerId, flat = q.isNotEmpty())
     // Multihop routes have no use-case categories: they show under "All" only. The flag and name
     // of the exit and the entry both count for the search.
-    val routeItems = if (filter != "all") emptyList() else c.routes
+    val routeItems = if (filter != "all" || !advanced) emptyList() else c.routes
         .filter { route ->
             q.isEmpty() || fold("${route.displayName} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q)
         }
@@ -197,15 +201,15 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 ) { ColituIcon(ColituIcons.XCircleOutline, ColituColors.dim, 18.dp) }
             }),
         )
-        Spacer(Modifier.height(14.dp))
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
+        if (advanced) Spacer(Modifier.height(14.dp))
+        if (advanced) Row(Modifier.horizontalScroll(rememberScrollState())) {
             categories.forEach { value ->
                 if (value == "all" || value == filter || c.servers.any { it.inCategory(value) }) {
                     ColituChip(
                         if (value == "all") loc["locations.all"] else loc["cat.$value"],
                         filter == value,
                         icon = categoryIcon(value),
-                    ) { filter = value }
+                    ) { chosenFilter = value }
                     Spacer(Modifier.width(8.dp))
                 }
             }
@@ -236,7 +240,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
             else -> {
                 if (items.isNotEmpty()) {
                     SectionHeader(if (recommended.isNotEmpty()) loc["locations.recommended"] else loc["locations.allServers"]) {
-                        SortButton(sort) { sort = it }
+                        if (advanced) SortButton(sort) { chosenSort = it }
                     }
                     Spacer(Modifier.height(12.dp))
                     ServerCards(c, recommended, startIndex = 0)
@@ -250,7 +254,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 if (routeItems.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     SectionHeader(loc["multihop.section"]) {
-                        if (items.isEmpty()) SortButton(sort) { sort = it }
+                        if (items.isEmpty()) SortButton(sort) { chosenSort = it }
                     }
                     CText(loc["multihop.sectionHint"], ColituText.small, Modifier.padding(top = 4.dp, bottom = 12.dp))
                     routeItems.forEachIndexed { i, route ->
@@ -263,10 +267,12 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     }
 }
 
-/** The panel's recommended locations; without any, the three fastest. */
+/**
+ * The automatic choice (the first of ColituServerRanking, exactly what
+ * "Fastest server" connects to); when it is filtered out, the three fastest.
+ */
 private fun recommended(c: ColituController, items: List<ColituServer>): List<ColituServer> {
-    val flagged = items.filter { it.isRecommended && it.isAvailable }
-    if (flagged.isNotEmpty()) return flagged
+    c.recommendedServer?.let { best -> items.firstOrNull { it.id == best.id } }?.let { return listOf(it) }
     val fastest = items.filter { it.isAvailable && c.pingOf(it) != null }
         .sortedBy { c.pingOf(it) }
         .take(3)
@@ -492,7 +498,7 @@ private fun SectionHeader(title: String, trailing: (@Composable () -> Unit)? = n
 /** "Fastest server" in the title row: picks the server automatically. */
 @Composable
 private fun FastestButton(c: ColituController) {
-    val active = c.autoSelection
+    val active = c.connectsAutomatically
     val shape = RoundedCornerShape(50)
     Row(
         Modifier

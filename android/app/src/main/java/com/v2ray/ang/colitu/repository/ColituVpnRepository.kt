@@ -9,6 +9,7 @@ import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.data.ColituRuBypass
 import com.v2ray.ang.colitu.data.ColituSplitTunnel
 import com.v2ray.ang.colitu.data.ColituVpnConfig
+import com.v2ray.ang.colitu.data.ColituWarmSpare
 import com.v2ray.ang.colitu.data.XrayMobileAdapter
 import com.v2ray.ang.dto.SubscriptionItem
 import com.v2ray.ang.fmt.CustomFmt
@@ -25,20 +26,27 @@ object ColituVpnRepository {
     /**
      * Stores one rendered runtime config as the only Colitu profile and
      * returns its GUID. The profile gets this connection's own local SOCKS
-     * port and account ([ColituLocalProxy]).
+     * port and account ([ColituLocalProxy]). With [spare] the core also
+     * carries the warm spare's outbound and switches to it by itself
+     * ([ColituWarmSpare]).
      */
-    suspend fun importRuntimeConfig(context: Context, config: ColituVpnConfig): Result<String> =
+    suspend fun importRuntimeConfig(context: Context, config: ColituVpnConfig, spare: ColituVpnConfig? = null): Result<String> =
         withContext(Dispatchers.IO) {
             SettingsManager.initAssets(context, context.assets)
             try {
                 val raw = config.rawConfig?.takeIf { it.isNotBlank() && config.revision != 0L }
                     ?: return@withContext Result.failure(Exception("CONFIG_NOT_READY"))
                 val proxied = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
-                val runtime = ColituAdBlock.apply(
-                    ColituSplitTunnel.configure(
-                        ColituRuBypass.configure(proxied, config.serverCountry, ColituRuBypass.privacyMode),
+                // The spare goes on next to last: it moves every rule the layers before
+                // added for `proxy`; the check inbound's rule then goes in front of all.
+                val runtime = XrayMobileAdapter.withVerifyInbound(ColituWarmSpare.attach(
+                    ColituAdBlock.apply(
+                        ColituSplitTunnel.configure(
+                            ColituRuBypass.configure(proxied, config.serverCountry, ColituRuBypass.privacyMode),
+                        ),
                     ),
-                )
+                    spare?.rawConfig?.takeIf { com.v2ray.ang.colitu.data.ColituUiMode.warmSpareActive(com.v2ray.ang.colitu.data.ColituUiMode.advanced, ColituWarmSpare.enabled) },
+                ), ColituLocalProxy.newVerifySession(), ColituLocalProxy.newVerifySpareSession())
                 val subId = ensureColituSubscription()
                 MmkvManager.decodeServerList(subId).forEach { MmkvManager.removeServer(it) }
                 val profile = CustomFmt.parse(runtime).apply {
@@ -68,7 +76,11 @@ object ColituVpnRepository {
     fun renewLocalProxy(guid: String): Boolean {
         val raw = MmkvManager.decodeServerRaw(guid) ?: return false
         return runCatching {
-            MmkvManager.encodeServerRaw(guid, XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession()))
+            val proxied = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
+            MmkvManager.encodeServerRaw(
+                guid,
+                XrayMobileAdapter.withVerifyInbound(proxied, ColituLocalProxy.newVerifySession(), ColituLocalProxy.newVerifySpareSession()),
+            )
         }.onFailure { Log.e(TAG, "local proxy renewal failed: ${it.javaClass.simpleName}") }.isSuccess
     }
 
@@ -86,7 +98,7 @@ object ColituVpnRepository {
         if (!privacyMode && country == null) return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { ColituRuBypass.configure(raw, country?.ifEmpty { null }, privacyMode) }
+            runCatching { ColituWarmSpare.reroute(ColituRuBypass.configure(raw, country?.ifEmpty { null }, privacyMode)) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }
@@ -102,7 +114,23 @@ object ColituVpnRepository {
             ?: return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { ColituSplitTunnel.configure(raw) }
+            runCatching { ColituWarmSpare.reroute(ColituSplitTunnel.configure(raw)) }
+                .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
+                .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
+        }
+    }
+
+    /**
+     * The warm spare was switched off while no tunnel runs: the stored
+     * profile (tile, widget, Always-on) loses it right away. Switching it on
+     * takes effect with the next connect from the app, which fetches a spare.
+     */
+    suspend fun detachWarmSpareFromStoredProfile() = withContext(Dispatchers.IO) {
+        val subId = MmkvManager.decodeSubscriptions().find { it.subscription.remarks == SUBSCRIPTION_NAME }?.guid
+            ?: return@withContext
+        MmkvManager.decodeServerList(subId).forEach { guid ->
+            val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
+            runCatching { ColituWarmSpare.detach(raw) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }

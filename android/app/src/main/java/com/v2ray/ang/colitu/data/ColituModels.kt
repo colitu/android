@@ -124,6 +124,14 @@ data class ColituServerListResponse(
     val servers: List<ColituServer>,
     /** Multihop routes (`multihop` of the list; absent from an older panel). */
     val multihop: List<ColituServer> = emptyList(),
+    /** ISO-2 country of the request IP; empty when unknown or asked through the VPN (newer panels only). */
+    val clientCountry: String? = null,
+    /** Opaque key of the user's ISP network ("TR-AS9121"); only ever part of the network key. */
+    val clientNetwork: String? = null,
+    /** Opaque token of that network (48 h), sent with protocol observations; only with the VPN off. */
+    val networkToken: String? = null,
+    /** Transports that fail for most users on that network; null when none or too little data. */
+    val networkHints: ColituNetworkHints? = null,
 ) {
     companion object {
         /**
@@ -132,17 +140,28 @@ data class ColituServerListResponse(
          */
         fun fromJson(json: JsonObject): ColituServerListResponse {
             val routes = ColituMultihop.parseRoutes(json)
+            val clientCountry = json.optText("client_country")
+            val clientNetwork = json.optText("client_network")
             val serversArray = if (json.has("servers") && json.get("servers").isJsonArray)
                 json.getAsJsonArray("servers")
             else
-                return ColituServerListResponse(emptyList(), routes)
+                return ColituServerListResponse(emptyList(), routes, clientCountry, clientNetwork)
 
             val servers = serversArray.mapNotNull { elem ->
                 if (elem.isJsonObject) ColituServer.fromJson(elem.asJsonObject) else null
+            // The panel's first entry; the app recommends the first of
+            // ColituServerRanking instead (it knows pings and what worked).
             }.mapIndexed { index, server -> server.copy(isRecommended = index == 0) }
 
-            return ColituServerListResponse(servers, routes)
+            return ColituServerListResponse(
+                servers, routes, clientCountry, clientNetwork,
+                json.optText("network_token"),
+                ColituNetworkHints.fromJson(json.get("network_hints")?.takeIf { it.isJsonObject }?.asJsonObject),
+            )
         }
+
+        private fun JsonObject.optText(key: String): String? =
+            get(key)?.takeIf { it.isJsonPrimitive }?.asString?.trim()?.takeIf { it.isNotEmpty() }
     }
 }
 
