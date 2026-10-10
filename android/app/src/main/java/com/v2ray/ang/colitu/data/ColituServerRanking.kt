@@ -31,7 +31,18 @@ object ColituServerRanking {
         previous != null && previous.isNotEmpty() && current.isNotEmpty() && previous.none { it in current }
 
     /**
-     * Available nodes (no multihop routes) best first:
+     * Server countries automatic mode never picks. A Russian exit carries
+     * the same blocks the user wants to get away from, wherever the user is.
+     * A manual choice still connects there, and a multihop route that only
+     * enters in Russia is not affected (routes are never picked anyway).
+     */
+    val AUTO_EXCLUDED_COUNTRIES = setOf("RU")
+
+    fun autoExcluded(server: ColituServer): Boolean =
+        server.countryCode?.trim()?.uppercase() in AUTO_EXCLUDED_COUNTRIES
+
+    /**
+     * Available nodes (no multihop routes, none in [AUTO_EXCLUDED_COUNTRIES]) best first:
      * 1. penalized on this network last;
      * 2. a fresh failed ping after all others except the penalized;
      * 3. the user's own country after the foreign ones (when it is known);
@@ -49,7 +60,7 @@ object ColituServerRanking {
         now: Long,
     ): List<ColituServer> {
         val country = clientCountry?.trim()?.uppercase()?.takeIf { it.length == 2 }
-        val candidates = servers.withIndex().filter { (_, server) -> server.isAvailable && !server.isMultihop }
+        val candidates = servers.withIndex().filter { (_, server) -> server.isAvailable && !server.isMultihop && !autoExcluded(server) }
         val ordered = candidates.sortedWith(
             compareBy<IndexedValue<ColituServer>> { it.value.id in penalized }
                 .thenBy { pings[it.value.id]?.let { ping -> ping.ms == null && ping.fresh(network, now) } == true }

@@ -35,6 +35,7 @@ class ColituServerRankingTest {
     private val fi = server("fi", "FI")
     private val us = server("us", "US")
     private val ru = server("ru", "RU")
+    private val tr = server("tr", "TR")
 
     @Test
     fun withoutPingsOrMemoryPanelOrderIsKept() {
@@ -44,7 +45,7 @@ class ColituServerRankingTest {
     @Test
     fun freshPingsAscendingThenUnpingedInPanelOrder() {
         val pings = mapOf("fi" to ping(40), "de" to ping(25))
-        assertEquals(listOf("de", "fi", "us", "ru"), rank(listOf(us, de, fi, ru), pings))
+        assertEquals(listOf("de", "fi", "us"), rank(listOf(us, de, fi, ru), pings))
     }
 
     @Test
@@ -65,17 +66,30 @@ class ColituServerRankingTest {
 
     @Test
     fun ownCountryGoesAfterForeignOnesEvenWhenFasterOrLastGood() {
-        val pings = mapOf("ru" to ping(5), "de" to ping(60))
-        assertEquals(listOf("de", "fi", "ru"), rank(listOf(ru, de, fi), pings, lastGood = "ru", country = "ru"))
+        val pings = mapOf("tr" to ping(5), "de" to ping(60))
+        assertEquals(listOf("de", "fi", "tr"), rank(listOf(tr, de, fi), pings, lastGood = "tr", country = "tr"))
         // Unknown country: no reordering by country.
-        assertEquals(listOf("ru", "de", "fi"), rank(listOf(ru, de, fi), pings, lastGood = "ru", country = null))
+        assertEquals(listOf("tr", "de", "fi"), rank(listOf(tr, de, fi), pings, lastGood = "tr", country = null))
+    }
+
+    @Test
+    fun russianServersAreNeverPickedAutomatically() {
+        val pings = mapOf("ru" to ping(3), "de" to ping(80))
+        // Fastest, last good, client in Russia or abroad or unknown: never in the automatic order.
+        listOf("RU", "TR", null).forEach { country ->
+            assertEquals(listOf("de", "fi"), rank(listOf(ru, de, fi), pings, lastGood = "ru", country = country))
+        }
+        assertEquals(listOf("de", "fi"), rank(listOf(server("ru2", " ru "), de, fi), pings))
+        // Only Russian servers left: automatic mode has nothing to pick.
+        assertEquals(emptyList<String>(), rank(listOf(ru)))
+        assertTrue(ColituServerRanking.autoExcluded(ru))
     }
 
     @Test
     fun freshFailedPingGoesAfterAllButPenalized() {
-        val pings = mapOf("de" to ping(null), "ru" to ping(30))
-        // Even the own country (ru) and the last good server (de) rank around it.
-        assertEquals(listOf("fi", "us", "ru", "de", "x"), rank(listOf(de, fi, us, ru, server("x", "NL")), pings, lastGood = "de", penalized = setOf("x"), country = "RU"))
+        val pings = mapOf("de" to ping(null), "tr" to ping(30))
+        // Even the own country (tr) and the last good server (de) rank around it.
+        assertEquals(listOf("fi", "us", "tr", "de", "x"), rank(listOf(de, fi, us, tr, server("x", "NL")), pings, lastGood = "de", penalized = setOf("x"), country = "TR"))
         // An old failed ping is no longer held against the server.
         assertEquals(listOf("de", "fi"), rank(listOf(de, fi), mapOf("de" to ping(null, age = 30 * minute))))
     }
