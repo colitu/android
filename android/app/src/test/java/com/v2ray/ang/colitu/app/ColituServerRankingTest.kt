@@ -7,6 +7,7 @@ import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.data.ColituServerListResponse
 import com.v2ray.ang.colitu.data.ColituServerRanking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -176,5 +177,14 @@ class ColituServerRankingTest {
         memory.recordSuccess(net, "de", "trojan", now + hour)
         assertNull(memory.lastGoodServer(net, now))
         assertEquals(0, ColituConnectMemory.fromJson("not json", now).size)
+    }
+
+    @Test
+    fun networkReplacedOnlyWhenEveryUnderlyingNetworkIsNew() {
+        assertTrue(ColituServerRanking.networkReplaced(setOf("100"), setOf("101")))
+        // Wi-Fi joined next to mobile data, or the first callback: not a new access network.
+        assertFalse(ColituServerRanking.networkReplaced(setOf("100"), setOf("100", "101")))
+        assertFalse(ColituServerRanking.networkReplaced(null, setOf("101")))
+        assertFalse(ColituServerRanking.networkReplaced(setOf("100"), emptySet()))
     }
 }

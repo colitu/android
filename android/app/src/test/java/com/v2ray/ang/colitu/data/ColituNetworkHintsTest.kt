@@ -94,4 +94,27 @@ class ColituNetworkHintsTest {
         val many = (1..12).map { ColituObservation("p$it", true, 1) }
         assertEquals(8, ColituNetworkHintsPolicy.observationBody("node-1", many, null)!!.getAsJsonArray("observations").size())
     }
+
+    @Test
+    fun preferredIsParsedAndNeverIncludesABlockedTransport() {
+        val json = com.google.gson.JsonParser.parseString("""{"blocked":["hysteria2"],"preferred":["vless-reality","hysteria2","trojan"],"scope":"network"}""").asJsonObject
+        assertEquals(listOf("vless-reality", "trojan"), ColituNetworkHints.fromJson(json)?.preferred)
+        val record = ColituNetworkRecord("TR-AS1", null, setOf("hysteria2"), 1_000L, listOf("vless-reality"))
+        assertEquals(listOf("vless-reality"), ColituNetworkRecord.fromJson(record.toJson())?.preferredFor("TR-AS1", 2_000L))
+        assertEquals(emptyList<String>(), record.preferredFor("TR-AS2", 2_000L))
+    }
+
+    @Test
+    fun hintedStartOnlyWithoutOwnMemory() {
+        val offered = listOf("hysteria2", "vless-reality", "trojan", "vless-xhttp")
+        val rank: (List<String>) -> List<String> = { it.sorted() }
+        assertEquals(listOf("trojan", "vless-reality", "hysteria2", "vless-xhttp"),
+            ColituNetworkHintsPolicy.hintedStart(offered, { it }, listOf("trojan", "vless-reality"), emptySet(), null, rank))
+        // The phone's own last good transport beats the hint.
+        assertNull(ColituNetworkHintsPolicy.hintedStart(offered, { it }, listOf("trojan"), emptySet(), "hysteria2", rank))
+        // A stalled or not offered preferred transport is skipped.
+        assertEquals(listOf("vless-reality", "hysteria2", "trojan", "vless-xhttp"),
+            ColituNetworkHintsPolicy.hintedStart(offered, { it }, listOf("tuic", "trojan", "vless-reality"), setOf("trojan"), null, rank))
+        assertNull(ColituNetworkHintsPolicy.hintedStart(offered, { it }, emptyList(), emptySet(), null, rank))
+    }
 }

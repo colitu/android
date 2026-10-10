@@ -181,15 +181,28 @@ object ColituWarmSpare {
     const val SWAP_IDLE_BYTES = 10 * 1024L
 
     /**
+     * After waiting this long for an idle moment, light traffic no longer
+     * defers the swap: background sync and our own probes keep many phones
+     * above [SWAP_IDLE_BYTES] all the time (measured 15–30 KB per 10 s), and a
+     * dead spare protects nothing.
+     */
+    const val SWAP_MAX_DEFER_MS = 2 * 60_000L
+
+    /** Light traffic: under this in the last 10 s (about 25 kbit/s) is no call (~40 KB) or video. */
+    const val SWAP_LIGHT_BYTES = 32 * 1024L
+
+    /**
      * Whether a new spare may be swapped in now (core reload, about a second
      * without traffic): null = now, else why it waits. Any traffic in the
-     * last 10 s (a call's UDP, a page, a download) defers it; the screen
-     * being off is no reason on its own, a call runs with the screen off.
+     * last 10 s (a call's UDP, a page, a download) defers it, light traffic
+     * only for [SWAP_MAX_DEFER_MS] ([deferredForMs] = how long it has waited);
+     * the screen being off is no reason on its own, a call runs with the screen off.
      */
-    fun swapDeferral(bytesLast10s: Long?): String? = when {
+    fun swapDeferral(bytesLast10s: Long?, deferredForMs: Long = 0L): String? = when {
         bytesLast10s == null -> "traffic unknown"
-        bytesLast10s >= SWAP_IDLE_BYTES -> "busy (${bytesLast10s / 1024} KB in the last 10 s)"
-        else -> null
+        bytesLast10s < SWAP_IDLE_BYTES -> null
+        deferredForMs >= SWAP_MAX_DEFER_MS && bytesLast10s < SWAP_LIGHT_BYTES -> null
+        else -> "busy (${bytesLast10s / 1024} KB in the last 10 s)"
     }
 
     // ── Parallel connect ───────────────────────────────────────────────────

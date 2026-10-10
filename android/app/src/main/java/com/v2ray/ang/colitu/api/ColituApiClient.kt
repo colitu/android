@@ -41,7 +41,7 @@ object ColituApiClient {
 
     // Direct clients: the app itself is outside the VPN (Xray's own traffic
     // must not loop), so these reach the API over the phone's network.
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = ColituCertPins.applyTo(OkHttpClient.Builder())
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
@@ -50,7 +50,7 @@ object ColituApiClient {
         .build()
 
     // Refresh client: no auth interceptor, so a 401 cannot recurse.
-    private val refreshClient = OkHttpClient.Builder()
+    private val refreshClient = ColituCertPins.applyTo(OkHttpClient.Builder())
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -58,7 +58,7 @@ object ColituApiClient {
         .build()
 
     // Signed endpoint list files: no auth header, 10 s limit.
-    private val listClient = OkHttpClient.Builder()
+    private val listClient = ColituCertPins.applyTo(OkHttpClient.Builder())
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .callTimeout(10, TimeUnit.SECONDS)
@@ -191,8 +191,13 @@ object ColituApiClient {
      * the server qualify, so a mutation is never sent twice.
      * On a network-level failure the next API base of the endpoint list is tried.
      */
-    private fun call(request: Request, base: OkHttpClient = httpClient): Response =
-        ColituEndpoints.send(request) { callOnce(it, base) }
+    private fun call(request: Request, base: OkHttpClient = httpClient): Response {
+        // Calls that decide a connect: 8 s to connect per base (tunnel and direct alike), so "no base answers" is known fast.
+        val client = if (ColituEndpoints.isFastFail(request.url.encodedPath)) {
+            base.newBuilder().connectTimeout(ColituEndpoints.FAST_CONNECT_TIMEOUT_S, TimeUnit.SECONDS).build()
+        } else base
+        return ColituEndpoints.send(request) { callOnce(it, client) }
+    }
 
     private fun callOnce(request: Request, base: OkHttpClient): Response {
         val proxy = ColituLocalProxy.activeTunnel()
@@ -237,9 +242,9 @@ object ColituApiClient {
     ): ApiResult<JsonObject> = try {
         call(req).use { response -> handleResponse(response, req, url, attempt, allowRefresh) }
     } catch (e: SocketTimeoutException) {
-        retryOnNetworkError(req, url, attempt, allowRefresh, "TIMEOUT")
+        retryOnNetworkError(req, url, attempt, allowRefresh, "TIMEOUT", e)
     } catch (e: IOException) {
-        retryOnNetworkError(req, url, attempt, allowRefresh, "IO_ERROR")
+        retryOnNetworkError(req, url, attempt, allowRefresh, "IO_ERROR", e)
     }
 
     private suspend fun retryOnNetworkError(
@@ -247,9 +252,12 @@ object ColituApiClient {
         url: String,
         attempt: Int,
         allowRefresh: Boolean,
-        reason: String
+        reason: String,
+        cause: IOException? = null,
     ): ApiResult<JsonObject> {
-        return if (isSafeRetry(req) && attempt < MAX_RETRY) {
+        // Every base already failed to connect (see ColituEndpoints.send): another round only repeats the wait.
+        val connectFailedEverywhere = cause != null && ColituEndpoints.isFastFail(req.url.encodedPath) && ColituEndpoints.isConnectLevel(cause)
+        return if (isSafeRetry(req) && attempt < MAX_RETRY && !connectFailedEverywhere) {
             delay(if (attempt == 0) 500L else 1500L)
             executeWithRetry(req, url, attempt + 1, allowRefresh)
         } else {

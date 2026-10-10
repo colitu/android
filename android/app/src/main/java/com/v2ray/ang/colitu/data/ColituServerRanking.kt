@@ -26,6 +26,10 @@ object ColituServerRanking {
     /** "<link>|<client_network>", link = wifi / cellular / ethernet / other / none. */
     fun networkKey(link: String, clientNetwork: String?): String = "$link|${clientNetwork.orEmpty()}"
 
+    /** Every underlying network is new (none of [previous] is still up): another access network. */
+    fun networkReplaced(previous: Set<String>?, current: Set<String>): Boolean =
+        previous != null && previous.isNotEmpty() && current.isNotEmpty() && previous.none { it in current }
+
     /**
      * Available nodes (no multihop routes) best first:
      * 1. penalized on this network last;

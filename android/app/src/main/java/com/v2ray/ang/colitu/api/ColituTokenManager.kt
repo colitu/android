@@ -92,7 +92,7 @@ object ColituTokenManager {
             .filter { it.subscription.remarks == "Colitu" }
             .forEach { com.v2ray.ang.handler.MmkvManager.removeSubscription(it.guid) }
         com.tencent.mmkv.MMKV.mmkvWithID("COLITU_SERVERS", com.tencent.mmkv.MMKV.MULTI_PROCESS_MODE)
-            .removeValuesForKeys(arrayOf("config_etag", "selected_server_id", "auto_connect_server_id"))
+            .removeValuesForKeys(arrayOf("config_etag", "selected_server_id", "auto_connect_server_id", "recovery_last_attempt"))
         ColituSecureStore.remove(
             KEY_ACCESS_TOKEN,
             KEY_REFRESH_TOKEN,
@@ -106,6 +106,7 @@ object ColituTokenManager {
             KEY_PENDING_EMAIL,
             "vpn_lkg_envelope",
             "vpn_lkg_route",
+            "vpn_recovery_set",
         )
         // device_key identifies the installation and intentionally survives logout.
     }

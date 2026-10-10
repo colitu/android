@@ -24,18 +24,22 @@ object XrayMobileAdapter {
 
     val supportedProtocols = transportRank.keys
 
-    fun render(envelope: JsonObject, now: Instant = ColituClock.now()): ColituVpnConfig =
-        renderProfile(envelope, envelope.getAsJsonObject("profile") ?: error("CONFIG_PROFILE_MISSING"), now)
+    /**
+     * [graceUntil] replaces the envelope's own `offline_grace_until` (the
+     * recovery set's `recovery_until` does, see [ColituRecoverySet]).
+     */
+    fun render(envelope: JsonObject, now: Instant = ColituClock.now(), graceUntil: Instant? = null): ColituVpnConfig =
+        renderProfile(envelope, envelope.getAsJsonObject("profile") ?: error("CONFIG_PROFILE_MISSING"), now, graceUntil)
 
     /**
      * The primary profile plus every optional transport the panel offers in
      * `candidates`, one runtime config each. A malformed optional transport is
      * skipped instead of hiding the working ones.
      */
-    fun renderCandidates(envelope: JsonObject, now: Instant = ColituClock.now()): List<ColituVpnConfig> {
+    fun renderCandidates(envelope: JsonObject, now: Instant = ColituClock.now(), graceUntil: Instant? = null): List<ColituVpnConfig> {
         // A primary transport this build cannot render must not hide the
         // others; only when nothing renders is its reason reported.
-        val primary = runCatching { render(envelope, now) }
+        val primary = runCatching { render(envelope, now, graceUntil) }
         val out = mutableListOf<ColituVpnConfig>()
         val seen = mutableSetOf<String?>()
         primary.getOrNull()?.let { out += it; seen += it.protocolType }
@@ -43,19 +47,19 @@ object XrayMobileAdapter {
         for (element in candidates) {
             val profile = element.takeIf { it.isJsonObject }?.asJsonObject
                 ?.get("profile")?.takeIf { it.isJsonObject }?.asJsonObject ?: continue
-            val config = runCatching { renderProfile(envelope, profile, now) }.getOrNull() ?: continue
+            val config = runCatching { renderProfile(envelope, profile, now, graceUntil) }.getOrNull() ?: continue
             if (seen.add(config.protocolType)) out += config
         }
         if (out.isEmpty()) throw primary.exceptionOrNull() ?: IllegalStateException("CONFIG_NOT_READY")
         return out
     }
 
-    private fun renderProfile(envelope: JsonObject, profile: JsonObject, now: Instant): ColituVpnConfig {
+    private fun renderProfile(envelope: JsonObject, profile: JsonObject, now: Instant, graceOverride: Instant? = null): ColituVpnConfig {
         require(envelope.has("revision")) { "CONFIG_REVISION_MISSING" }
         val revision = revisionOf(envelope)
         val expires = Instant.parse(envelope.requiredString("expires_at"))
-        val grace = Instant.parse(envelope.requiredString("offline_grace_until"))
-        require(!grace.isBefore(expires)) { "CONFIG_LIFETIME_INVALID" }
+        val grace = graceOverride ?: Instant.parse(envelope.requiredString("offline_grace_until"))
+        if (graceOverride == null) require(!grace.isBefore(expires)) { "CONFIG_LIFETIME_INVALID" }
         require(now.isBefore(grace)) { "CONFIG_EXPIRED" }
         require(profile.requiredString("format") == "xray-mobile-v1") { "CONFIG_FORMAT_UNSUPPORTED" }
         val payload = profile.getAsJsonObject("payload") ?: error("CONFIG_PAYLOAD_MISSING")

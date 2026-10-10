@@ -50,4 +50,12 @@ class ColituTransportOrderTest {
         )
         assertEquals("stall_until_server-1|hysteria2", ColituTransportOrder.midSessionStallKey("server-1", "hysteria2"))
     }
+
+    @Test
+    fun provenTransportGetsAShortMidSessionPenalty() {
+        val full = 10 * 60_000L
+        assertEquals(ColituTransportOrder.PROVEN_STALL_PENALTY_MS, ColituTransportOrder.midSessionPenaltyMs(true, full))
+        assertEquals(full, ColituTransportOrder.midSessionPenaltyMs(false, full))
+        assertEquals(30_000L, ColituTransportOrder.midSessionPenaltyMs(true, 30_000L))
+    }
 }

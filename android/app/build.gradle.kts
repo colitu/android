@@ -41,8 +41,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 28000
-        versionName = "2.8.0"
+        versionCode = 28500
+        versionName = "2.8.5"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -72,6 +72,10 @@ android {
         buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
         buildConfigField("String", "COLITU_ADBLOCK_DOH", "\"${adBlockDoh.replace("\"", "")}\"")
         buildConfigField("String", "COLITU_MIRRORS", "\"${mirrors.replace("\"", "")}\"")
+        // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
+        buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())
+        // Adaptive Connect 3.0 (hinted start order + recovery set): off unless -PcolituAdaptiveConnect3=true. See ColituFeatures.
+        buildConfigField("boolean", "COLITU_ADAPTIVE_CONNECT_3", (providers.gradleProperty("colituAdaptiveConnect3").orNull == "true").toString())
     }
 
     signingConfigs {

@@ -161,6 +161,30 @@ class ColituEndpointsTest {
         assertEquals(listOf("a", "b"), tried)
     }
 
+    @Test fun anExhaustedBudgetStopsTheBaseList() {
+        val tried = ArrayList<String>()
+        try {
+            ColituEndpoints.failover(listOf("a", "b", "c"), "GET", budgetMs = 0) { tried += it; throw ConnectException(it) }
+            fail("expected an exception")
+        } catch (e: ConnectException) {
+            assertEquals("a", e.message)
+        }
+        assertEquals(listOf("a"), tried)
+    }
+
+    @Test fun onlyTheCallsThatDecideAConnectAreFastFail() {
+        for (path in listOf("/api/v1/config", "/capi/v1/servers", "/api/v1/client/bootstrap", "/api/v1/client/recovery", "/api/v1/multihop/routes/r1/config")) {
+            assertTrue(path, ColituEndpoints.isFastFail(path))
+        }
+        for (path in listOf("/api/v1/auth/login", "/api/v1/configs", "/api/v1/me", "/api/v1/support/messages", "/api/v1/billing/config", "/config")) {
+            assertFalse(path, ColituEndpoints.isFastFail(path))
+        }
+        assertTrue(ColituEndpoints.isConnectLevel(ConnectException("x")))
+        assertTrue(ColituEndpoints.isConnectLevel(SocketTimeoutException("connect timed out")))
+        assertFalse(ColituEndpoints.isConnectLevel(SocketTimeoutException("timeout")))
+        assertFalse(ColituEndpoints.isConnectLevel(SocketException("Connection reset")))
+    }
+
     @Test fun postAfterSendingIsNotRetried() {
         // Reset after the body may have been written, and a read timeout, stay with this base.
         for (e in listOf<IOException>(SocketException("Connection reset"), SocketTimeoutException("timeout"))) {

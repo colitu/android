@@ -58,6 +58,16 @@ class ColituSpareHealthTest {
         assertEquals("traffic unknown", ColituWarmSpare.swapDeferral(null))
     }
 
+    @Test
+    fun lightTrafficStopsDeferringAfterAWhile() {
+        // Background sync plus probes (measured 15–30 KB per 10 s) must not keep a dead spare forever.
+        assertEquals("busy (25 KB in the last 10 s)", ColituWarmSpare.swapDeferral(25 * 1024, 60_000))
+        assertNull(ColituWarmSpare.swapDeferral(25 * 1024, ColituWarmSpare.SWAP_MAX_DEFER_MS))
+        // A call keeps deferring it however long it lasts.
+        assertEquals("busy (40 KB in the last 10 s)", ColituWarmSpare.swapDeferral(40 * 1024, 30 * 60_000))
+        assertEquals("traffic unknown", ColituWarmSpare.swapDeferral(null, 30 * 60_000))
+    }
+
     // ── Parallel connect ─────────────────────────────────────────────────
 
     @Test

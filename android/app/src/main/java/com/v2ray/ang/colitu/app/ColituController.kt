@@ -35,6 +35,9 @@ import com.v2ray.ang.colitu.data.ColituDeviceOutlook
 import com.v2ray.ang.colitu.data.ColituDevicePause
 import com.v2ray.ang.colitu.data.ColituMultihop
 import com.v2ray.ang.colitu.data.ColituPing
+import com.v2ray.ang.colitu.data.ColituFeatures
+import com.v2ray.ang.colitu.data.ColituRecoverySet
+import com.v2ray.ang.colitu.data.ColituRecoveryTestMode
 import com.v2ray.ang.colitu.data.ColituRotation
 import com.v2ray.ang.colitu.data.ColituRotationPreference
 import com.v2ray.ang.colitu.data.ColituRotationStatus
@@ -358,6 +361,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private fun init() {
         if (initialized) return
         initialized = true
+        if (ColituRecoveryTestMode.enabled) LogUtil.w(AppConfig.TAG, "Colitu: ${ColituRecoveryTestMode.STARTUP_LOG}")
         registerReceiver()
         registerNetworkCallback()
         viewModelScope.launch {
@@ -435,6 +439,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     suspend fun load(showLoading: Boolean = false) {
         if (showLoading && servers.isEmpty()) loading = true
+        var listLoaded = false
         coroutineScope {
             val policy = async { refreshPolicy() }
             val list = async { safeCall { ColituServerRepository.fetchServers() } }
@@ -443,6 +448,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val rotationPref = async { safeCall { ColituRotationRepository.fetch() } }
             list.await().fold(
                 onSuccess = { response ->
+                    listLoaded = true
                     servers = response.servers
                     routes = response.multihop
                     offline = false
@@ -453,7 +459,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     }
                     // Token and hints belong to the network they were asked on (VPN off only).
                     response.clientNetwork?.let { network ->
-                        val record = ColituNetworkRecord(network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis())
+                        val record = ColituNetworkRecord(network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(), response.networkHints?.preferred.orEmpty())
                         networkRecord = record
                         store.encode(KEY_NETWORK_RECORD, record.toJson())
                     }
@@ -481,6 +487,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         loading = false
         // Announcements: after the plan data, off this call's critical path.
         viewModelScope.launch { ColituNoticeCenter.refresh(force = showLoading) }
+        // Recovery set (Adaptive Connect 3.0): after the server list answered; never waited for.
+        if (listLoaded && ColituFeatures.recoverySet()) viewModelScope.launch { ColituServerRepository.refreshRecoverySetIfDue(clientCountry) }
     }
 
     /** Re-measures the pings unless a tunnel is up or starting. */
@@ -589,6 +597,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val link = currentLink()
             val changed = link != networkLink
             networkLink = link
+            forgetClientNetworkIfReplaced()
             if (link == "none") return@launch
             if (changed && status == VpnStatus.Disconnected) measurePings()
             if (!resumeAllowed()) return@launch
@@ -597,6 +606,28 @@ class ColituController(application: Application) : AndroidViewModel(application)
             LogUtil.w(AppConfig.TAG, "Colitu: network is back, reconnecting")
             reconnectAttempt = 0
             scheduleReconnect()
+        }
+    }
+
+    /** Non-VPN networks seen at the last network callback (Network ids). */
+    private var lastUnderlyingIds: Set<String>? = null
+
+    /**
+     * The access network (country + ASN) is learned from the panel only while
+     * the VPN is off. When every underlying network was replaced (another
+     * Wi-Fi, Wi-Fi to mobile), the old ASN would hand this network the last
+     * one's memory (stalls, last good transport): forget it, so the network
+     * counts as unknown until the next answer names it.
+     */
+    private fun forgetClientNetworkIfReplaced() {
+        val ids = underlyingCaps().map { it.first.toString() }.toSet()
+        val previous = lastUnderlyingIds
+        if (ids.isEmpty()) return
+        lastUnderlyingIds = ids
+        if (ColituServerRanking.networkReplaced(previous, ids) && clientNetwork != null) {
+            LogUtil.w(AppConfig.TAG, "Colitu: access network replaced, client network ${clientNetwork} unknown until the next server list")
+            clientNetwork = null
+            store.removeValueForKey(KEY_CLIENT_NETWORK)
         }
     }
 
@@ -856,8 +887,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         status = VpnStatus.Connecting
         phase = ConnectPhase.Preparing
         error = null
+        ColituServerRepository.clearConfigUnreachable()
         var server = effectiveServer
         if (server == null) {
+            // No server list (the API was blocked from the start): the recovery set may still carry the connect.
+            if (ColituFeatures.recoverySet() && servers.isEmpty() && connectsAutomatically) {
+                safeCall { ColituServerRepository.fetchConfigCandidates() }
+                if (apiUnreachable(null) && connectViaRecoverySet(context, emptyList(), begin)) return
+            }
             fail(if (servers.isEmpty()) "NO_SERVERS" else "NO_SERVER_SELECTED")
             return
         }
@@ -865,18 +902,30 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val connectDeadline = begin + CONNECT_BUDGET_MS
         val failed = mutableListOf<String>()
         var cameUp = false
+        var recoveryTried = false
+        // Every way an automatic connect ends in failure goes through here: the recovery set gets one run first.
+        suspend fun giveUp(code: String?) {
+            val unreachable = automatic && apiUnreachable(code)
+            if (ColituFeatures.recoveryAtGiveUp(automatic, unreachable, recoveryTried)) {
+                recoveryTried = true
+                if (connectViaRecoverySet(context, failed, begin)) return
+            } else if (automatic && ColituFeatures.recoverySet()) {
+                LogUtil.w(AppConfig.TAG, "Colitu: recovery set not tried (API unreachable: $unreachable, already tried: $recoveryTried)")
+            }
+            fail(code)
+        }
         while (server != null) {
             val serverDeadline = if (automatic) minOf(android.os.SystemClock.elapsedRealtime() + SERVER_BUDGET_MS, connectDeadline) else connectDeadline
             when (val outcome = connectServer(context, server, fresh, begin, serverDeadline)) {
                 ServerOutcome.Connected -> return
                 is ServerOutcome.Fatal -> {
-                    fail(outcome.code)
+                    giveUp(outcome.code)
                     return
                 }
                 is ServerOutcome.Failed -> {
                     cameUp = cameUp || outcome.cameUp
                     if (!deviceOnline()) {
-                        fail("network_error")
+                        giveUp("network_error")
                         return
                     }
                     memory.penalize(networkKey, server.id, System.currentTimeMillis())
@@ -896,7 +945,70 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         // A manual choice is never switched: the error offers the fastest server instead.
         if (!automatic) offerFastest = true
-        fail(if (cameUp) "VERIFY_FAILED" else "UNREACHABLE")
+        giveUp(if (cameUp) "VERIFY_FAILED" else "UNREACHABLE")
+    }
+
+    /**
+     * Adaptive Connect 3.0: an API call of this connect got no HTTP answer from
+     * any base (or [code] says so for the call that failed) and the phone has a
+     * network. Not [deviceOnline]: where the system's validation is blocked it
+     * says "offline" although the node addresses of the set are reachable.
+     */
+    private fun apiUnreachable(code: String?): Boolean =
+        (ColituServerRepository.configApiUnreachable || code in setOf("network_error", "timeout")) && underlyingCaps().isNotEmpty()
+
+    /**
+     * Last resort of an automatic connect: no API base answered and the cached
+     * profile is none, past its grace or failed. Tries the stored recovery set's
+     * servers in order (skipping [failed]); each envelope is used like a cached
+     * one but valid until the set's `recovery_until`. The next server of the
+     * set is the warm spare. True once connected.
+     */
+    private suspend fun connectViaRecoverySet(context: Application, failed: List<String>, begin: Long): Boolean {
+        if (!ColituFeatures.recoverySet()) return false
+        val plan = ColituServerRepository.recoveryPlan(failed) ?: return false
+        LogUtil.w(AppConfig.TAG, "Colitu: API unreachable and no usable cache: recovery set, ${plan.entries.size} servers (until ${plan.until})")
+        val deadline = android.os.SystemClock.elapsedRealtime() + CONNECT_BUDGET_MS
+        val entries = plan.entries
+        fun serverOf(id: String, configs: List<ColituVpnConfig>) =
+            servers.firstOrNull { it.id == id } ?: ColituServer(id, id, configs.firstOrNull()?.serverCountry, null, false, true)
+        for ((index, entry) in entries.withIndex()) {
+            if (deadline - android.os.SystemClock.elapsedRealtime() < MIN_TRANSPORT_MS) break
+            val (id, configs) = entry
+            val server = serverOf(id, configs)
+            val offered = restrictFor(server, configs)
+            if (offered.isEmpty()) continue
+            offeredTransports = offered.mapNotNull { it.protocolType }.toSet()
+            stalledThisConnect.clear()
+            if (serviceUp) {
+                stopService(force = true, hold = true)
+                delay(TEARDOWN_SETTLE_MS)
+            }
+            val next = entries.getOrNull(index + 1)?.let { (nextId, nextConfigs) ->
+                serverOf(nextId, nextConfigs) to restrictFor(server, nextConfigs)
+            }?.takeIf { it.second.isNotEmpty() }
+            LogUtil.w(AppConfig.TAG, "Colitu: recovery: trying ${id.take(8)}/${configs.firstOrNull()?.serverCountry ?: "?"}")
+            val spare = planSpare(server, recovery = true, recoveryNext = next)
+            val serverDeadline = minOf(android.os.SystemClock.elapsedRealtime() + SERVER_BUDGET_MS, deadline)
+            when (tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = true, serverDeadline, spare, offered)) {
+                StartOutcome.Connected -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu: recovery: connected via ${id.take(8)} ${connectedConfig?.protocolType ?: "?"}")
+                    // Through the tunnel the API answers again: server list, config and recovery set follow.
+                    viewModelScope.launch { load(showLoading = false) }
+                    return true
+                }
+                StartOutcome.Offline -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu: recovery: ${id.take(8)} failed (phone offline)")
+                    return false
+                }
+                is StartOutcome.Failed -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu: recovery: ${id.take(8)} failed")
+                    memory.penalize(networkKey, id, System.currentTimeMillis())
+                    saveMemory()
+                }
+            }
+        }
+        return false
     }
 
     /** Every transport of a manually chosen server failed: Home offers "Try the fastest server". */
@@ -1019,7 +1131,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * No spare over a multihop route, while the exit IP rotates (VLESS only,
      * one node) or with the setting off.
      */
-    private fun planSpare(server: ColituServer): SparePlan? {
+    private fun planSpare(server: ColituServer, recovery: Boolean = false, recoveryNext: Pair<ColituServer, List<ColituVpnConfig>>? = null): SparePlan? {
         val off = when {
             !ColituUiMode.warmSpareActive(advancedMode, warmSpare) -> "setting off"
             server.isMultihop -> "multihop route"
@@ -1032,6 +1144,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         spareNone = null
         val started = android.os.SystemClock.elapsedRealtime()
+        // Recovery set: the API cannot be asked, so the set's next server is the spare.
+        if (recovery) return recoveryNext?.let { SparePlan(it.first, it.second, null, started) } ?: SparePlan(server, null, null, started)
         if (!connectsAutomatically) return SparePlan(server, null, null, started)
         val other = ColituWarmSpare.spareServer(rankedServers, server.id, memory.penalized(networkKey, System.currentTimeMillis()))
             ?: return SparePlan(server, null, null, started)
@@ -1139,6 +1253,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val lastGood = memory.lastGoodTransport(networkKey, server.id, now)
         LogUtil.w(AppConfig.TAG, "Colitu: transports ${configs.mapNotNull { it.protocolType }} on ${networkKey.substringBefore('|')}, stalled $stalled (hinted $hinted), last good $lastGood")
         ColituTransportOrder.remembered(configs, lastGood, stalled)?.let { return it }
+        // No memory of this network: what worked for most phones here goes first.
+        if (ColituFeatures.hintedStart()) {
+            val preferred = networkRecord?.preferredFor(clientNetwork, now).orEmpty()
+            ColituNetworkHintsPolicy.hintedStart(configs, { it.protocolType }, preferred, stalled, lastGood) { ColituTransportOrder.byRank(it, stalled) }?.let {
+                LogUtil.w(AppConfig.TAG, "Colitu: no memory of this network, starting with the hinted ${it.mapNotNull { c -> c.protocolType }}")
+                return it
+            }
+        }
         if (!probe) return ColituTransportOrder.byRank(configs, stalled)
         phase = ConnectPhase.Probing
         return rank(configs, stalled)
@@ -1404,6 +1526,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         var nextSpareProbeAt = android.os.SystemClock.elapsedRealtime() + ColituWarmSpare.spareProbeIntervalMs(spare?.second)
         var replacementSpare: ColituVpnConfig? = null
         var lastDeferral: String? = null
+        var swapDeferredSince = 0L
         var lastNetworks: Set<String>? = null
         val started = android.os.SystemClock.elapsedRealtime()
         while (connected && transport == protocol && connectedServerId == server.id) {
@@ -1438,14 +1561,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 }
                 val next = replacementSpare
                 if (next != null) {
-                    val deferral = ColituWarmSpare.swapDeferral(recentTunnelBytes())
+                    if (swapDeferredSince == 0L) swapDeferredSince = tick
+                    val deferral = ColituWarmSpare.swapDeferral(recentTunnelBytes(), tick - swapDeferredSince)
                     if (deferral == null) {
-                        LogUtil.w(AppConfig.TAG, "Colitu: spare replaced: ${spare.second} on ${spare.first.id.take(8)} → ${next.protocolType} on ${next.serverId.take(8)} (spare probe missed ${ColituWarmSpare.SPARE_PROBE_MISSES}x)")
+                        LogUtil.w(AppConfig.TAG, "Colitu: spare replaced: ${spare.second} on ${spare.first.id.take(8)} → ${next.protocolType} on ${next.serverId.take(8)} (spare probe missed ${ColituWarmSpare.SPARE_PROBE_MISSES}x, waited ${(tick - swapDeferredSince) / 1000} s)")
                         swapSpare(server, next)
                         return
                     }
-                    if (deferral != lastDeferral) LogUtil.w(AppConfig.TAG, "Colitu: spare swap deferred: $deferral")
-                    lastDeferral = deferral
+                    // Logged once per reason, not once per probe with the byte count.
+                    val reason = deferral.substringBefore(" (")
+                    if (reason != lastDeferral) LogUtil.w(AppConfig.TAG, "Colitu: spare swap deferred: $deferral")
+                    lastDeferral = reason
                 }
             }
             // The spare is known dead: a dead primary means a reconnect right away, not after the usual misses.
@@ -1479,17 +1605,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 ColituTransportOrder.WatchAction.BothDead -> Unit
             }
             if (++failures < STALL_PROBE_FAILURES) continue
-            failures = 0
-            if (!connected || underlyingNetworks() != lastNetworks) continue
+            if (!connected || underlyingNetworks() != lastNetworks) {
+                failures = 0
+                continue
+            }
             val now = android.os.SystemClock.elapsedRealtime()
             val nothingElse = offeredTransports.isNotEmpty() && offeredTransports.none { it != protocol }
+            // Inside the gap the misses keep counting, so the switch happens as
+            // soon as the gap ends instead of after three more misses.
             if (nothingElse || (lastAutoSwitchAt > 0L && now - lastAutoSwitchAt < AUTO_SWITCH_MIN_GAP_MS)) continue
             if (!deviceOnline()) continue
+            failures = 0
             lastAutoSwitchAt = now
-            LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect), switching transport")
+            val wallNow = System.currentTimeMillis()
+            val proven = memory.workedOnNetwork(networkKey, protocol, wallNow)
+            LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect${if (proven) ", proven here: short penalty" else ""}), switching transport")
             store.encode(
                 ColituTransportOrder.midSessionStallKey(server.id, protocol),
-                System.currentTimeMillis() + MID_SESSION_STALL_PENALTY_MS,
+                wallNow + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS),
             )
             if (protocol != "hysteria2") {
                 // Tentative: confirmed only when the reconnect finds another transport that works.
@@ -1588,7 +1721,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private fun recordSpareCarrying(server: ColituServer, protocol: String, spare: Pair<ColituServer, String>) {
         val now = System.currentTimeMillis()
         LogUtil.w(AppConfig.TAG, "Colitu: $protocol is dead, the warm spare ${spare.second} carries the traffic; it leads the next connect")
-        store.encode(ColituTransportOrder.midSessionStallKey(server.id, protocol), now + MID_SESSION_STALL_PENALTY_MS)
+        val proven = memory.workedOnNetwork(networkKey, protocol, now)
+        store.encode(ColituTransportOrder.midSessionStallKey(server.id, protocol), now + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS))
         memory.markStalled(networkKey, server.id, protocol, now, confirmed = protocol != "hysteria2")
         memory.recordSuccess(networkKey, spare.first.id, spare.second, now, goodServer = !spare.first.isMultihop)
         saveMemory()
@@ -2357,6 +2491,18 @@ internal object ColituTransportOrder {
 
     /** Store key: wall-clock ms until which [protocol] goes last on [serverId] after a mid-session stall. */
     fun midSessionStallKey(serverId: String, protocol: String) = "stall_until_$serverId|$protocol"
+
+    /** Penalty for a transport that already worked on this network: blocks of one transport often last a minute or two. */
+    const val PROVEN_STALL_PENALTY_MS = 90_000L
+
+    /**
+     * How long a mid-session stall puts a transport last on its server. A
+     * transport proven on this network gets [PROVEN_STALL_PENALTY_MS]: when it
+     * is the only one that works there (Hysteria2 where DPI freezes every TCP
+     * transport), a long penalty kept the tunnel on freezing fallbacks for
+     * minutes after a short UDP block (fault lab 2026-10-10). Others get [full].
+     */
+    fun midSessionPenaltyMs(proven: Boolean, full: Long): Long = if (proven) minOf(PROVEN_STALL_PENALTY_MS, full) else full
 
     fun stalled(connectTime: String?, midSession: String?): Set<String> = setOfNotNull(connectTime, midSession)
 

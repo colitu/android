@@ -5,6 +5,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.colitu.data.ColituRecoveryTestMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -193,7 +194,8 @@ object ColituEndpoints {
 
     /** Base for building a request URL: the one that works best right now. */
     fun preferredBase(): String =
-        if (overridden) BuildConfig.COLITU_API_BASE_URL.trimEnd('/') else state.bases().first()
+        if (overridden) BuildConfig.COLITU_API_BASE_URL.trimEnd('/')
+        else ColituRecoveryTestMode.preferredBase(state.bases().first())
 
     // Base ordering and failover
 
@@ -211,26 +213,54 @@ object ColituEndpoints {
      */
     internal fun isFailoverEligible(e: IOException, method: String): Boolean {
         if (e.message == "Canceled") return false
-        val beforeSending = e is UnknownHostException || e is ConnectException || e is NoRouteToHostException ||
+        return isConnectLevel(e) || method == "GET" || method == "HEAD"
+    }
+
+    /** The failure came while connecting (DNS, TCP, TLS, SOCKS), before any request byte was answered. */
+    internal fun isConnectLevel(e: IOException): Boolean =
+        e is UnknownHostException || e is ConnectException || e is NoRouteToHostException ||
             e is SSLHandshakeException || e is SSLPeerUnverifiedException ||
             (e is SocketTimeoutException && e.message?.contains("connect", ignoreCase = true) == true) ||
             e.message?.contains("SOCKS", ignoreCase = true) == true
-        return beforeSending || method == "GET" || method == "HEAD"
+
+    /**
+     * Calls that decide whether a connect can start (config, server list,
+     * bootstrap, recovery set, multihop routes): connect timeout of
+     * [FAST_CONNECT_TIMEOUT_S] per base and a [FAST_FAIL_BUDGET_MS] budget for
+     * the whole base list. Long answers of already connected calls are not touched.
+     */
+    internal fun isFastFail(encodedPath: String): Boolean {
+        val at = encodedPath.indexOf("/v1/")
+        if (at < 0) return false
+        val rest = encodedPath.substring(at + 3)
+        return FAST_FAIL_PATHS.any { rest == it || rest.startsWith("$it/") }
     }
+
+    private val FAST_FAIL_PATHS = listOf("/config", "/servers", "/client/bootstrap", "/client/recovery", "/multihop")
+    const val FAST_CONNECT_TIMEOUT_S = 8L
+    const val FAST_FAIL_BUDGET_MS = 24_000L
 
     /**
      * Runs [attempt] for each base in order until one answers. A network-level failure
      * ([isFailoverEligible]) moves on; any other exception, or the last failure, is thrown.
      * Each base is tried once. The base that answered is returned with the result.
      */
-    internal fun <T> failover(bases: List<String>, method: String, attempt: (String) -> T): Pair<String, T> {
+    internal fun <T> failover(
+        bases: List<String>,
+        method: String,
+        budgetMs: Long = Long.MAX_VALUE,
+        attempt: (String) -> T,
+    ): Pair<String, T> {
         var last: IOException? = null
+        val begin = System.nanoTime()
         for (base in bases) {
             try {
                 return base to attempt(base)
             } catch (e: IOException) {
                 if (!isFailoverEligible(e, method)) throw e
                 last = e
+                // Out of time: the decision "no base answers" is made now.
+                if ((System.nanoTime() - begin) / 1_000_000 >= budgetMs) break
             }
         }
         throw last ?: IOException("no API base")
@@ -243,12 +273,13 @@ object ColituEndpoints {
     internal fun send(request: Request, exec: (Request) -> Response): Response {
         if (overridden) return exec(request)
         refreshIfDue()
-        val bases = state.bases()
+        val bases = ColituRecoveryTestMode.apiBases(state.bases())
         val url = request.url.toString()
         val known = (bases + BUILTIN_API + (state.current()?.api ?: emptyList())).map { it.trimEnd('/') }
         val own = known.firstOrNull { url == it || url.startsWith("$it/") } ?: return exec(request)
         val suffix = url.removePrefix(own)
-        val (worked, response) = failover(bases, request.method) { base ->
+        val budget = if (isFastFail(request.url.encodedPath)) FAST_FAIL_BUDGET_MS else Long.MAX_VALUE
+        val (worked, response) = failover(bases, request.method, budget) { base ->
             exec(if (base == own) request else request.newBuilder().url(base + suffix).build())
         }
         state.markWorked(worked)
@@ -263,6 +294,7 @@ object ColituEndpoints {
     /** At the first call after the process starts, then at most every 6 hours; never blocks the caller. */
     private fun refreshIfDue() {
         val fetch = fetcher ?: return
+        if (!ColituRecoveryTestMode.endpointListRefresh(true)) return
         val now = System.currentTimeMillis()
         val last = lastRefreshAttempt.get()
         if (last != 0L && now - last < REFRESH_INTERVAL_MS) return

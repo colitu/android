@@ -8,19 +8,25 @@ import com.google.gson.JsonParser
  * Network hints from the panel (`network_hints` of /servers, only with the
  * VPN off): transports that fail for most users on this ISP network. They go
  * last unless this phone's own memory says they carried traffic here in the
- * last 24 h (local experience beats the hint).
+ * last 24 h (local experience beats the hint). `preferred` (Adaptive Connect
+ * 3.0): transports that worked for most users here, best first; a phone
+ * without its own memory of the network starts with them.
  */
-data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val updatedAt: String?) {
+data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val updatedAt: String?, val preferred: List<String> = emptyList()) {
     companion object {
+        private fun protocols(json: JsonObject, name: String): List<String> =
+            json.get(name)?.takeIf { it.isJsonArray }?.asJsonArray
+                ?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive }?.asString?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } }
+                ?.distinct().orEmpty()
+
         fun fromJson(json: JsonObject?): ColituNetworkHints? {
             json ?: return null
-            val blocked = json.get("blocked")?.takeIf { it.isJsonArray }?.asJsonArray
-                ?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive }?.asString?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } }
-                ?.toSet().orEmpty()
+            val blocked = protocols(json, "blocked").toSet()
             return ColituNetworkHints(
                 blocked,
                 json.get("scope")?.takeIf { it.isJsonPrimitive }?.asString,
                 json.get("updated_at")?.takeIf { it.isJsonPrimitive }?.asString,
+                protocols(json, "preferred").filterNot { it in blocked },
             )
         }
     }
@@ -32,17 +38,20 @@ data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val 
  * observations so the panel counts them for that network) and the hinted
  * transports. Both only count on the same network and for [TTL_MS].
  */
-data class ColituNetworkRecord(val clientNetwork: String, val token: String?, val blocked: Set<String>, val at: Long) {
+data class ColituNetworkRecord(val clientNetwork: String, val token: String?, val blocked: Set<String>, val at: Long, val preferred: List<String> = emptyList()) {
     private fun valid(network: String?, now: Long) = network == clientNetwork && now - at in 0 until TTL_MS
 
     fun tokenFor(network: String?, now: Long): String? = token?.takeIf { valid(network, now) }
 
     fun blockedFor(network: String?, now: Long): Set<String> = if (valid(network, now)) blocked else emptySet()
 
+    fun preferredFor(network: String?, now: Long): List<String> = if (valid(network, now)) preferred else emptyList()
+
     fun toJson(): String = JsonObject().apply {
         addProperty("network", clientNetwork)
         token?.let { addProperty("token", it) }
         add("blocked", JsonArray().apply { blocked.forEach(::add) })
+        add("preferred", JsonArray().apply { preferred.forEach(::add) })
         addProperty("at", at)
     }.toString()
 
@@ -57,6 +66,7 @@ data class ColituNetworkRecord(val clientNetwork: String, val token: String?, va
                 o.get("token")?.takeIf { it.isJsonPrimitive }?.asString,
                 o.get("blocked")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }?.toSet().orEmpty(),
                 o.get("at").asLong,
+                o.get("preferred")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }.orEmpty(),
             )
         }.getOrNull()
     }
@@ -68,6 +78,19 @@ data class ColituObservation(val protocol: String, val reachable: Boolean, val l
 object ColituNetworkHintsPolicy {
     /** Hinted transports that go last: those this phone did not see carry traffic here in the last 24 h. */
     fun demoted(blocked: Set<String>, workedHere: (String) -> Boolean): Set<String> = blocked.filterNot(workedHere).toSet()
+
+    /**
+     * Start order from the hint when the phone has no memory of this network
+     * (no last good transport here): the preferred transports that are on
+     * offer and not stalled, in the hint's order, then the rest by [rank].
+     * Null: no usable hint, the usual order (probe) decides.
+     */
+    fun <T> hintedStart(configs: List<T>, protocolOf: (T) -> String?, preferred: List<String>, stalled: Set<String>, lastGood: String?, rank: (List<T>) -> List<T>): List<T>? {
+        if (lastGood != null || preferred.isEmpty()) return null
+        val first = preferred.mapNotNull { p -> configs.firstOrNull { protocolOf(it) == p && p !in stalled } }
+        if (first.isEmpty()) return null
+        return first + rank(configs.filter { it !in first })
+    }
 
     /**
      * `POST /client/protocol-observations` body, or null when there is
