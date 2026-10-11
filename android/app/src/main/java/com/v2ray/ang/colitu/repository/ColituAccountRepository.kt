@@ -12,8 +12,10 @@ object ColituAccountRepository {
         return when (val result = ColituApiClient.get(path)) {
             is ColituApiClient.ApiResult.Success -> {
                 val array = if (result.data.has("data") && result.data.get("data").isJsonArray) result.data.getAsJsonArray("data") else null
+                // Removed devices (revoked_at set) neither show nor count.
                 val devices = array?.mapNotNull { element ->
-                    if (element.isJsonObject) ColituDevice.fromJson(
+                    val revoked = element.isJsonObject && element.asJsonObject.get("revoked_at")?.isJsonNull == false
+                    if (element.isJsonObject && !revoked) ColituDevice.fromJson(
                         element.asJsonObject,
                         currentDeviceId = ColituTokenManager.getDeviceId(),
                     ) else null
@@ -30,7 +32,10 @@ object ColituAccountRepository {
         return when (val result = ColituApiClient.delete(path)) {
             // For this phone the caller ends the session (ColituController.onCurrentDeviceRemoved).
             is ColituApiClient.ApiResult.Success -> Result.success(Unit)
-            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+            // Already removed (e.g. on the site or another app): the goal is reached.
+            is ColituApiClient.ApiResult.Error ->
+                if (result.message == "DEVICE_NOT_FOUND") Result.success(Unit)
+                else Result.failure(Exception(result.message))
         }
     }
 
