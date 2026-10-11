@@ -1,5 +1,6 @@
 package com.v2ray.ang.colitu.ui
 
+import android.content.Intent
 import android.graphics.Color
 import android.net.VpnService
 import android.os.Bundle
@@ -13,6 +14,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.v2ray.ang.colitu.app.ColituController
+import com.v2ray.ang.colitu.data.ColituInvite
 import com.v2ray.ang.colitu.design.ColituPerformance
 import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.l10n.ColituLoc
@@ -42,6 +44,7 @@ class ColituMainActivity : AppCompatActivity() {
         ColituPerformance.init(this)
         ColituTv.init(this)
         android.util.Log.i("Colitu", "performance tier ${ColituPerformance.tier}: ${ColituPerformance.reason}, tv=${ColituTv.isTv}")
+        if (savedInstanceState == null) handleInviteLink(intent)
         window.setBackgroundDrawableResource(android.R.color.black)
         setContent { ColituApp(controller) }
 
@@ -53,6 +56,24 @@ class ColituMainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    // singleTask: a second invite link arrives here while the app is already open.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleInviteLink(intent)
+    }
+
+    /**
+     * https://colitu.com/r/CODE: keep the code until the account is created
+     * (the sign-up form reads it). Ignored for a signed-in user.
+     */
+    private fun handleInviteLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val code = ColituInvite.fromLink(intent.dataString) ?: return
+        if (com.v2ray.ang.colitu.api.ColituTokenManager.isLoggedIn()) return
+        ColituInvite.keepPending(code)
     }
 
     override fun onStart() {

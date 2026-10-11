@@ -60,8 +60,57 @@ class ColituServerRankingTest {
 
     @Test
     fun lastGoodServerLeadsTheFreshPings() {
-        val pings = mapOf("de" to ping(20), "fi" to ping(200))
+        // de is faster, but not clearly (25 % and 50 ms): the remembered server stays first.
+        val pings = mapOf("de" to ping(150), "fi" to ping(200))
         assertEquals(listOf("fi", "de", "us"), rank(listOf(us, de, fi), pings, lastGood = "fi"))
+    }
+
+    @Test
+    fun clearlyFasterFreshServerBeatsTheRememberedOne() {
+        // 20 vs 200 ms: far more than 40 % and 60 ms faster.
+        assertEquals(listOf("de", "fi", "us"), rank(listOf(us, de, fi), mapOf("de" to ping(20), "fi" to ping(200)), lastGood = "fi"))
+        // 40 % but only 40 ms faster: memory stays.
+        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(60), "fi" to ping(100)), lastGood = "fi"))
+        // 60 ms faster but only 30 %: memory stays.
+        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(140), "fi" to ping(200)), lastGood = "fi"))
+        // Both thresholds met (40 % and 60 ms): the faster one leads.
+        assertEquals(listOf("de", "fi"), rank(listOf(fi, de), mapOf("de" to ping(90), "fi" to ping(150)), lastGood = "fi"))
+        // The remembered server has no fresh measurement: current behaviour (it leads).
+        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(5)), lastGood = "fi"))
+        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(5), "fi" to ping(200, age = 30 * minute)), lastGood = "fi"))
+    }
+
+    @Test
+    fun europeClientWithAUsServerRememberedGetsTheNearNode() {
+        // The US server was remembered (a manual pick, old behaviour) with a fresh 150 ms ping; a Finnish node answers in 30 ms.
+        val pings = mapOf("us" to ping(150), "fi" to ping(30), "de" to ping(45))
+        assertEquals(listOf("fi", "de", "us"), rank(listOf(us, de, fi), pings, lastGood = "us", country = "SE"))
+        assertEquals(listOf("fi", "de", "us"), rank(listOf(us, de, fi), pings, lastGood = null, country = "SE"))
+    }
+
+    @Test
+    fun aPenalizedFasterNodeDoesNotTakeTheLeadFromTheRememberedServer() {
+        val pings = mapOf("de" to ping(10), "fi" to ping(200))
+        assertEquals(listOf("fi", "us", "de"), rank(listOf(de, fi, us), pings, lastGood = "fi", penalized = setOf("de")))
+    }
+
+    @Test
+    fun homeCountryOnlyGoesBackInCensoringCountries() {
+        val nl = server("nl", "NL")
+        // NL client: the local node competes on latency and wins.
+        assertEquals(listOf("nl", "us"), rank(listOf(us, nl), mapOf("nl" to ping(5), "us" to ping(150)), country = "NL"))
+        // TR client: the Turkish node goes after the German one although it is faster.
+        val trPings = mapOf("tr" to ping(5), "de" to ping(60))
+        assertEquals(listOf("de", "tr"), rank(listOf(tr, de), trPings, country = "TR"))
+        assertEquals(listOf("de", "tr"), rank(listOf(tr, de), trPings, country = "tr"))
+        assertEquals(listOf("tr", "de"), rank(listOf(tr, de), trPings, country = "GB"))
+        // Every listed country except RU (whose servers are excluded anyway) pushes its own servers back.
+        (ColituServerRanking.HOME_PUSHBACK_COUNTRIES - "RU").forEach { code ->
+            val order = rank(listOf(server("home", code), server("other", "DE")), mapOf("home" to ping(5), "other" to ping(60)), country = code)
+            assertEquals(code, listOf("other", "home"), order)
+        }
+        assertEquals(18, ColituServerRanking.HOME_PUSHBACK_COUNTRIES.size)
+        assertFalse("NL" in ColituServerRanking.HOME_PUSHBACK_COUNTRIES)
     }
 
     @Test

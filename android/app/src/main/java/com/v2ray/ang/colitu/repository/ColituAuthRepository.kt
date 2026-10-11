@@ -9,6 +9,7 @@ import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.api.ColituApiClient
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ColituAuthResponse
+import com.v2ray.ang.colitu.data.ColituInvite
 import com.v2ray.ang.colitu.data.ColituUser
 
 object ColituAuthRepository {
@@ -94,12 +95,22 @@ object ColituAuthRepository {
         return signIn("/auth/login", body, email, sendCode = true)
     }
 
-    suspend fun register(email: String, password: String): Result<ColituUser> {
-        val body = JsonObject().apply {
+    /**
+     * Body of POST /auth/register: where the sign-up came from and, only when
+     * there is a usable one, the invite code (upper-cased, 6-12 of A-Z0-9).
+     * The server ignores unknown codes, so a bad one never blocks the sign-up.
+     */
+    internal fun registerBody(email: String, password: String, locale: String, invite: String?): JsonObject =
+        JsonObject().apply {
             addProperty("email", email)
             addProperty("password", password)
-            addProperty("locale", ColituLoc.language)
+            addProperty("locale", locale)
+            addProperty("source", "app:android")
+            ColituInvite.normalize(invite)?.let { addProperty("invite", it) }
         }
+
+    suspend fun register(email: String, password: String, invite: String? = null): Result<ColituUser> {
+        val body = registerBody(email, password, ColituLoc.language, invite)
         // Registration already e-mails the first code when verification is on.
         return signIn("/auth/register", body, email, sendCode = false)
     }

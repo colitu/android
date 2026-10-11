@@ -28,6 +28,9 @@ import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ClientBootstrapPolicy
 import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.data.ColituConnectMemory
+import com.v2ray.ang.colitu.data.ColituAcEvents
+import com.v2ray.ang.colitu.data.ColituMetrics
+import com.v2ray.ang.colitu.data.ColituMetricsRules
 import com.v2ray.ang.colitu.data.ColituNetworkHintsPolicy
 import com.v2ray.ang.colitu.data.ColituNetworkRecord
 import com.v2ray.ang.colitu.data.ColituObservation
@@ -401,10 +404,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         pollJob = viewModelScope.launch {
             if (initialized) load(showLoading = false)
             checkSupport()
+            sendMetrics()
             while (true) {
                 delay(60_000)
                 refreshPolicy()
                 checkSupport()
+                sendMetrics()
                 ColituNoticeCenter.refresh() // throttled to once per 15 minutes
             }
         }
@@ -503,6 +508,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             if (measured.isEmpty() || status != VpnStatus.Disconnected || networkKey != network) return@launch
             val now = System.currentTimeMillis()
             pings = pings + measured.mapValues { (_, ms) -> ColituPing(ms, now, network) }
+            // Latency used for the ranking: nodes only (a route's ping is its entry node's).
+            measured.forEach { (id, ms) -> if (isNode(id)) acRecord(ColituAcEvents.probe(id, ms)) }
             store.encode(KEY_PINGS, ColituServerRanking.pingsToJson(pings))
         }
     }
@@ -731,12 +738,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
             _permissionRequests.tryEmit(Unit)
             return ToggleResult.NeedsPermission
         }
+        beginMetricAttempt()
         startConnectFlow()
         return ToggleResult.Started
     }
 
     fun onPermissionResult(granted: Boolean) {
         if (granted && VpnService.prepare(getApplication()) == null) {
+            beginMetricAttempt()
             startConnectFlow()
         } else {
             error = ColituLoc["err.permission"]
@@ -760,6 +769,160 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private var reconnecting = false
     /** A drop could not be repaired: try again once a network is back (see [onNetworkChanged]). */
     private var resumeOnNetwork = false
+
+    // ── Anonymous usage statistics (ColituMetrics; every call is a no-op while the setting is off) ──
+
+    /** elapsedRealtime when the connect the user (or auto-connect) started began; 0 = none open. */
+    private var metricAttemptAt = 0L
+    /** The open attempt is the first of this install. */
+    private var metricFirst = false
+    /** elapsedRealtime of the failure the running recovery repairs; 0 = none. */
+    private var metricRecoveryAt = 0L
+    /** The transport that failed when the recovery switches transport, else null. */
+    private var metricRecoveryFrom: String? = null
+    /** The last successful transport switch: from, to, elapsedRealtime. */
+    private var metricLastSwitch: Triple<String, String, Long>? = null
+
+    // ── Adaptive Connect events (ColituAcEvents; queued only while the statistics switch is on) ──
+
+    /** The running connect is in automatic mode; how many servers failed before the one that is tried. */
+    private var acAuto = true
+    private var acFallbacks = 0
+    /** The node and transport tried last (what a failed connect names). */
+    private var acNode: String? = null
+    private var acProtocol: String? = null
+    /** The tunnel that is up (node, transport, elapsedRealtime of the connect), for a drop. */
+    private var acConnected: Triple<String, String, Long>? = null
+    private var acRecoveryNode: String? = null
+    private var acRecoveryProtocol: String? = null
+    private var acRecoveryDetectMs: Long? = null
+    private var acRecoverySpare = false
+
+    private fun isNode(id: String?): Boolean = id != null && servers.any { it.id == id }
+
+    /** The token of the last /servers answer made with the VPN off, and the link type; both may be empty. */
+    private fun acRecord(event: com.google.gson.JsonObject?) {
+        if (event == null || !ColituMetrics.enabled) return
+        val token = networkRecord?.tokenFor(clientNetwork, System.currentTimeMillis()).orEmpty()
+        ColituAcEvents.record(event, token, networkLink)
+    }
+
+    /** Automatic mode picked [server]: how its measured ping compares with the best measured one. */
+    private fun acChoice(server: ColituServer) {
+        if (!ColituMetrics.enabled || server.isMultihop) return
+        val now = System.currentTimeMillis()
+        val network = networkKey
+        val candidates = servers.filter { it.isAvailable && !it.isMultihop && !ColituServerRanking.autoExcluded(it) }
+            .associate { it.id to pings[it.id]?.takeIf { p -> p.fresh(network, now) }?.ms }
+        acRecord(ColituAcEvents.choice(server.id, candidates))
+    }
+
+    private fun beginMetricAttempt() {
+        metricFirst = ColituMetrics.isFirstConnect()
+        metricAttemptAt = android.os.SystemClock.elapsedRealtime()
+        ColituMetrics.count("connect_attempts")
+        if (metricFirst) ColituMetrics.count("first_connect_attempts")
+    }
+
+    private fun endMetricAttempt(ok: Boolean, nodeId: String? = null, protocol: String? = null, code: String? = null) {
+        if (metricAttemptAt == 0L) return
+        val ms = android.os.SystemClock.elapsedRealtime() - metricAttemptAt
+        metricAttemptAt = 0L
+        if (ok) {
+            ColituMetrics.count("connect_successes")
+            ColituMetrics.count("sessions")
+            ColituMetrics.observe("connect_ms", ms)
+            if (metricFirst) ColituMetrics.count("first_connect_successes")
+        }
+        // Adaptive Connect event: a failure names the transport that was tried last.
+        acRecord(
+            ColituAcEvents.connect(
+                nodeId ?: acNode, protocol ?: acProtocol, ok, code, ms,
+                firstTry = acFallbacks == 0, auto = acAuto,
+            ),
+        )
+        if (metricFirst) ColituMetrics.markFirstDone()
+        metricFirst = false
+    }
+
+    /**
+     * A recovery starts: [failedAt] is when the failure began; [protocol] is the transport being left
+     * (null: not a switch); [nodeId] / [failedProtocol] name what failed for the Adaptive Connect event.
+     */
+    private fun beginMetricRecovery(failedAt: Long, protocol: String?, detected: Boolean, nodeId: String? = null, failedProtocol: String? = protocol) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        ColituMetrics.count("recoveries")
+        if (protocol != null) ColituMetrics.count("protocol_switches")
+        if (detected && failedAt > 0L) ColituMetrics.observe("detection_ms", now - failedAt)
+        metricRecoveryAt = if (failedAt > 0L) failedAt else now
+        metricRecoveryFrom = protocol
+        acRecoveryNode = nodeId
+        acRecoveryProtocol = failedProtocol
+        acRecoveryDetectMs = if (detected && failedAt > 0L) now - failedAt else null
+        acRecoverySpare = attachedSpare != null
+    }
+
+    private fun endMetricRecovery(ok: Boolean, newProtocol: String?, code: String? = null) {
+        if (metricRecoveryAt == 0L) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val from = metricRecoveryFrom
+        val ms = now - metricRecoveryAt
+        metricRecoveryAt = 0L
+        metricRecoveryFrom = null
+        var flap = false
+        if (ok && from != null && newProtocol != null && newProtocol != from) {
+            flap = ColituMetricsRules.isFlap(metricLastSwitch, from, newProtocol, now)
+            metricLastSwitch = Triple(from, newProtocol, now)
+        }
+        acRecord(ColituAcEvents.recovery(acRecoveryNode, acRecoveryProtocol, newProtocol.takeIf { ok }, ok, code, ms, acRecoveryDetectMs, acRecoverySpare))
+        if (from != null) acRecord(ColituAcEvents.switch(from, newProtocol.takeIf { ok }, ok && newProtocol != from, flap))
+        if (!ok) return
+        ColituMetrics.count("recovery_successes")
+        ColituMetrics.observe("recovery_ms", ms)
+        if (from != null && newProtocol != null && newProtocol != from) {
+            ColituMetrics.count("protocol_switch_successes")
+            if (flap) ColituMetrics.count("flaps")
+        }
+    }
+
+    /** The user cancelled (or the device was paused): neither a success nor a failure of the connection. */
+    private fun abandonMetrics() {
+        if (metricAttemptAt != 0L) {
+            ColituMetrics.count("connect_attempts", -1)
+            if (metricFirst) ColituMetrics.count("first_connect_attempts", -1)
+        }
+        metricAttemptAt = 0L
+        metricFirst = false
+        if (metricRecoveryAt != 0L) {
+            ColituMetrics.count("recoveries", -1)
+            if (metricRecoveryFrom != null) ColituMetrics.count("protocol_switches", -1)
+        }
+        metricRecoveryAt = 0L
+        metricRecoveryFrom = null
+    }
+
+    /** The features in use while a connection is up (names fixed by the statistics, no values). */
+    private fun recordMetricFeatures(actual: ColituServer) {
+        if (!ColituMetrics.enabled) return
+        val used = mutableListOf<String>()
+        if (splitTunnel.active) used += "split_tunnel"
+        if (privacyMode) used += "shield"
+        if (adBlock) used += "ad_block"
+        if (advancedMode) used += "advanced_mode"
+        if (actual.isMultihop) used += "multihop"
+        if (autoConnect) used += "auto_connect"
+        if (!autoSelection) used += "manual_server"
+        ColituMetrics.features(used)
+    }
+
+    private fun sendMetrics() {
+        viewModelScope.launch {
+            ColituAcEvents.maybeSend(com.v2ray.ang.BuildConfig.VERSION_NAME)
+            ColituMetrics.maybeSend(com.v2ray.ang.BuildConfig.VERSION_NAME) {
+                com.v2ray.ang.colitu.screens.lockdownState()?.let { it.alwaysOn && it.lockdown } == true
+            }
+        }
+    }
 
     private fun startConnectFlow(fresh: Boolean = false, continuing: Boolean = false) {
         offerFastest = false
@@ -819,6 +982,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private fun onUnexpectedDrop() {
         if (userStopped || denial != null || planRequired || devicePause != null) return
         LogUtil.w(AppConfig.TAG, "Colitu: the tunnel dropped by itself, reconnecting")
+        ColituMetrics.count("unexpected_disconnects")
+        val up = acConnected
+        acConnected = null
+        if (up != null) {
+            val minutes = (android.os.SystemClock.elapsedRealtime() - up.third) / 60_000
+            // The reason of a drop is not known; with no network under the VPN it is that.
+            acRecord(ColituAcEvents.drop(up.first, up.second, if (networkLink == "none") "no_network" else "other", minutes))
+        }
+        beginMetricRecovery(android.os.SystemClock.elapsedRealtime(), protocol = null, detected = false, nodeId = up?.first, failedProtocol = up?.second)
         reconnectAttempt = 0
         resumeOnNetwork = false
         if (!scheduleReconnect()) showToast(ColituLoc["info.disconnected"], error = false)
@@ -899,6 +1071,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
             return
         }
         val automatic = autoSelection && !server.isMultihop
+        acAuto = automatic
+        acFallbacks = 0
+        if (automatic) acChoice(server)
         val connectDeadline = begin + CONNECT_BUDGET_MS
         val failed = mutableListOf<String>()
         var cameUp = false
@@ -934,6 +1109,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     val left = connectDeadline - android.os.SystemClock.elapsedRealtime()
                     server = ColituServerRanking.fallbackServer(automatic, rankedServers, failed, MAX_SERVERS_PER_CONNECT, left >= MIN_TRANSPORT_MS)
                     if (server != null) {
+                        acFallbacks++
+                        acChoice(server)
                         LogUtil.w(AppConfig.TAG, "Colitu: every transport failed on the server, trying another one (${failed.size})")
                         phase = ConnectPhase.SwitchingServer
                         showToast(ColituLoc["home.phase.switchingServer"], error = false)
@@ -1312,6 +1489,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // together as primary and spare and are checked at the same time.
             val spareConfig = forcedSpare ?: spareFor(spare, config, sameServer)
             val transportBegin = android.os.SystemClock.elapsedRealtime()
+            acNode = config.serverId.takeIf { isNode(it) }
+            acProtocol = config.protocolType
             val guid = startCore(context, config, spareConfig) ?: continue
             cameUp = true
             phase = ConnectPhase.Verifying
@@ -1322,6 +1501,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val checkBegin = android.os.SystemClock.elapsedRealtime()
             val (primaryMs, spareMs) = verifyPair(budget, withSpare = spareConfig != null)
             val winner = ColituWarmSpare.parallelWinner(primaryMs, spareMs)
+            ColituMetrics.count("functional_checks")
+            if (winner != ColituWarmSpare.ParallelWinner.None) ColituMetrics.count("functional_ok")
             LogUtil.w(
                 AppConfig.TAG,
                 "Colitu: parallel round: ${config.protocolType} vs ${spareConfig?.let { "${it.protocolType} on ${it.serverId.take(8)}" } ?: "none"} " +
@@ -1474,12 +1655,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         quiet: Boolean,
     ) {
         onConnected(actual, config, guid, quiet)
+        endMetricAttempt(ok = true, nodeId = actual.id.takeIf { isNode(it) }, protocol = config.protocolType)
+        endMetricRecovery(ok = true, newProtocol = config.protocolType)
+        acConnected = actual.id.takeIf { isNode(it) }?.let { id -> config.protocolType?.let { Triple(id, it, android.os.SystemClock.elapsedRealtime()) } }
+        recordMetricFeatures(actual)
         LogUtil.w(
             AppConfig.TAG,
             "Colitu: connected via ${config.protocolType} in ${android.os.SystemClock.elapsedRealtime() - begin} ms (cached profile: $fromCache)",
         )
         observe(actual, config.protocolType, reachable = true, latencyMs = delayMs)
-        memory.recordSuccess(networkKey, actual.id, config.protocolType, System.currentTimeMillis(), goodServer = !actual.isMultihop)
+        // The last good server is remembered from automatic connections only: a manual pick says nothing about the best server.
+        memory.recordSuccess(networkKey, actual.id, config.protocolType, System.currentTimeMillis(), goodServer = acAuto && !actual.isMultihop)
         // The device was online and this transport worked: what failed before it in this round really stalled.
         memory.confirm(networkKey, actual.id, stalledThisConnect - config.protocolType.orEmpty(), System.currentTimeMillis())
         attachedSpare = spareConfig?.let { spare -> (servers.firstOrNull { it.id == spare.serverId } ?: actual) to spare.protocolType.orEmpty() }
@@ -1515,6 +1701,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private suspend fun watchTransport(server: ColituServer, protocol: String) {
         var failures = 0
+        // Elapsed time of the first missed probe of the current streak (statistics: failure time).
+        var firstMissAt = 0L
         // With a warm spare: misses of the primary alone while the normal
         // path (balancer, i.e. the spare) still works.
         var primaryMisses = 0
@@ -1576,11 +1764,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
             // The spare is known dead: a dead primary means a reconnect right away, not after the usual misses.
             if (spareDead && !primaryOk && !normalOk) {
+                if (failures == 0) firstMissAt = android.os.SystemClock.elapsedRealtime()
                 if (++failures >= KNOWN_DEAD_SPARE_FAILURES && deviceOnline()) {
                     LogUtil.w(AppConfig.TAG, "Colitu: $protocol died while the spare is known dead, reconnecting")
                     stalledThisConnect += protocol
                     observe(server, protocol, reachable = false, latencyMs = null)
                     flushObservations()
+                    beginMetricRecovery(firstMissAt, protocol, detected = true, nodeId = server.id.takeIf { isNode(it) })
                     startConnectFlow(fresh = false, continuing = true)
                     return
                 }
@@ -1604,6 +1794,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 }
                 ColituTransportOrder.WatchAction.BothDead -> Unit
             }
+            if (failures == 0) firstMissAt = android.os.SystemClock.elapsedRealtime()
             if (++failures < STALL_PROBE_FAILURES) continue
             if (!connected || underlyingNetworks() != lastNetworks) {
                 failures = 0
@@ -1632,6 +1823,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             stalledThisConnect += protocol
             observe(server, protocol, reachable = false, latencyMs = null)
             flushObservations()
+            beginMetricRecovery(firstMissAt, protocol, detected = true, nodeId = server.id.takeIf { isNode(it) })
             // Cancels this job; the cached profile starts the next transport right away.
             startConnectFlow(fresh = false, continuing = true)
             return
@@ -1724,7 +1916,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val proven = memory.workedOnNetwork(networkKey, protocol, now)
         store.encode(ColituTransportOrder.midSessionStallKey(server.id, protocol), now + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS))
         memory.markStalled(networkKey, server.id, protocol, now, confirmed = protocol != "hysteria2")
-        memory.recordSuccess(networkKey, spare.first.id, spare.second, now, goodServer = !spare.first.isMultihop)
+        memory.recordSuccess(networkKey, spare.first.id, spare.second, now, goodServer = acAuto && !spare.first.isMultihop)
         saveMemory()
         observe(server, protocol, reachable = false, latencyMs = null)
         flushObservations()
@@ -1795,6 +1987,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             reconnecting = false
         }
         if (code == ColituDevicePause.CODE) {
+            abandonMetrics()
             // The bootstrap carries the details (limit, active devices).
             status = VpnStatus.Disconnected
             phase = ConnectPhase.Idle
@@ -1804,6 +1997,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
             return
         }
+        endMetricAttempt(ok = false, code = code)
+        endMetricRecovery(ok = false, newProtocol = null, code = code)
         status = VpnStatus.Disconnected
         phase = ConnectPhase.Idle
         error = failureMessage(code)
@@ -1920,6 +2115,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val midStart = pendingStart != null
         connectJob?.cancel()
         verifyJob?.cancel()
+        abandonMetrics()
         pendingStart = null
         userStopped = true
         reconnecting = false

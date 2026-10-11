@@ -42,11 +42,30 @@ object ColituServerRanking {
         server.countryCode?.trim()?.uppercase() in AUTO_EXCLUDED_COUNTRIES
 
     /**
+     * Client countries where a server in the client's own country cannot open
+     * the sites blocked there, so automatic mode puts such servers after the
+     * foreign ones. Everywhere else a home-country server competes on latency
+     * like any other (a fast local node is the better choice, not the worse).
+     */
+    val HOME_PUSHBACK_COUNTRIES = setOf(
+        "RU", "BY", "KZ", "UZ", "TM", "TJ", "KG", "AZ", "IR", "CN", "TR", "VN", "PK", "EG", "SA", "AE", "ET", "MM",
+    )
+
+    /** The remembered server yields to a fresh candidate at least this much faster (fraction of its latency)... */
+    const val MEMORY_BEATEN_FRACTION = 0.4
+
+    /** ...and at least this many ms faster. */
+    const val MEMORY_BEATEN_MS = 60
+
+    /**
      * Available nodes (no multihop routes, none in [AUTO_EXCLUDED_COUNTRIES]) best first:
      * 1. penalized on this network last;
      * 2. a fresh failed ping after all others except the penalized;
-     * 3. the user's own country after the foreign ones (when it is known);
-     * 4. the last good server on this network first;
+     * 3. the user's own country after the foreign ones, only when the client is in one of
+     *    [HOME_PUSHBACK_COUNTRIES] (censoring countries);
+     * 4. the last good server on this network first (remembered from automatic connections
+     *    only), unless its fresh ping is known and a fresh candidate of the same standing is at
+     *    least [MEMORY_BEATEN_FRACTION] and [MEMORY_BEATEN_MS] ms faster;
      * 5. fresh successful pings ascending;
      * 6. without a fresh ping in panel order, after the pinged ones.
      */
@@ -60,12 +79,24 @@ object ColituServerRanking {
         now: Long,
     ): List<ColituServer> {
         val country = clientCountry?.trim()?.uppercase()?.takeIf { it.length == 2 }
+        val pushHome = country != null && country in HOME_PUSHBACK_COUNTRIES
         val candidates = servers.withIndex().filter { (_, server) -> server.isAvailable && !server.isMultihop && !autoExcluded(server) }
+        fun isHome(server: ColituServer) = pushHome && server.countryCode?.trim()?.uppercase() == country
+        fun failedPing(id: String) = pings[id]?.let { ping -> ping.ms == null && ping.fresh(network, now) } == true
+        // Servers of the same standing (penalty, failed ping, home pushback) compete with the remembered one.
+        fun standing(server: ColituServer) = Triple(server.id in penalized, failedPing(server.id), isHome(server))
+        val rememberedMs = lastGood?.let { freshMs(pings[it], network, now) }
+        val remembered = candidates.firstOrNull { it.value.id == lastGood }?.value
+        val memoryBeaten = remembered != null && rememberedMs != null && candidates.any { (_, other) ->
+            val ms = freshMs(pings[other.id], network, now)
+            other.id != remembered.id && ms != null && standing(other) == standing(remembered) &&
+                rememberedMs - ms >= MEMORY_BEATEN_MS && ms <= rememberedMs * (1 - MEMORY_BEATEN_FRACTION)
+        }
         val ordered = candidates.sortedWith(
             compareBy<IndexedValue<ColituServer>> { it.value.id in penalized }
-                .thenBy { pings[it.value.id]?.let { ping -> ping.ms == null && ping.fresh(network, now) } == true }
-                .thenBy { country != null && it.value.countryCode?.uppercase() == country }
-                .thenBy { it.value.id != lastGood }
+                .thenBy { failedPing(it.value.id) }
+                .thenBy { isHome(it.value) }
+                .thenBy { memoryBeaten || it.value.id != lastGood }
                 .thenBy { freshMs(pings[it.value.id], network, now) ?: Int.MAX_VALUE }
                 .thenBy { it.index },
         )

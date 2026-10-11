@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.v2ray.ang.colitu.app.safeCall
+import com.v2ray.ang.colitu.data.ColituInvite
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBackdrop
 import com.v2ray.ang.colitu.design.ColituButton
@@ -99,6 +101,18 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
     // "Forgot password" replaces the form; a TV starts with the QR sign-in.
     var forgot by rememberSaveable { mutableStateOf(false) }
     var usePassword by rememberSaveable { mutableStateOf(register) }
+    // Optional invite code: collapsed behind a link unless an invite link brought one.
+    var inviteCode by rememberSaveable { mutableStateOf(ColituInvite.pending.orEmpty()) }
+    var inviteOpen by rememberSaveable { mutableStateOf(ColituInvite.pending != null) }
+    val linkedInvite = ColituInvite.pending
+    // An invite link opened while this screen is up (or before it): prefill and show the sign-up tab.
+    LaunchedEffect(linkedInvite) {
+        if (linkedInvite != null) {
+            inviteCode = linkedInvite
+            inviteOpen = true
+            mode = AuthMode.Register
+        }
+    }
     val isRegister = mode == AuthMode.Register
     val title = when {
         forgot -> loc["reset.title"]
@@ -137,11 +151,15 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 safeCall {
-                    if (isRegister) ColituAuthRepository.register(email.trim(), password)
+                    if (isRegister) ColituAuthRepository.register(email.trim(), password, inviteCode)
                     else ColituAuthRepository.login(email.trim(), password)
                 }
             }
             loading = false
+            // The account exists now (signed in, or waiting for its e-mail code): the code is spent.
+            if (isRegister && (result.isSuccess || result.exceptionOrNull()?.message == ColituAuthRepository.EMAIL_NOT_VERIFIED)) {
+                ColituInvite.clear()
+            }
             result.fold(
                 onSuccess = { onSignedIn() },
                 onFailure = {
@@ -241,7 +259,25 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                         error = repeatError,
                         enabled = !loading,
                     )
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(10.dp))
+                    if (inviteOpen) {
+                        ColituField(
+                            value = inviteCode,
+                            onChange = { inviteCode = ColituInvite.sanitize(it) },
+                            label = loc["auth.inviteLabel"],
+                            hint = "ABC123",
+                            imeAction = ImeAction.Done,
+                            onSubmit = { submit() },
+                            prefix = ColituIcons.Gift,
+                            enabled = !loading,
+                        )
+                        if (linkedInvite != null && ColituInvite.normalize(inviteCode) != null) {
+                            CText(loc["auth.inviteNote"], ColituText.small, Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp))
+                        }
+                    } else {
+                        ColituLinkButton(loc["auth.inviteLink"], if (loading) null else ({ inviteOpen = true }))
+                    }
+                    Spacer(Modifier.height(10.dp))
                     ColituCheck(acceptTerms, {
                         acceptTerms = it
                         termsError = null

@@ -82,6 +82,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- Invite links https://colitu.com/r/CODE open the sign-up with the code filled in. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="colitu.com"
+                    android:pathPrefix="/r/"
+                    android:scheme="https" />
+            </intent-filter>
             <!-- Long-press on the quick-settings tile opens the Colitu app. -->
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />

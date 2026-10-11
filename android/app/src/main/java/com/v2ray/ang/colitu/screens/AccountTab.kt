@@ -37,6 +37,8 @@ import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planNameOf
 import com.v2ray.ang.colitu.app.safeCall
 import com.v2ray.ang.colitu.data.ColituDevice
+import com.v2ray.ang.colitu.data.ColituMetrics
+import com.v2ray.ang.colitu.data.ColituSurveys
 import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituActionRow
@@ -79,6 +81,7 @@ fun AccountTab(
     onHowItWorks: () -> Unit,
     onOpenSplit: () -> Unit = {},
     onOpenRotation: () -> Unit = {},
+    onOpenReferral: () -> Unit = {},
     revealPrivacy: Boolean = false,
     onPrivacyRevealed: () -> Unit = {},
 ) {
@@ -341,6 +344,36 @@ fun AccountTab(
 
         // General
         SectionTitle(loc["account.general"])
+        var statsOn by remember { mutableStateOf(ColituMetrics.enabled) }
+        ColituSwitchRow(
+            icon = ColituIcons.Shield,
+            title = loc["metrics.title"],
+            hint = loc["metrics.hint"],
+            value = statsOn,
+            onChange = {
+                statsOn = it
+                ColituMetrics.enabled = it
+            },
+            hintMaxLines = 6,
+        )
+        Spacer(Modifier.height(8.dp))
+        var surveysOn by remember { mutableStateOf(ColituSurveys.enabled) }
+        ColituSwitchRow(
+            icon = ColituIcons.Chat,
+            title = loc["survey.setting"],
+            hint = loc["survey.settingHint"],
+            value = surveysOn,
+            onChange = {
+                surveysOn = it
+                ColituSurveys.enabled = it
+            },
+        )
+        Spacer(Modifier.height(8.dp))
+        // Sharing an invite link is a phone thing too.
+        if (!ColituTv.isTv) {
+            ColituActionRow(ColituIcons.Gift, loc["referral.title"], loc["referral.rowHint"], onClick = onOpenReferral)
+            Spacer(Modifier.height(8.dp))
+        }
         // The tour and the mail app are phone things; a TV has no use or app for them.
         if (!ColituTv.isTv) {
             ColituActionRow(ColituIcons.PlayCircle, loc["account.howItWorks"], onClick = onHowItWorks)

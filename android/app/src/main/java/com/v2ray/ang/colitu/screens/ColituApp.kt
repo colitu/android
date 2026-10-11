@@ -85,7 +85,7 @@ fun initialRoute(): ColituRoute = when {
 @Composable
 fun ColituApp(controller: ColituController) {
     var route by rememberSaveable { mutableStateOf(initialRoute()) }
-    var registerFirst by rememberSaveable { mutableStateOf(false) }
+    var registerFirst by rememberSaveable { mutableStateOf(com.v2ray.ang.colitu.data.ColituInvite.pending != null) }
     var authMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var codeJustSent by rememberSaveable { mutableStateOf(false) }
     var welcome by rememberSaveable { mutableStateOf<String?>(null) }
@@ -176,6 +176,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     var revealPrivacy by remember { mutableStateOf(false) }
     var splitOpen by rememberSaveable { mutableStateOf(false) }
     var rotationOpen by rememberSaveable { mutableStateOf(false) }
+    var referralOpen by rememberSaveable { mutableStateOf(false) }
     val loc = ColituLoc
     val context = LocalContext.current
 
@@ -240,6 +241,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     onHowItWorks = onHowItWorks,
                     onOpenSplit = { splitOpen = true },
                     onOpenRotation = { rotationOpen = true },
+                    onOpenReferral = { referralOpen = true },
                     revealPrivacy = revealPrivacy,
                     onPrivacyRevealed = { revealPrivacy = false },
                 )
@@ -288,6 +290,12 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     if (rotationOpen) {
         RotationDialog(c) { rotationOpen = false }
     }
+
+    if (referralOpen) {
+        ReferralDialog { referralOpen = false }
+    }
+
+    ColituSurveyHost(c)
 
     if (c.ruNoticeVisible) {
         RuDirectNoticeDialog(
