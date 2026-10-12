@@ -881,10 +881,18 @@ fun ColituField(
     fill: Color = ColituColors.field,
     /** Autofill hint for the text field itself (e.g. one-time codes). */
     autofill: androidx.compose.ui.autofill.ContentType? = null,
+    /** Corner radius overriding [pill] and the default (the Locations search uses 18). */
+    radius: Dp? = null,
+    /** Space above and below the text; 15 gives the usual 54 dp field, 14 the 52 dp search. */
+    verticalPadding: Dp = 15.dp,
 ) {
     var focused by remember { mutableStateOf(false) }
     val hasError = !error.isNullOrEmpty()
-    val shape = if (pill) RoundedCornerShape(50) else RoundedCornerShape(ColituRadius.md)
+    val shape = when {
+        radius != null -> RoundedCornerShape(radius)
+        pill -> RoundedCornerShape(50)
+        else -> RoundedCornerShape(ColituRadius.md)
+    }
     val edge by animateColorAsState(
         when {
             hasError -> ColituColors.danger
@@ -911,7 +919,7 @@ fun ColituField(
                 ColituIcon(prefix, ColituColors.dim, 20.dp)
                 Spacer(Modifier.width(10.dp))
             }
-            Box(Modifier.weight(1f).padding(vertical = 15.dp)) {
+            Box(Modifier.weight(1f).padding(vertical = verticalPadding)) {
                 if (value.isEmpty() && hint != null) {
                     CText(hint, ColituText.body.copy(fontSize = 16.sp), color = ColituColors.dim, maxLines = 1)
                 }
