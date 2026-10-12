@@ -55,6 +55,7 @@ import com.v2ray.ang.colitu.data.ColituUiMode
 import com.v2ray.ang.colitu.data.ColituWarmSpare
 import com.v2ray.ang.colitu.data.XrayMobileAdapter
 import com.v2ray.ang.colitu.l10n.ColituLoc
+import com.v2ray.ang.colitu.l10n.ColituServerNames
 import com.v2ray.ang.colitu.l10n.colituErrorMessage
 import com.v2ray.ang.colitu.repository.ColituAuthRepository
 import com.v2ray.ang.colitu.repository.ColituBillingRepository
@@ -327,22 +328,23 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     val expiresAt: Instant? get() = (user?.expiresAt ?: subscription?.expiresAt)?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
+    // Panel names (Turkish) are shown in the app language (ColituServerNames).
     fun titleOf(server: ColituServer?): String {
         if (server == null) return ColituLoc["server.auto"]
-        if (server.isMultihop) return server.displayName
+        if (server.isMultihop) return ColituServerNames.route(server.displayName)
         val code = server.countryCode
         return if (!code.isNullOrBlank() && ColituLoc.countryName(code) != code.uppercase()) ColituLoc.countryName(code)
-        else server.displayName
+        else ColituServerNames.displayName(server.displayName, countryCode = code)
     }
 
     fun subtitleOf(server: ColituServer): String = if (server.route != null) {
         ColituLoc.format(
             "multihop.sub",
-            "entry" to (server.route.entry.country ?: server.route.entry.label),
-            "exit" to (server.route.exit.country ?: server.route.exit.label),
+            "entry" to (server.route.entry.country ?: ColituServerNames.city(server.route.entry.label)),
+            "exit" to (server.route.exit.country ?: ColituServerNames.city(server.route.exit.label)),
         )
     } else listOfNotNull(
-        server.city?.takeIf { it.isNotBlank() },
+        ColituServerNames.city(server.city).takeIf { it.isNotBlank() },
         server.countryCode?.uppercase(),
     ).joinToString(" · ")
 

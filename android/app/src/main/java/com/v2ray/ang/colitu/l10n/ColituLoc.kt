@@ -86,11 +86,45 @@ object ColituLoc {
         return if (n < 0) "-$out" else out.toString()
     }
 
-    fun countryName(code: String?): String {
+    fun countryName(code: String?): String = countryName(code, language)
+
+    /** [code]'s name in [lang] (one of [languages]); the upper-case code when unknown. */
+    fun countryName(code: String?, lang: String): String {
         val upper = code.orEmpty().uppercase()
         val values = countries[upper] ?: return upper
-        return values[languages.indexOf(language).coerceAtLeast(0)]
+        return values[languages.indexOf(lang).coerceAtLeast(0)]
     }
+
+    fun hasCountry(code: String?): Boolean = countries.containsKey(code.orEmpty().uppercase())
+
+    /**
+     * The code of a country named in any of the three languages or by a common
+     * alias ("Almanya", "Germany", "Германия", "UK"), compared case- and
+     * diacritic-insensitively ([ColituServerNames.normalize]); null otherwise.
+     */
+    fun countryCodeForName(name: String?): String? {
+        val key = ColituServerNames.normalize(name.orEmpty())
+        if (key.isEmpty()) return null
+        return countryIndex[key]
+    }
+
+    private val countryIndex: Map<String, String> by lazy {
+        buildMap {
+            countries.forEach { (code, names) -> names.forEach { put(ColituServerNames.normalize(it), code) } }
+            countryAliases.forEach { (code, names) -> names.forEach { put(ColituServerNames.normalize(it), code) } }
+        }
+    }
+
+    /** Extra spellings the panel or users may use; shared with iOS (server_names). */
+    private val countryAliases: Map<String, List<String>> = mapOf(
+        "AE" to listOf("UAE", "Birleşik Arap Emirlikleri", "Объединённые Арабские Эмираты"),
+        "CZ" to listOf("Czech Republic", "Çek Cumhuriyeti", "Чешская Республика"),
+        "GB" to listOf("UK", "Great Britain", "England", "İngiltere", "Британия", "Англия"),
+        "KR" to listOf("Korea", "Kore", "Корея"),
+        "NL" to listOf("Holland", "The Netherlands", "Голландия"),
+        "TR" to listOf("Turkey", "Turkiye"),
+        "US" to listOf("USA", "United States of America", "Amerika", "Amerika Birleşik Devletleri", "Соединённые Штаты"),
+    )
 
     /** "24 сентября 2026" / "24 Eylül 2026" / "24 September 2026". */
     fun date(value: Instant): String {

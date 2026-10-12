@@ -104,6 +104,7 @@ import com.v2ray.ang.colitu.design.ColituText
 import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.focusRing
 import com.v2ray.ang.colitu.l10n.ColituLoc
+import com.v2ray.ang.colitu.l10n.ColituServerNames
 import java.util.Locale
 import kotlinx.coroutines.delay
 
@@ -248,10 +249,10 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     LaunchedEffect(Unit) { c.measurePings() }
     val q = fold(query.trim())
     // Cities of one country tie on the title, so they sort by city inside a group.
-    val byName = compareBy<ColituServer> { c.titleOf(it) }.thenBy { it.city.orEmpty() }.thenBy { it.displayName }
+    val byName = compareBy<ColituServer> { c.titleOf(it) }.thenBy { ColituServerNames.city(it.city) }.thenBy { it.displayName }
     val items = c.servers
         .filter { server ->
-            server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
+            server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${ColituServerNames.city(server.city)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
         }
         .sortedWith(
             compareBy<ColituServer> { if (it.isAvailable) 0 else 1 }.then(
@@ -270,7 +271,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     // of the exit and the entry both count for the search.
     val routeItems = if (filter != "all" || !advanced) emptyList() else c.routes
         .filter { route ->
-            q.isEmpty() || fold("${route.displayName} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q)
+            q.isEmpty() || fold("${route.displayName} ${ColituServerNames.route(route.displayName)} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q)
         }
         .sortedWith(
             when (sort) {
@@ -763,8 +764,10 @@ private fun ServerCard(c: ColituController, server: ColituServer, recommended: B
     val selected = !c.autoSelection && c.selectedServerId == server.id
     val connected = c.connected && c.connectedServerId == server.id
     val selectable = server.isAvailable
-    val country = server.countryCode?.let { loc.countryName(it) }?.takeIf { it.isNotBlank() } ?: server.displayName
-    val city = server.city?.trim().orEmpty()
+    // Panel names (Turkish) in the app language; recomposes on a language switch.
+    val country = server.countryCode?.let { loc.countryName(it) }?.takeIf { it.isNotBlank() }
+        ?: ColituServerNames.displayName(server.displayName, countryCode = server.countryCode)
+    val city = ColituServerNames.city(server.city)
     val subtitle = if (city.isNotEmpty() && !city.equals(country, ignoreCase = true)) city else ""
     Column(modifier.padding(bottom = CardGap)) {
         RowCard(
@@ -821,7 +824,8 @@ private fun CountryGroup(c: ColituController, group: LocationEntry.Group, modifi
     val loc = ColituLoc
     val still = LocalStill.current
     var expanded by rememberSaveable { mutableStateOf(group.expandedByDefault) }
-    val name = loc.countryName(group.countryCode).takeIf { it.isNotBlank() } ?: group.servers.first().displayName
+    val name = loc.countryName(group.countryCode).takeIf { it.isNotBlank() }
+        ?: ColituServerNames.displayName(group.servers.first().displayName, countryCode = group.countryCode)
     val hasSelected = !c.autoSelection && group.servers.any { it.id == c.selectedServerId }
     val hasConnected = c.connected && group.servers.any { it.id == c.connectedServerId }
     val best = bestPing(group.servers) { c.pingOf(it) }
@@ -897,7 +901,8 @@ private fun CityRow(c: ColituController, server: ColituServer) {
     val connected = c.connected && c.connectedServerId == server.id
     val active = selected || connected
     val selectable = server.isAvailable
-    val label = server.city?.trim().orEmpty().ifEmpty { server.displayName }
+    val label = ColituServerNames.city(server.city)
+        .ifEmpty { ColituServerNames.displayName(server.displayName, countryCode = server.countryCode) }
     val tags = tagsOf(server)
     val shape = RoundedCornerShape(FieldRadius)
     val edge by animateColorAsState(
@@ -971,7 +976,7 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
                         ColituFlag(ends.exit.country, 32.dp)
                     }
                 },
-                title = route.displayName,
+                title = ColituServerNames.route(route.displayName),
                 subtitle = ColituLoc["multihop.ping"],
                 connected = connected,
             ) {

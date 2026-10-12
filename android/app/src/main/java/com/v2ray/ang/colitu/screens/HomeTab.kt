@@ -67,6 +67,7 @@ import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.PowerState
 import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
+import com.v2ray.ang.colitu.l10n.ColituServerNames
 import kotlinx.coroutines.delay
 import java.time.Duration
 
@@ -345,7 +346,7 @@ private fun ConnectionPathLines(c: ColituController) {
             ColituFlag(route.exit.country, 22.dp)
             Spacer(Modifier.width(10.dp))
             CText(
-                loc.format("multihop.home", "entry" to (route.entry.country ?: route.entry.label), "exit" to (route.exit.country ?: route.exit.label)),
+                loc.format("multihop.home", "entry" to (route.entry.country ?: ColituServerNames.displayName(route.entry.label)), "exit" to (route.exit.country ?: ColituServerNames.displayName(route.exit.label))),
                 ColituText.small,
                 Modifier.weight(1f),
                 color = ColituColors.text,
@@ -378,7 +379,8 @@ private fun RotationLine(status: ColituRotationStatus) {
         }
     }
     val left = Duration.between(now, next)
-    val name = if (exit.country != null && exit.label != exit.country) "${exit.label} (${exit.country})" else exit.label
+    val exitLabel = ColituServerNames.displayName(exit.label, countryCode = exit.country)
+    val name = if (exit.country != null && exit.label != exit.country) "$exitLabel (${exit.country})" else exitLabel
     Spacer(Modifier.height(10.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         ColituFlag(exit.country, 22.dp)
