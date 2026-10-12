@@ -166,7 +166,10 @@ fun SupportTab(c: ColituController) {
                 conversations.isEmpty() -> Box(Modifier.fillMaxWidth().padding(vertical = 30.dp), contentAlignment = Alignment.Center) {
                     CText(loc["support.empty"], ColituText.muted)
                 }
-                else -> conversations.forEachIndexed { i, conversation ->
+                // Bounded: these rows live in a plain scrolling column, so a
+                // panel that returned thousands of entries could otherwise lock
+                // the UI thread or run the screen out of memory.
+                else -> conversations.take(MAX_CONVERSATIONS).forEachIndexed { i, conversation ->
                     ConversationRow(conversation, Modifier.reveal(40 * i.coerceAtMost(8))) { openId = conversation.id }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -402,7 +405,10 @@ private fun SupportThread(c: ColituController, id: String, initial: ColituSuppor
             }
             Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 6.dp)) {
                 var lastDay: java.time.LocalDate? = null
-                messages.forEach { message ->
+                // Bounded like the conversation list: keep the most recent
+                // messages so a very long (or panel-inflated) thread cannot
+                // stall the UI thread or exhaust memory in this plain column.
+                messages.takeLast(MAX_THREAD_MESSAGES).forEach { message ->
                     val created = message.createdAt
                     val day = created?.atZone(ZoneId.systemDefault())?.toLocalDate()
                     if (created != null && day != lastDay) {
@@ -675,6 +681,8 @@ private fun shortTime(value: Instant): String {
  */
 /** Decoded previews kept per conversation (each up to 1600 px a side). */
 private const val MAX_PREVIEW_BITMAPS = 16
+private const val MAX_CONVERSATIONS = 200
+private const val MAX_THREAD_MESSAGES = 500
 
 internal fun decodePreview(bytes: ByteArray, maxSide: Int = 1600): android.graphics.Bitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

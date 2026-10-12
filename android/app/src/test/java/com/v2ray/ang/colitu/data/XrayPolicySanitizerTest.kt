@@ -102,6 +102,41 @@ class XrayPolicySanitizerTest {
     }
 
     @Test
+    fun dnsRejectsNonPublicResolvers() {
+        val dns = XrayPolicySanitizer.dns(obj(
+            """{"servers":[
+              "192.168.1.1",
+              "127.0.0.1",
+              "10.0.0.53",
+              "169.254.0.1",
+              "https://192.168.1.1/dns-query",
+              "https://dns.example.test/dns-query",
+              "9.9.9.9"
+            ]}""",
+        ))
+        // A resolver on a private/loopback/link-local address (plain or as a DoH host) is dropped.
+        assertEquals(listOf("https://dns.example.test/dns-query", "9.9.9.9"), dns.getAsJsonArray("servers").map { it.asString })
+    }
+
+    @Test
+    fun dropsDirectDomainRulesWithoutAnExplicitMatcher() {
+        val routing = XrayPolicySanitizer.routing(obj(
+            """{"rules":[
+              {"type":"field","domain":["ru"],"outboundTag":"direct"},
+              {"type":"field","domain":[".ru"],"outboundTag":"direct"},
+              {"type":"field","domain":["example.ru"],"outboundTag":"direct"},
+              {"type":"field","domain":["keyword:ru"],"outboundTag":"direct"},
+              {"type":"field","domain":["domain:example.ru"],"outboundTag":"direct"},
+              {"type":"field","domain":["full:site.ru"],"outboundTag":"direct"},
+              {"type":"field","domain":["geosite:ru"],"outboundTag":"direct"}
+            ]}""",
+        ))
+        // Only the explicitly-scoped Russian matchers survive; bare values and
+        // keyword:/regexp: (substring matches in Xray) are dropped.
+        assertEquals(3, rules(routing).size)
+    }
+
+    @Test
     fun missingOrEmptyPoliciesStayEmpty() {
         assertEquals(JsonObject(), XrayPolicySanitizer.routing(null))
         assertEquals(JsonObject(), XrayPolicySanitizer.dns(null))
@@ -147,6 +182,11 @@ class XrayPolicySanitizerTest {
         assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("100.64.1.1"))))
         assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("::1"))))
         assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("fd00::1"))))
+        assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("198.18.0.1"))))
+        assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("240.0.0.1"))))
+        assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("192.0.0.8"))))
+        assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("64:ff9b::1"))))
+        assertTrue(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("2002::1"))))
         assertFalse(ColituAddressRanges.isNonPublic(requireNotNull(ColituAddressRanges.parseLiteral("203.0.113.5"))))
     }
 }

@@ -65,10 +65,12 @@ object ColituUpdateSignature {
      *     sha256=<lower-case hex>
      *     sizeBytes=<integer>
      *     signingCertSha256=<lower-case hex, no colons>
+     *     expiresAt=<ISO-8601 instant>   (optional; line present only when set)
      *     variant=<abi> <url> <lower-case sha256> <sizeBytes>   (ABIs in ordinal order)
      *
      * LF separated, no trailing newline, UTF-8. scripts/sign-update-manifest.ps1
-     * builds the same text. Null when a value contains a line break or space
+     * builds the same text (it must add the expiresAt line in this position when
+     * the manifest carries one). Null when a value contains a line break or space
      * where it must not (such a manifest is never accepted).
      */
     fun messageV2(json: JsonObject): String? {
@@ -83,6 +85,11 @@ object ColituUpdateSignature {
             "sizeBytes=${json.long("sizeBytes").coerceAtLeast(0)}",
             "signingCertSha256=${normalizeCert(json.str("signingCertSha256"))}",
         )
+        // Optional, signed freshness bound: a replayed-but-valid manifest past
+        // this instant is refused (see ColituUpdater.check), so a compromised
+        // CDN cannot freeze updates by serving an old file forever. Omitted when
+        // the manifest carries none, so manifests signed before this still verify.
+        json.str("expiresAt").takeIf { it.isNotBlank() }?.let { lines += "expiresAt=$it" }
         val variants = json.get("variants")?.takeIf { it.isJsonObject }?.asJsonObject
         variants?.keySet()?.sorted()?.forEach { abi ->
             val v = variants.get(abi)?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
@@ -96,6 +103,18 @@ object ColituUpdateSignature {
 
     /** "AB:CD:…" or "abcd…" to lower-case hex without separators. */
     fun normalizeCert(value: String): String = value.trim().replace(":", "").lowercase()
+
+    /**
+     * True when the manifest has no "expiresAt" (older manifests) or its signed
+     * "expiresAt" is a valid ISO-8601 instant still in the future. A present but
+     * unparseable value is treated as expired (refused). Call only on a manifest
+     * whose signature_v2 already verified, so the value is authenticated.
+     */
+    fun notExpired(json: JsonObject, now: java.time.Instant = java.time.Instant.now()): Boolean {
+        val raw = json.str("expiresAt").takeIf { it.isNotBlank() } ?: return true
+        val expires = runCatching { java.time.Instant.parse(raw) }.getOrNull() ?: return false
+        return now.isBefore(expires)
+    }
 
     /**
      * True when "signature_v2" is a valid release signature over [messageV2]

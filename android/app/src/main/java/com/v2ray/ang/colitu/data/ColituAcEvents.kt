@@ -11,9 +11,11 @@ import com.v2ray.ang.colitu.api.ColituTokenManager
  * Adaptive Connect telemetry: one small event per connect, recovery, protocol
  * switch, drop, latency probe and automatic choice, queued on the device and
  * sent at most hourly to POST /client/ac-events. Only collected while the
- * "anonymous usage statistics" switch is on (the same switch as the counters).
- * Events name nodes (UUIDs of the servers list) and protocols, never an
- * account, an address or a site.
+ * usage-statistics switch is on (the same switch as the counters). Events name
+ * nodes (UUIDs of the servers list) and protocols; the payload adds no address
+ * or visited site. Like the counters it is sent over the app's signed-in
+ * connection, so the server can attribute it to the account; the event content
+ * itself carries no account identifier.
  */
 object ColituAcEvents {
     const val MAX_QUEUE = 1000

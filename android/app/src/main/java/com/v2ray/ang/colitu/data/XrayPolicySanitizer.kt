@@ -83,7 +83,14 @@ internal object XrayPolicySanitizer {
         val ips = rule.strings("ip")
         if (domains.isEmpty() && ips.isEmpty()) return false
         val domainsOk = domains.all { d ->
-            d.trim().lowercase() == "geosite:private" || ColituRuBypass.isRussian("domain", d)
+            val v = d.trim().lowercase()
+            // Only an explicitly scoped matcher may send a domain past the
+            // tunnel. A bare value ("ru", ".ru") is a substring/keyword match in
+            // Xray (".ru" would also match "rust-lang.org"), so prefix-less,
+            // "keyword:" and "regexp:" entries are refused even when they look
+            // Russian; the matcher must be geosite:, domain: or full:.
+            (v == "geosite:private" || v.startsWith("geosite:") || v.startsWith("domain:") || v.startsWith("full:")) &&
+                (v == "geosite:private" || ColituRuBypass.isRussian("domain", v))
         }
         val ipsOk = ips.all { ip ->
             ip.trim().lowercase() == "geoip:private" || ColituAddressRanges.isNonPublicCidr(ip) || ColituRuBypass.isRussian("ip", ip)
@@ -112,10 +119,16 @@ internal object XrayPolicySanitizer {
     /** A DoH URL (https://host/...) or an IP literal; "localhost", "https+local://", tcp/udp URLs and names are refused. */
     internal fun validDnsAddress(value: String): Boolean {
         if (value.isBlank() || value.length > MAX_URL_LENGTH || value.any { it.isWhitespace() }) return false
-        if (ColituAddressRanges.isIpLiteral(value)) return true
+        // A resolver on a private, loopback, link-local or other non-public
+        // address would send the tunnel's name lookups out to the local
+        // network instead of through the proxy, so such literals are refused.
+        ColituAddressRanges.parseLiteral(value)?.let { return !ColituAddressRanges.isNonPublic(it) }
         if (!value.startsWith("https://")) return false
         val uri = runCatching { URI(value) }.getOrNull() ?: return false
-        return uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null
+        if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.rawUserInfo != null) return false
+        // A DoH endpoint on a non-public IP literal is the same local-network leak.
+        ColituAddressRanges.parseLiteral(uri.host.trim('[', ']'))?.let { if (ColituAddressRanges.isNonPublic(it)) return false }
+        return true
     }
 
     private fun JsonObject.str(key: String): String? =

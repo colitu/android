@@ -65,6 +65,25 @@ class ColituUpdateSignatureV2Test {
     }
 
     @Test
+    fun expiresAtIsOptionalSignedAndEnforced() {
+        // Absent: backward compatible — not in the payload, treated as fresh.
+        assertFalse(ColituUpdateSignature.messageV2(manifest())!!.contains("expiresAt="))
+        assertTrue(ColituUpdateSignature.notExpired(manifest()))
+
+        // Present: signed (so it is tamper-evident) between signingCertSha256 and the variants.
+        val withExpiry = manifest().apply { addProperty("expiresAt", "2026-10-20T00:00:00Z") }
+        assertTrue(ColituUpdateSignature.messageV2(withExpiry)!!.contains("\nexpiresAt=2026-10-20T00:00:00Z\nvariant="))
+        assertTrue(ColituUpdateSignature.verifyV2(signed(withExpiry), decode, publicKey))
+        assertFalse(ColituUpdateSignature.verifyV2(signed(withExpiry).apply { addProperty("expiresAt", "2099-01-01T00:00:00Z") }, decode, publicKey))
+
+        // notExpired: future ok; past and unparseable are refused.
+        val t = java.time.Instant.parse("2026-10-12T00:00:00Z")
+        assertTrue(ColituUpdateSignature.notExpired(withExpiry, t))
+        assertFalse(ColituUpdateSignature.notExpired(manifest().apply { addProperty("expiresAt", "2026-10-11T00:00:00Z") }, t))
+        assertFalse(ColituUpdateSignature.notExpired(manifest().apply { addProperty("expiresAt", "not-a-date") }, t))
+    }
+
+    @Test
     fun everySignedFieldIsCovered() {
         val tampered = listOf<JsonObject.() -> Unit>(
             { addProperty("signingCertSha256", "11".repeat(32)) },

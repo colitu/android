@@ -67,16 +67,17 @@ object NotificationManager {
 
                 var proxyTotal = 0L
                 val text = StringBuilder()
+                // One snapshot per tick: the core resets every counter on read,
+                // so reading tags one by one would drop all but the first.
+                val snapshot = CoreServiceManager.outboundTraffic()
                 outboundTags?.forEach {
-                    val up = CoreServiceManager.queryStats(it, AppConfig.UPLINK)
-                    val down = CoreServiceManager.queryStats(it, AppConfig.DOWNLINK)
+                    val (up, down) = snapshot[it] ?: (0L to 0L)
                     if (up + down > 0) {
                         appendSpeedString(text, it, up / sinceLastQueryInSeconds, down / sinceLastQueryInSeconds)
                         proxyTotal += up + down
                     }
                 }
-                val directUplink = CoreServiceManager.queryStats(AppConfig.TAG_DIRECT, AppConfig.UPLINK)
-                val directDownlink = CoreServiceManager.queryStats(AppConfig.TAG_DIRECT, AppConfig.DOWNLINK)
+                val (directUplink, directDownlink) = snapshot[AppConfig.TAG_DIRECT] ?: (0L to 0L)
                 val zeroSpeed = proxyTotal == 0L && directUplink == 0L && directDownlink == 0L
                 if (!zeroSpeed || !lastZeroSpeed) {
                     if (proxyTotal == 0L) {

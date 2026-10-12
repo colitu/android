@@ -2,19 +2,28 @@
 
 ## Android
 
-The checked-in `android/app/libs/libv2ray.aar` has SHA-256:
+The checked-in `android/app/libs/libv2ray.aar` is the official upstream
+`2dust/AndroidLibXrayLite` release **v26.10.10** (asset `libv2ray.aar`), with
+SHA-256:
 
 ```text
-322A37E4F8D07C939D0AF85799D3692612834441CF36BEE5086F6B577C8E028A
+15DB760BFBC24C0492EE997784B48A7B5E1BC5032950D617CD252FC2195F7AC7
 ```
 
-Go build metadata extracted from its `arm64-v8a/libgojni.so` reports:
+This matches the `sha256` digest the GitHub release publishes for that asset, so
+the binary is attributable to a tagged upstream build rather than a local
+checkout. Go build metadata extracted from its `arm64-v8a/libgojni.so` reports:
 
-- Go `1.26.3`
-- `github.com/xtls/xray-core` `v1.260327.1-0.20260509173629-1bdb488c9ec0`
-- `github.com/2dust/AndroidLibXrayLite` was replaced by a local development checkout and has no source commit embedded in the binary.
+- Go `1.27.2`
+- `github.com/xtls/xray-core` `v1.260327.1-0.20261010092107-701af60772cd`
+- `golang.org/x/net` `v0.59.0`, `golang.org/x/crypto` `v0.57.0`, `golang.org/x/text` `v0.42.0`, `google.golang.org/grpc` `v1.84.0`
 
-The Xray dependency is therefore attributable to commit prefix `1bdb488c9ec0`; the wrapper source is not fully reproducible from the AAR alone. A production release remains blocked until the wrapper repository commit/build recipe is pinned and a byte-for-byte or signed artifact comparison is recorded.
+This release includes upstream xray-core's RFC 1928 UDP-ASSOCIATE handling
+(`proxy/socks`: per-session `TempUDPConn` bound to the authenticated TCP
+association, commit `e26f5e9548`, replacing the old IP-only `UDPFilter`), so the
+loopback SOCKS inbound no longer relays UDP from an unauthenticated local app,
+and it carries the dependency bumps that clear the 2026-10 govulncheck findings
+against the previous `1bdb488c9ec0` build.
 
 Protected Android builds also retain `colitu-android.cdx.json`, a CycloneDX 1.5
 SBOM generated from the resolved Gradle runtime graph. Bundled AAR and shared

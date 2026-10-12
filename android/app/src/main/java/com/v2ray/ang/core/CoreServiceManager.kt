@@ -239,7 +239,31 @@ object CoreServiceManager {
         return true
     }
 
-    fun queryStats(tag: String, link: String): Long = coreController.queryStats(tag, link)
+    /**
+     * One read of every outbound's byte counters since the last read (the read
+     * resets them, like the old per-tag queryStats did). Keyed by outbound tag;
+     * each value is (uplink, downlink). The core (AndroidLibXrayLite v26.10.10+)
+     * returns them all at once as "tag,direction,value;...", resetting every
+     * counter, so a speed sample must take a single snapshot per tick and sum
+     * the tags it wants instead of reading tags one by one.
+     */
+    fun outboundTraffic(): Map<String, Pair<Long, Long>> {
+        val raw = runCatching { coreController.queryAllOutboundTrafficStats() }.getOrDefault("")
+        if (raw.isBlank()) return emptyMap()
+        val totals = HashMap<String, LongArray>()
+        for (entry in raw.split(';')) {
+            if (entry.isBlank()) continue
+            val parts = entry.split(',')
+            if (parts.size != 3) continue
+            val value = parts[2].toLongOrNull() ?: continue
+            val slot = totals.getOrPut(parts[0]) { LongArray(2) }
+            when (parts[1]) {
+                AppConfig.UPLINK -> slot[0] += value
+                AppConfig.DOWNLINK -> slot[1] += value
+            }
+        }
+        return totals.mapValues { it.value[0] to it.value[1] }
+    }
 
     /**
      * Sends the proxy outbound's speed to the Colitu home screen once a
@@ -257,8 +281,9 @@ object CoreServiceManager {
                 val seconds = ((now - last) / 1000.0).coerceAtLeast(0.2)
                 last = now
                 // The warm spare's outbound carries the traffic while the primary is down.
-                val up = colituOutboundTags.sumOf { tag -> runCatching { coreController.queryStats(tag, AppConfig.UPLINK) }.getOrDefault(0L) }
-                val down = colituOutboundTags.sumOf { tag -> runCatching { coreController.queryStats(tag, AppConfig.DOWNLINK) }.getOrDefault(0L) }
+                val snapshot = outboundTraffic()
+                val up = colituOutboundTags.sumOf { tag -> snapshot[tag]?.first ?: 0L }
+                val down = colituOutboundTags.sumOf { tag -> snapshot[tag]?.second ?: 0L }
                 synchronized(colituRecentBytes) {
                     colituRecentBytes.addLast(up + down)
                     while (colituRecentBytes.size > 10) colituRecentBytes.removeFirst()
@@ -323,9 +348,9 @@ object CoreServiceManager {
     }
 
     /** Up plus down of the primary and spare outbounds since the last read (the read resets them). */
-    private fun colituOutboundBytes(): Long = colituOutboundTags.sumOf { tag ->
-        runCatching { coreController.queryStats(tag, AppConfig.UPLINK) }.getOrDefault(0L) +
-            runCatching { coreController.queryStats(tag, AppConfig.DOWNLINK) }.getOrDefault(0L)
+    private fun colituOutboundBytes(): Long {
+        val snapshot = outboundTraffic()
+        return colituOutboundTags.sumOf { tag -> snapshot[tag]?.let { it.first + it.second } ?: 0L }
     }
 
     /** The last ten one-second byte totals of the speed samples. */

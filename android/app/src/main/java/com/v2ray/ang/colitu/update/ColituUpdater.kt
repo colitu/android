@@ -69,6 +69,13 @@ object ColituUpdater {
                 LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v2; ignored")
                 return@runCatching null
             }
+            // Freshness: a signed-but-expired manifest (replayed by a compromised
+            // CDN to freeze updates) is refused. Only enforced when the signed
+            // message carries expiresAt, so older manifests keep working.
+            if (!ColituUpdateSignature.notExpired(json)) {
+                LogUtil.w(AppConfig.TAG, "Colitu update manifest is past its expiresAt; ignored")
+                return@runCatching null
+            }
             val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
             // Rollback guard: a validly signed but older manifest (replayed by
             // a compromised web server or CDN) is never acted on once a newer
@@ -106,7 +113,7 @@ object ColituUpdater {
         if (target.exists() && sha256(target) == update.sha256) return@withContext target.also { onProgress(1f) }
 
         val partial = File(dir, target.name + ".part")
-        val connection = (URL(update.url).openConnection() as HttpURLConnection).apply {
+        val connection = openUpdate(update.url) {
             connectTimeout = 15000
             readTimeout = 30000
             // colitu.com serves the APKs directly; a redirect (to any host) is refused.
@@ -217,8 +224,30 @@ object ColituUpdater {
         return uri.protocol == "https" && (uri.host == TRUSTED_HOST || uri.host.endsWith(".$TRUSTED_HOST"))
     }
 
+    /**
+     * Opens [url] for the update check or download. While the tunnel is up the
+     * request goes through its authenticated loopback SOCKS inbound, so the
+     * periodic check and the download do not expose the app's own connection to
+     * colitu.com outside the tunnel; it falls back to a direct connection when
+     * there is no tunnel or the tunnel cannot carry it. NSC certificate pinning,
+     * the signed manifest and the APK hash/signer checks apply on either path.
+     */
+    private fun openUpdate(url: String, configure: HttpURLConnection.() -> Unit): HttpURLConnection {
+        val tunnel = com.v2ray.ang.colitu.api.ColituLocalProxy.activeTunnel()
+        if (tunnel != null) {
+            com.v2ray.ang.colitu.api.ColituSocksAuth.install(tunnel)
+            val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", tunnel.port))
+            runCatching {
+                val c = (URL(url).openConnection(proxy) as HttpURLConnection).apply(configure)
+                c.connect()
+                return c
+            }.onFailure { LogUtil.w(AppConfig.TAG, "Colitu update over tunnel failed (${it.javaClass.simpleName}); going direct") }
+        }
+        return (URL(url).openConnection() as HttpURLConnection).apply(configure)
+    }
+
     private fun fetchText(url: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        val connection = openUpdate(url) {
             connectTimeout = 10000
             readTimeout = 10000
             useCaches = false

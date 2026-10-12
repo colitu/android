@@ -158,6 +158,23 @@ class XrayMobileAdapterTest {
         }, now)
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsNonPublicEndpointHostLiteral() {
+        XrayMobileAdapter.render(envelope().also {
+            it.getAsJsonObject("profile").getAsJsonObject("payload")
+                .getAsJsonObject("endpoint").addProperty("host", "192.168.1.10")
+        }, now)
+    }
+
+    @Test
+    fun keepsPublicEndpointHostLiteral() {
+        val config = XrayMobileAdapter.render(envelope().also {
+            it.getAsJsonObject("profile").getAsJsonObject("payload")
+                .getAsJsonObject("endpoint").addProperty("host", "203.0.113.9")
+        }, now)
+        assertTrue(config.rawConfig!!.contains("203.0.113.9"))
+    }
+
     @Test
     fun rendersEveryCandidateTransportWithHysteria2AsNativeQuic() {
         val source = envelope()

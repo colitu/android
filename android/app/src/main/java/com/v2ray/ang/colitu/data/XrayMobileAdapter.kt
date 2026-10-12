@@ -68,6 +68,10 @@ object XrayMobileAdapter {
         require(protocol in supportedProtocols) { "CONFIG_PROTOCOL_UNSUPPORTED" }
         val endpoint = payload.getAsJsonObject("endpoint") ?: error("CONFIG_ENDPOINT_MISSING")
         val host = endpoint.requiredString("host")
+        // A node host that is an IP literal must be publicly routable: a
+        // compromised panel must not point the tunnel at a LAN or loopback
+        // address. Host names are resolved by the core and left as-is.
+        require(ColituAddressRanges.parseLiteral(host.trim('[', ']'))?.let { !ColituAddressRanges.isNonPublic(it) } ?: true) { "CONFIG_ENDPOINT_HOST_INVALID" }
         val port = endpoint.get("port")?.asInt ?: error("CONFIG_PORT_MISSING")
         require(port in 1..65535)
         val credentials = payload.getAsJsonObject("credentials") ?: error("CONFIG_CREDENTIALS_MISSING")

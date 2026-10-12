@@ -8,10 +8,13 @@ import com.v2ray.ang.colitu.api.ColituApiClient
 import com.v2ray.ang.colitu.api.ColituTokenManager
 
 /**
- * Anonymous usage statistics: aggregate counters, three histograms and the
- * names of the features used, kept on the device since the last successful
- * send. Nothing identifies an account, a device, an IP address or a site.
- * This class is the plain data (unit tested); [ColituMetrics] stores and sends it.
+ * Usage statistics: aggregate counters, three histograms and the names of the
+ * features used, kept on the device since the last successful send. The payload
+ * adds no account, device, IP address or visited site. It is sent over the
+ * app's normal signed-in connection (POST /client/metrics), so the server can
+ * attribute it to the account like any other authenticated request; the content
+ * itself carries no identifiers. This class is the plain data (unit tested);
+ * [ColituMetrics] stores and sends it.
  */
 class ColituMetricsData {
     val counters = linkedMapOf<String, Int>()

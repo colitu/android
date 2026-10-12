@@ -15,7 +15,11 @@ internal object ColituAddressRanges {
 
     private fun range(literal: String, prefix: Int) = Range(requireNotNull(parseLiteral(literal)).address, prefix)
 
-    /** Loopback, RFC 1918, link-local, CGNAT (RFC 6598), "this network", IPv6 loopback/ULA/link-local. */
+    /**
+     * Loopback, RFC 1918, link-local, CGNAT (RFC 6598), "this network",
+     * IETF protocol assignments / benchmarking / reserved, IPv6
+     * loopback/ULA/link-local, NAT64 well-known prefix and 6to4.
+     */
     private val NON_PUBLIC: List<Range> by lazy {
         listOf(
             range("0.0.0.0", 8),
@@ -24,9 +28,14 @@ internal object ColituAddressRanges {
             range("127.0.0.0", 8),
             range("169.254.0.0", 16),
             range("172.16.0.0", 12),
+            range("192.0.0.0", 24),
             range("192.168.0.0", 16),
+            range("198.18.0.0", 15),
+            range("240.0.0.0", 4),
             range("::", 128),
             range("::1", 128),
+            range("64:ff9b::", 96),
+            range("2002::", 16),
             range("fc00::", 7),
             range("fe80::", 10),
         )
