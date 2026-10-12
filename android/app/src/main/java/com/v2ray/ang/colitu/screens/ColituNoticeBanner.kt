@@ -58,7 +58,7 @@ fun ColituNoticeSlot() {
     ColituNoticeBanner(
         notice,
         onButton = {
-            notice.url?.let { url ->
+            com.v2ray.ang.colitu.data.ColituNotices.safeUrl(notice.url)?.let { url ->
                 ColituNoticeCenter.markClicked(notice)
                 openUrl(context, url)
             }

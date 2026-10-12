@@ -112,8 +112,10 @@ object XrayMobileAdapter {
                     addProperty("protocol", "freedom")
                 })
             })
-            add("dns", payload.getAsJsonObject("dns_policy")?.deepCopy() ?: JsonObject())
-            add("routing", payload.getAsJsonObject("routing_policy")?.deepCopy() ?: JsonObject())
+            // Only what the app accepts from the panel: no rule that sends
+            // public traffic past the tunnel, no balancers, no dns.hosts.
+            add("dns", XrayPolicySanitizer.dns(payload.get("dns_policy")?.takeIf { it.isJsonObject }?.asJsonObject))
+            add("routing", XrayPolicySanitizer.routing(payload.get("routing_policy")?.takeIf { it.isJsonObject }?.asJsonObject))
             // Per-outbound counters feed the live upload/download speed on the home screen.
             add("stats", JsonObject())
             add("policy", JsonObject().apply {

@@ -52,12 +52,14 @@ private val resetEmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
  */
 @Composable
 fun PasswordResetPanel(initialEmail: String, onBack: () -> Unit, onSignedIn: () -> Unit, onVerify: () -> Unit, onMfa: () -> Unit = {}) {
+    com.v2ray.ang.colitu.design.ColituSecureWindow()
     val loc = ColituLoc
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var email by rememberSaveable { mutableStateOf(initialEmail.trim()) }
     var codeSent by rememberSaveable { mutableStateOf(false) }
-    var code by rememberSaveable { mutableStateOf("") }
+    // One-time code: kept out of the saved-instance-state Bundle.
+    var code by remember { mutableStateOf("") }
     // Passwords stay out of the saved-instance-state Bundle.
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }

@@ -43,6 +43,15 @@ class ColituSupportModelsTest {
             "vless://0f5c2d9e-1111@pro.example.org:8443 Bearer eyJabc.def {\"password\":\"hunter2\",\"server\":\"x\"}",
         )
         assertFalse(text.contains("0f5c2d9e") || text.contains("eyJabc") || text.contains("hunter2"))
-        assertTrue(text.contains("vless://***@pro.example.org") && text.contains("\"server\":\"x\""))
+        assertTrue(text.contains("vless://***@") && text.contains("\"server\":\"x\""))
+        // Node host names are masked too.
+        assertFalse(text.contains("pro.example.org"))
+        val hosts = ColituSupportRepository.redact(
+            "{\"serverName\":\"sni.example.test\"} tls sni=sni2.example.test dial node.example.test:8443 https://mirror.example.test/capi https://api.colitu.com/api/v1",
+        )
+        for (leak in listOf("sni.example.test", "sni2.example.test", "node.example.test", "mirror.example.test")) {
+            assertFalse("$leak leaked", hosts.contains(leak))
+        }
+        assertTrue(hosts.contains("https://api.colitu.com/api/v1"))
     }
 }

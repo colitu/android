@@ -31,6 +31,7 @@ import java.util.UUID
 object Utils {
 
     private const val XUDP_BASE_KEY = "pref_xudp_base_key"
+    private const val MAX_BASE64_CHARS = 8 * 1024 * 1024
 
     private val IPV4_REGEX =
         Regex("^([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])\\.([01]?[0-9]?[0-9]|2[0-4][0-9]|25[0-5])$")
@@ -118,6 +119,8 @@ object Utils {
      */
     fun tryDecodeBase64(text: String?): String? {
         if (text.isNullOrEmpty()) return null
+        // Imported links/subscriptions: refuse oversized input instead of allocating for it.
+        if (text.length > MAX_BASE64_CHARS) return null
 
         try {
             return Base64.decode(text, Base64.NO_WRAP).toString(Charsets.UTF_8)

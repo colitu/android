@@ -85,6 +85,7 @@ fun AccountTab(
     revealPrivacy: Boolean = false,
     onPrivacyRevealed: () -> Unit = {},
 ) {
+    com.v2ray.ang.colitu.design.ColituSecureWindow()
     val loc = ColituLoc
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

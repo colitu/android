@@ -106,6 +106,8 @@ object ColituTokenManager {
             KEY_PENDING_EMAIL,
             "vpn_lkg_envelope",
             "vpn_lkg_route",
+            // The warm spare's node credentials belong to this account too.
+            "vpn_lkg_spare",
             "vpn_recovery_set",
         )
         // device_key identifies the installation and intentionally survives logout.

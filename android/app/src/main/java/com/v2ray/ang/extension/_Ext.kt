@@ -1,9 +1,7 @@
 package com.v2ray.ang.extension
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import com.v2ray.ang.AngApplication
@@ -63,35 +61,6 @@ fun String?.nullIfBlank(): String? = this?.takeIf { it.isNotBlank() }
  * @return The Long value.
  */
 fun String.toLongEx(): Long = toLongOrNull() ?: 0
-
-/**
- * Listens for package changes and executes a callback when a change occurs.
- *
- * @param onetime Whether to unregister the receiver after the first callback.
- * @param callback The callback to execute when a package change occurs.
- * @return The BroadcastReceiver that was registered.
- */
-fun Context.listenForPackageChanges(onetime: Boolean = true, callback: () -> Unit) =
-    object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            callback()
-            if (onetime) context.unregisterReceiver(this)
-        }
-    }.apply {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(this, IntentFilter().apply {
-                addAction(Intent.ACTION_PACKAGE_ADDED)
-                addAction(Intent.ACTION_PACKAGE_REMOVED)
-                addDataScheme("package")
-            }, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(this, IntentFilter().apply {
-                addAction(Intent.ACTION_PACKAGE_ADDED)
-                addAction(Intent.ACTION_PACKAGE_REMOVED)
-                addDataScheme("package")
-            })
-        }
-    }
 
 /**
  * Retrieves a serializable object from the Bundle.

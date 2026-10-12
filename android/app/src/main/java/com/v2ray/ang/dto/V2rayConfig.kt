@@ -373,7 +373,7 @@ data class V2rayConfig(
             ) {
                 return settings?.servers?.firstOrNull()?.port
             } else if (protocol.equals(EConfigType.WIREGUARD.name, true)) {
-                return settings?.peers?.firstOrNull()?.endpoint?.substringAfterLast(":")?.toInt()
+                return settings?.peers?.firstOrNull()?.endpoint?.substringAfterLast(":")?.toIntOrNull()
             } else if (protocol.equals(EConfigType.HYSTERIA2.name, true)
                 || protocol.equals(EConfigType.HYSTERIA.name, true)
             ) {

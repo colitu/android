@@ -321,6 +321,8 @@ private fun SupportThread(c: ColituController, id: String, initial: ColituSuppor
     var sending by remember { mutableStateOf(false) }
     val files = remember { mutableStateListOf<ColituSupportRepository.Attachment>() }
     val images = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    // Load order of [images]; beyond MAX_PREVIEW_BITMAPS the oldest preview is dropped.
+    val imageOrder = remember { ArrayDeque<String>() }
     var viewing by remember { mutableStateOf<ImageBitmap?>(null) }
     val scroll = rememberScrollState()
     val picker = rememberFilePicker(files) { c.showToast(it, error = true) }
@@ -415,8 +417,12 @@ private fun SupportThread(c: ColituController, id: String, initial: ColituSuppor
                         onLoadImage = { attachment ->
                             if (!images.containsKey(attachment.id)) {
                                 images[attachment.id] = null
+                                imageOrder.addLast(attachment.id)
+                                while (imageOrder.size > MAX_PREVIEW_BITMAPS) images.remove(imageOrder.removeFirst())
                                 scope.launch {
                                     val bytes = ColituSupportRepository.attachment(attachment.id)
+                                    // Evicted while loading: do not bring it back.
+                                    if (attachment.id !in imageOrder) return@launch
                                     images[attachment.id] = bytes?.let {
                                         withContext(Dispatchers.Default) { decodePreview(it)?.asImageBitmap() }
                                     }
@@ -576,7 +582,8 @@ private fun rememberFilePicker(files: MutableList<ColituSupportRepository.Attach
                     onError(ColituLoc["support.err.files"])
                     break
                 }
-                val (file, problem) = ColituSupportRepository.readAttachment(context, uri)
+                val used = files.sumOf { it.bytes.size.toLong() }
+                val (file, problem) = ColituSupportRepository.readAttachment(context, uri, ColituSupportRepository.MAX_TOTAL_BYTES - used)
                 if (file != null) files.add(file) else problem?.let { onError(ColituLoc[it]) }
             }
         }
@@ -666,6 +673,9 @@ private fun shortTime(value: Instant): String {
  * huge photo cannot run the app out of memory; null for anything that is
  * not a decodable image.
  */
+/** Decoded previews kept per conversation (each up to 1600 px a side). */
+private const val MAX_PREVIEW_BITMAPS = 16
+
 internal fun decodePreview(bytes: ByteArray, maxSide: Int = 1600): android.graphics.Bitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)

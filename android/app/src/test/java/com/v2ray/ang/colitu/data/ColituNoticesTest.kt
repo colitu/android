@@ -88,6 +88,20 @@ class ColituNoticesTest {
     }
 
     @Test
+    fun onlyColituAndMirrorHostsAreOpened() {
+        assertEquals("https://help.colitu.com/a", ColituNotices.safeUrl("https://help.colitu.com/a"))
+        assertNull(ColituNotices.safeUrl("https://evil.example.test/colitu.com"))
+        assertNull(ColituNotices.safeUrl("https://colitu.com.evil.example.test/"))
+        assertNull(ColituNotices.safeUrl("https://evilcolitu.com/"))
+        assertNull(ColituNotices.safeUrl("https://colitu.com@evil.example.test/"))
+        assertEquals(
+            "https://mirror.example.test/news",
+            ColituNotices.safeUrl("https://mirror.example.test/news", setOf("mirror.example.test")),
+        )
+        assertNull(ColituNotices.safeUrl("https://other.example.test/", setOf("mirror.example.test")))
+    }
+
+    @Test
     fun pickNextSkipsDismissedInPanelOrder() {
         val list = parse(sample)
         assertEquals("usage_80:1790812800", ColituNotices.pickNext(list, emptySet(), now)?.id)

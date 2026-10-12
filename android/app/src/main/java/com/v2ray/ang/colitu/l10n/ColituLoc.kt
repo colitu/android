@@ -537,6 +537,7 @@ object ColituLoc {
         "support.sent" to arrayOf("Обращение отправлено. Мы ответим здесь и по почте.", "Talebiniz gönderildi. Buradan ve e-postayla yanıt vereceğiz.", "Request sent. We’ll answer here and by email."),
         "support.err.subject" to arrayOf("Укажите тему и сообщение.", "Konu ve mesajı yazın.", "Add a subject and a message."),
         "support.err.file" to arrayOf("Файл больше 10 МБ или такой тип не поддерживается.", "Dosya 10 MB’tan büyük veya bu tür desteklenmiyor.", "The file is over 10 MB or the type isn’t supported."),
+        "support.err.total" to arrayOf("Вложения вместе не должны превышать 20 МБ.", "Ekler toplamda 20 MB’ı geçemez.", "Attachments can be up to 20 MB in total."),
         "support.err.files" to arrayOf("Можно прикрепить не больше 5 файлов.", "En fazla 5 dosya ekleyebilirsiniz.", "You can attach up to 5 files."),
         "support.err.unavailable" to arrayOf("Поддержка в приложении временно недоступна. Напишите на support@colitu.com.", "Uygulama içi destek geçici olarak kapalı. support@colitu.com adresine yazın.", "In-app support is unavailable right now. Write to support@colitu.com."),
         "support.help" to arrayOf("Справочный центр", "Yardım merkezi", "Help centre"),

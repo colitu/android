@@ -79,6 +79,7 @@ private val emailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
  */
 @Composable
 fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Unit, onVerify: () -> Unit, onMfa: () -> Unit = {}) {
+    com.v2ray.ang.colitu.design.ColituSecureWindow()
     val loc = ColituLoc
     val context = LocalContext.current
     val focus = LocalFocusManager.current

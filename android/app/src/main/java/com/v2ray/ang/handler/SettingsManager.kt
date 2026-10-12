@@ -33,7 +33,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Collections
 import java.util.Locale
-import kotlin.random.Random
 
 object SettingsManager {
 
@@ -311,7 +310,8 @@ object SettingsManager {
     }
 
     private fun generateRandomSocksPort(): Int {
-        return Random.nextInt(10000, 65535)
+        // Not predictable by other apps on the device (the port is local, but guessable ports help a local scanner).
+        return 10000 + java.security.SecureRandom().nextInt(65535 - 10000)
     }
 
     /**
@@ -446,7 +446,7 @@ object SettingsManager {
      *         if no valid selection is found or if the stored index is invalid.
      */
     fun getCurrentVpnInterfaceAddressConfig(): VpnInterfaceAddressConfig {
-        val selectedIndex = MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX, "0")?.toInt()
+        val selectedIndex = MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_INTERFACE_ADDRESS_CONFIG_INDEX, "0")?.toIntOrNull()
         return VpnInterfaceAddressConfig.getConfigByIndex(selectedIndex ?: 0)
     }
 
@@ -454,7 +454,9 @@ object SettingsManager {
      * Get the VPN MTU from settings, defaulting to AppConfig.VPN_MTU.
      */
     fun getVpnMtu(): Int {
+        // Outside 576..9000 the VPN builder or hev would fail; fall back to the default.
         return Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_MTU), AppConfig.VPN_MTU)
+            .takeIf { it in 576..9000 } ?: AppConfig.VPN_MTU
     }
 
     /**

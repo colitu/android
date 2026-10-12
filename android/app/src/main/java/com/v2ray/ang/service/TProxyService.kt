@@ -43,7 +43,7 @@ class TProxyService(
 //        LogUtil.i(AppConfig.TAG, "Starting HevSocks5Tunnel via JNI")
 
         val configContent = buildConfig()
-        val configFile = File(context.filesDir, "hev-socks5-tunnel.yaml").apply {
+        val configFile = configFile().apply {
             writeText(configContent)
         }
 //        LogUtil.i(AppConfig.TAG, "Config file created: ${configFile.absolutePath}")
@@ -56,6 +56,13 @@ class TProxyService(
             LogUtil.e(AppConfig.TAG, "HevSocks5Tunnel exception: ${e.message}")
         }
     }
+
+    /**
+     * The hev config holds the local SOCKS password. hev reads it on its own
+     * thread after TProxyStartService returns, so it cannot be deleted right
+     * away; it is deleted when the tunnel stops and written again at every start.
+     */
+    private fun configFile() = File(context.filesDir, "hev-socks5-tunnel.yaml")
 
     private fun buildConfig(): String {
         val socksPort = SettingsManager.getSocksPort()
@@ -107,5 +114,6 @@ class TProxyService(
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to stop hev-socks5-tunnel", e)
         }
+        runCatching { configFile().delete() }
     }
 }

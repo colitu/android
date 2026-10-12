@@ -56,7 +56,7 @@ object ColituNoticeNotifier {
     }
 
     private fun tapIntent(context: Context, notice: ColituNotice, requestCode: Int): PendingIntent {
-        val intent = notice.url
+        val intent = com.v2ray.ang.colitu.data.ColituNotices.safeUrl(notice.url)
             ?.let { Intent(Intent.ACTION_VIEW, Uri.parse(it)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
             ?: Intent(context, ColituMainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

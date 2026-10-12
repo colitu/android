@@ -70,6 +70,15 @@ object ColituUpdater {
                 return@runCatching null
             }
             val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
+            // Rollback guard: a validly signed but older manifest (replayed by
+            // a compromised web server or CDN) is never acted on once a newer
+            // one was seen. latestVersionCode is covered by signature_v2.
+            val highest = highestSeenVersionCode(context)
+            if (!acceptsManifestVersion(remoteCode, highest)) {
+                LogUtil.w(AppConfig.TAG, "Colitu update manifest is older than one seen before; ignored")
+                return@runCatching null
+            }
+            if (remoteCode > highest) rememberVersionCode(context, remoteCode)
             if (remoteCode <= installedVersionCode(context)) return@runCatching null
             val variant = pickVariant(json)
             val url = variant?.get("url")?.asString ?: json.get("downloadUrl")?.asString ?: return@runCatching null
@@ -100,6 +109,8 @@ object ColituUpdater {
         val connection = (URL(update.url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
             readTimeout = 30000
+            // colitu.com serves the APKs directly; a redirect (to any host) is refused.
+            instanceFollowRedirects = false
             setRequestProperty("User-Agent", "ColituVPN Android updater")
         }
         try {
@@ -178,6 +189,22 @@ object ColituUpdater {
     private fun installedVersionCode(context: Context): Long =
         PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0))
 
+    private const val PREFS = "colitu_update"
+    private const val KEY_HIGHEST_CODE = "highest_manifest_version_code"
+
+    /**
+     * True when a verified manifest's [remoteCode] is not below [highestSeen].
+     * The same version again (the normal case) is accepted.
+     */
+    internal fun acceptsManifestVersion(remoteCode: Long, highestSeen: Long): Boolean = remoteCode >= highestSeen
+
+    private fun highestSeenVersionCode(context: Context): Long =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_HIGHEST_CODE, 0L)
+
+    private fun rememberVersionCode(context: Context, code: Long) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_HIGHEST_CODE, code).apply()
+    }
+
     private fun pickVariant(json: JsonObject): JsonObject? {
         val variants = json.getAsJsonObject("variants") ?: return null
         val abi = Build.SUPPORTED_ABIS.firstOrNull { variants.has(it) } ?: return null
@@ -195,6 +222,7 @@ object ColituUpdater {
             connectTimeout = 10000
             readTimeout = 10000
             useCaches = false
+            instanceFollowRedirects = false
             setRequestProperty("Cache-Control", "no-cache")
         }
         try {
@@ -236,9 +264,17 @@ object ColituUpdater {
     private fun signedLikeThisApp(context: Context, apk: File, signedCert: String): Boolean {
         val pm = context.packageManager
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
-        val archive = pm.getPackageArchiveInfo(apk.path, flags) ?: return false
+        var archive = pm.getPackageArchiveInfo(apk.path, flags) ?: return false
+        var installedFlags = flags
+        // Android 9 can return an archive without signingInfo; then both sides
+        // are compared with the legacy signatures instead of failing closed.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && archive.signingInfo == null) {
+            @Suppress("DEPRECATION")
+            installedFlags = PackageManager.GET_SIGNATURES
+            archive = pm.getPackageArchiveInfo(apk.path, installedFlags) ?: return false
+        }
         if (archive.packageName != context.packageName) return false
-        val installed = pm.getPackageInfo(context.packageName, flags)
+        val installed = pm.getPackageInfo(context.packageName, installedFlags)
         val mine = certificates(installed)
         val theirs = certificates(archive)
         return certificateMatches(mine, theirs, signedCert)
@@ -249,11 +285,13 @@ object ColituUpdater {
         installed.isNotEmpty() && installed == downloaded && downloaded == setOf(signedCert.lowercase())
 
     private fun certificates(info: PackageInfo): Set<String> {
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val modern = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             info.signingInfo?.let { if (it.hasMultipleSigners()) it.apkContentsSigners else it.signingCertificateHistory }
         } else {
-            @Suppress("DEPRECATION") info.signatures
-        } ?: return emptySet()
+            null
+        }
+        @Suppress("DEPRECATION")
+        val signatures = modern ?: info.signatures ?: return emptySet()
         return signatures.map { sig ->
             MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
         }.toSet()

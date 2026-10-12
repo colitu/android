@@ -65,6 +65,7 @@ fun MfaScreen(
     onVerify: () -> Unit,
     onBack: (message: String?) -> Unit,
 ) {
+    com.v2ray.ang.colitu.design.ColituSecureWindow()
     val loc = ColituLoc
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -175,12 +176,15 @@ fun MfaScreen(
                         },
                         label = loc[if (emailCode) "verify.code" else if (recovery) "mfa.recoveryLabel" else "mfa.codeLabel"],
                         hint = if (recovery) "xxxx-xxxx-xx" else "••••••",
-                        keyboardType = if (recovery) KeyboardType.Ascii else KeyboardType.NumberPassword,
+                        // A recovery code is a long-lived secret: masked, password
+                        // keyboard (no IME learning), no one-time-code autofill.
+                        password = recovery,
+                        keyboardType = if (recovery) KeyboardType.Password else KeyboardType.NumberPassword,
                         imeAction = ImeAction.Done,
                         onSubmit = { submit() },
                         prefix = ColituIcons.Lock,
                         enabled = !loading,
-                        autofill = ContentType.SmsOtpCode,
+                        autofill = if (recovery) null else ContentType.SmsOtpCode,
                     )
                     error?.let {
                         Spacer(Modifier.height(14.dp))

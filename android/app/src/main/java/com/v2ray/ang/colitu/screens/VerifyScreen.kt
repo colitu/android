@@ -75,17 +75,19 @@ fun VerifyScreen(
     onVerified: (message: String) -> Unit,
     onSignedOut: (message: String?) -> Unit,
 ) {
+    com.v2ray.ang.colitu.design.ColituSecureWindow()
     val loc = ColituLoc
     val focus = LocalFocusManager.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val email = ColituTokenManager.getPendingVerificationEmail() ?: ColituTokenManager.getUserEmail().orEmpty()
-    var code by rememberSaveable { mutableStateOf("") }
+    // One-time code: kept out of the saved-instance-state Bundle.
+    var code by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var info by rememberSaveable { mutableStateOf<String?>(null) }
     var cooldown by rememberSaveable { mutableIntStateOf(if (codeJustSent) RESEND_COOLDOWN else 0) }
-    var lastAuto by rememberSaveable { mutableStateOf("") }
+    var lastAuto by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }
 

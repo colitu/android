@@ -36,4 +36,15 @@
             <certificates src="system" />
         </trust-anchors>
     </domain-config>
+
+    <!--
+        Plain-HTTP connectivity probes of the traffic check (CoreServiceManager:
+        the warm spare's health check and one of the connect checks). They go
+        through the local check proxy into the tunnel and only read a 204/200,
+        no data. Exact hosts, no subdomains; everything else stays HTTPS-only.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">www.gstatic.com</domain>
+        <domain includeSubdomains="false">www.msftconnecttest.com</domain>
+    </domain-config>
 </network-security-config>

@@ -61,8 +61,8 @@ object CoreOutboundBuilder {
 
             if (muxEnabled) {
                 outbound.mux?.enabled = true
-                outbound.mux?.concurrency = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_CONCURRENCY, "8").orEmpty().toInt()
-                outbound.mux?.xudpConcurrency = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_CONCURRENCY, "16").orEmpty().toInt()
+                outbound.mux?.concurrency = (MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_CONCURRENCY, "8").orEmpty().toIntOrNull() ?: 8)
+                outbound.mux?.xudpConcurrency = (MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_CONCURRENCY, "16").orEmpty().toIntOrNull() ?: 16)
                 outbound.mux?.xudpProxyUDP443 = MmkvManager.decodeSettingsString(AppConfig.PREF_MUX_XUDP_QUIC, "reject")
                 if (protocol.equals(EConfigType.VLESS.name, true) && outbound.settings?.vnext?.first()?.users?.first()?.flow?.isNotEmpty() == true) {
                     outbound.mux?.concurrency = -1
@@ -138,7 +138,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.vnext?.first()?.let { vnext ->
             vnext.address = getServerAddress(profileItem)
-            vnext.port = profileItem.serverPort.orEmpty().toInt()
+            vnext.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             vnext.users[0].id = profileItem.password.orEmpty()
             vnext.users[0].security = profileItem.method
         }
@@ -159,7 +159,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.vnext?.first()?.let { vnext ->
             vnext.address = getServerAddress(profileItem)
-            vnext.port = profileItem.serverPort.orEmpty().toInt()
+            vnext.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             vnext.users[0].id = profileItem.password.orEmpty()
             vnext.users[0].encryption = profileItem.method
             vnext.users[0].flow = profileItem.flow
@@ -181,7 +181,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.servers?.first()?.let { server ->
             server.address = getServerAddress(profileItem)
-            server.port = profileItem.serverPort.orEmpty().toInt()
+            server.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             server.password = profileItem.password
             server.method = profileItem.method
         }
@@ -202,7 +202,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.servers?.first()?.let { server ->
             server.address = getServerAddress(profileItem)
-            server.port = profileItem.serverPort.orEmpty().toInt()
+            server.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             server.password = profileItem.password
             server.flow = profileItem.flow
         }
@@ -223,7 +223,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.servers?.first()?.let { server ->
             server.address = getServerAddress(profileItem)
-            server.port = profileItem.serverPort.orEmpty().toInt()
+            server.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             if (profileItem.username.isNotNullEmpty()) {
                 val socksUsersBean = OutboundBean.OutSettingsBean.ServersBean.SocksUsersBean()
                 socksUsersBean.user = profileItem.username.orEmpty()
@@ -240,7 +240,7 @@ object CoreOutboundBuilder {
 
         outboundBean?.settings?.servers?.first()?.let { server ->
             server.address = getServerAddress(profileItem)
-            server.port = profileItem.serverPort.orEmpty().toInt()
+            server.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             if (profileItem.username.isNotNullEmpty()) {
                 val socksUsersBean = OutboundBean.OutSettingsBean.ServersBean.SocksUsersBean()
                 socksUsersBean.user = profileItem.username.orEmpty()
@@ -278,7 +278,7 @@ object CoreOutboundBuilder {
                 peer.endpoint = Utils.getIpv6Address(profileItem.server) + ":${profileItem.serverPort}"
             }
             wireguard.mtu = profileItem.mtu
-            wireguard.reserved = profileItem.reserved?.takeIf { it.isNotBlank() }?.split(",")?.filter { it.isNotBlank() }?.map { it.trim().toInt() }
+            wireguard.reserved = profileItem.reserved?.takeIf { it.isNotBlank() }?.split(",")?.filter { it.isNotBlank() }?.mapNotNull { it.trim().toIntOrNull() }
         }
 
         return outboundBean
@@ -291,7 +291,7 @@ object CoreOutboundBuilder {
 
         outboundBean.settings?.let { server ->
             server.address = getServerAddress(profileItem)
-            server.port = profileItem.serverPort.orEmpty().toInt()
+            server.port = (profileItem.serverPort.orEmpty().toIntOrNull()?.takeIf { it in 1..65535 } ?: return null)
             server.version = 2
         }
 

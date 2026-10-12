@@ -127,4 +127,12 @@ class ColituUpdateSignatureV2Test {
         assertFalse(ColituUpdater.certificateMatches(mine, setOf(cert, "33".repeat(32)), cert))
         assertFalse(ColituUpdater.certificateMatches(emptySet(), emptySet(), cert))
     }
+
+    @Test
+    fun olderManifestThanOneSeenBeforeIsRefused() {
+        assertTrue(ColituUpdater.acceptsManifestVersion(290, 0))
+        assertTrue(ColituUpdater.acceptsManifestVersion(290, 290))
+        assertTrue(ColituUpdater.acceptsManifestVersion(291, 290))
+        assertFalse(ColituUpdater.acceptsManifestVersion(289, 290))
+    }
 }

@@ -10,6 +10,7 @@ import com.v2ray.ang.util.Utils
 import java.net.URI
 
 object ShadowsocksFmt : FmtBase() {
+    private const val MAX_LEGACY_LENGTH = 4096
     /**
      * Parses a Shadowsocks URI string into a ProfileItem object.
      *
@@ -100,6 +101,8 @@ object ShadowsocksFmt : FmtBase() {
             Utils.decode(result)
         }
 
+        // Bounded input: the lazy groups of this pattern backtrack on long text.
+        if (result.length > MAX_LEGACY_LENGTH) return null
         val legacyPattern = "^(.+?):(.*)@(.+?):(\\d+?)/?$".toRegex()
         val match = legacyPattern.matchEntire(result) ?: return null
 

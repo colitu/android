@@ -72,12 +72,29 @@ object ColituNotices {
     fun pendingPush(notices: List<ColituNotice>, notified: Set<String>, now: Instant = Instant.now()): List<ColituNotice> =
         notices.filter { it.push && it.id !in notified && it.expiresAt?.isAfter(now) != false }
 
-    /** Only https links are opened; anything else (intent:, javascript:, http:) is ignored. */
-    fun safeUrl(url: String?): String? {
+    /** Hosts of the build's mirror origins (BuildConfig.COLITU_MIRRORS), lower case. */
+    private val mirrorHosts: Set<String> by lazy {
+        runCatching {
+            com.v2ray.ang.colitu.api.ColituEndpoints.parseMirrors(com.v2ray.ang.BuildConfig.COLITU_MIRRORS)
+                .mapNotNull { java.net.URI(it).host?.lowercase() }
+                .toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    /**
+     * Only https links to colitu.com (or a subdomain) or to one of the
+     * build's mirror hosts are opened; anything else (other hosts, intent:,
+     * javascript:, http:, user info) is ignored.
+     */
+    fun safeUrl(url: String?, allowedHosts: Set<String> = mirrorHosts): String? {
         val value = url?.trim().orEmpty()
         if (value.length > 2048 || !value.startsWith("https://", ignoreCase = true)) return null
         if (value.length <= "https://".length || value.any { it.isWhitespace() }) return null
-        return value
+        val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("https", ignoreCase = true) || uri.rawUserInfo != null) return null
+        val host = uri.host?.lowercase()?.trimEnd('.') ?: return null
+        val trusted = host == "colitu.com" || host.endsWith(".colitu.com") || host in allowedHosts
+        return value.takeIf { trusted }
     }
 
     /** [ids] with [id] appended (moved to the end when present), oldest dropped beyond [max]. */

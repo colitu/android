@@ -23,6 +23,8 @@ import kotlinx.coroutines.withContext
 object ColituSupportRepository {
     const val MAX_FILE_BYTES = 10 * 1024 * 1024
     const val MAX_FILES = 5
+    /** All attachments of one message together; they are held in memory until sent (low-RAM TVs). */
+    const val MAX_TOTAL_BYTES = 20L * 1024 * 1024
 
     /** The types the panel stores; it re-checks the content itself. */
     val allowedMimeTypes = arrayOf("image/*", "application/pdf", "text/plain", "application/zip", "application/json")
@@ -91,8 +93,12 @@ object ColituSupportRepository {
         if (files.isEmpty()) ColituApiClient.postRenewing(path, payload)
         else ColituApiClient.postMultipart(path, payload, files.map { ColituApiClient.UploadFile(it.name, it.bytes) })
 
-    /** Reads a picked file; null (with a reason key) when it is too big or unreadable. */
-    suspend fun readAttachment(context: Context, uri: Uri): Pair<Attachment?, String?> = withContext(Dispatchers.IO) {
+    /**
+     * Reads a picked file; null (with a reason key) when it is too big or
+     * unreadable, or when it does not fit in [remaining] bytes of the
+     * message's [MAX_TOTAL_BYTES].
+     */
+    suspend fun readAttachment(context: Context, uri: Uri, remaining: Long = MAX_TOTAL_BYTES): Pair<Attachment?, String?> = withContext(Dispatchers.IO) {
         runCatching<Pair<Attachment?, String?>> {
             val resolver = context.contentResolver
             var name = "file"
@@ -104,6 +110,7 @@ object ColituSupportRepository {
                 }
             }
             if (size > MAX_FILE_BYTES) return@runCatching null to "support.err.file"
+            if (size > remaining) return@runCatching null to "support.err.total"
             val bytes = resolver.openInputStream(uri)?.use { stream ->
                 val buffer = java.io.ByteArrayOutputStream()
                 val chunk = ByteArray(64 * 1024)
@@ -112,6 +119,7 @@ object ColituSupportRepository {
                     if (read < 0) break
                     buffer.write(chunk, 0, read)
                     if (buffer.size() > MAX_FILE_BYTES) return@runCatching null to "support.err.file"
+                    if (buffer.size() > remaining) return@runCatching null to "support.err.total"
                 }
                 buffer.toByteArray()
             } ?: return@runCatching null to "support.err.file"
@@ -186,6 +194,18 @@ object ColituSupportRepository {
         "\\b(password|pass|pwd|pbk|sid|token|access_token|refresh_token|key|auth|uuid)=[^&\\s\"]+",
         RegexOption.IGNORE_CASE,
     )
+    // Node names: TLS SNI / server_name and host fields, share-link sni=/host=
+    // parameters, "host:port" pairs and URL hosts other than colitu.com.
+    private val jsonHost = Regex(
+        "(\"(?:serverName|server_name|sni|host|address|latency_host|latencyHost)\"\\s*:\\s*)\"[^\"]*\"",
+        RegexOption.IGNORE_CASE,
+    )
+    private val queryHost = Regex("\\b(sni|host|servername|peer)=[^&\\s\"]+", RegexOption.IGNORE_CASE)
+    private val urlHost = Regex("\\b([a-z][a-z0-9+.-]*://(?:[^@/\\s]*@)?)([a-z0-9-]+(?:\\.[a-z0-9-]+)+)", RegexOption.IGNORE_CASE)
+    private val hostPort = Regex("\\b(?:[a-z0-9-]+\\.)+[a-z]{2,}(?=:\\d{1,5}\\b)", RegexOption.IGNORE_CASE)
+
+    private fun ownHost(host: String): Boolean = host.lowercase().let { it == "colitu.com" || it.endsWith(".colitu.com") }
+
     private val email = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}\\b")
     private val ipv4 = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
     private val ipv6 = Regex("\\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\\b", RegexOption.IGNORE_CASE)
@@ -196,6 +216,10 @@ object ColituSupportRepository {
         .replace(jsonSecret, "$1\"***\"")
         .replace(querySecret, "$1=***")
         .replace(email, "***@***")
+        .replace(jsonHost, "$1\"***\"")
+        .replace(queryHost, "$1=***")
+        .replace(urlHost) { m -> if (ownHost(m.groupValues[2])) m.value else m.groupValues[1] + "***" }
+        .replace(hostPort) { m -> if (ownHost(m.value)) m.value else "***" }
         .replace(ipv4, "x.x.x.x")
         .replace(ipv6, "x:x::x")
 }

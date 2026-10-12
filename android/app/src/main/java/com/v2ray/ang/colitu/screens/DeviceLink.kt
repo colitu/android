@@ -88,6 +88,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LINK_RETRY_MS = 5_000L
+private const val LINK_RETRY_MAX_MS = 60_000L
+
+/** 5 s after the first failure, doubling up to 60 s. */
+internal fun linkRetryDelayMs(failures: Int): Long =
+    (LINK_RETRY_MS shl failures.coerceIn(0, 4)).coerceAtMost(LINK_RETRY_MAX_MS)
 
 /** "ABCD2345" → "ABCD-2345", the way the website shows it. */
 fun linkCodeShown(code: String): String = if (code.length == 8) "${code.take(4)}-${code.drop(4)}" else code
@@ -107,16 +112,20 @@ fun TvLinkPanel(onSignedIn: () -> Unit, onVerify: () -> Unit, onUsePassword: () 
     var generation by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf<String?>(null) }
     var finished by remember { mutableStateOf(false) }
+    // Consecutive failures; the retry waits 5 s, 10 s, 20 s ... up to 60 s.
+    var failures by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(generation) {
         start = null
         val opened = safeCall { ColituAuthRepository.startLink() }.getOrElse {
             notice = colituErrorMessage(it.message)
-            delay(LINK_RETRY_MS)
+            delay(linkRetryDelayMs(failures))
+            failures++
             generation++
             return@LaunchedEffect
         }
         start = opened
+        var failed = false
         val deadline = System.currentTimeMillis() + opened.expiresInSeconds * 1000
         while (!finished) {
             delay(opened.intervalSeconds * 1000)
@@ -142,12 +151,21 @@ fun TvLinkPanel(onSignedIn: () -> Unit, onVerify: () -> Unit, onUsePassword: () 
                     }
                     else -> {
                         notice = colituErrorMessage(poll.code)
+                        failed = true
                         break
                     }
                 }
             }
         }
-        if (!finished) generation++
+        if (!finished) {
+            if (failed) {
+                delay(linkRetryDelayMs(failures))
+                failures++
+            } else {
+                failures = 0
+            }
+            generation++
+        }
     }
 
     ColituPanel(padding = PaddingValues(24.dp)) {
