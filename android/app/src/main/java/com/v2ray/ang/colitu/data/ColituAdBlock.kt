@@ -31,12 +31,13 @@ object ColituAdBlock {
     val dnsHosts: Set<String> get() = hostsOf(dohServers)
 
     /**
-     * Keeps the resolvers of a bootstrap answer (`ad_block.doh`). An answer
-     * without the field (an older panel) leaves the stored list as it is; an
-     * empty list clears it.
+     * Keeps the resolvers of a bootstrap answer (`ad_block.doh`). Only a
+     * non-empty list replaces the stored one: an answer without the field (an
+     * older panel) or with an empty list (a panel whose list is not set) never
+     * turns ad blocking off, like on Windows and Linux.
      */
     fun remember(bootstrap: JsonObject) {
-        val servers = serversOf(bootstrap) ?: return
+        val servers = serversOf(bootstrap)?.takeIf { it.isNotEmpty() } ?: return
         store.encode(KEY_SERVERS, servers.joinToString(","))
     }
 

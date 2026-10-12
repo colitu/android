@@ -30,7 +30,9 @@ if (releaseSigningRequired && mirrors.isBlank()) {
 
 android {
     namespace = "com.v2ray.ang"
-    compileSdk = 36
+    // 37.2: OkHttp 5.5 and core-ktx 1.19 compile against API 37; targetSdk stays 36 (runtime behaviour unchanged).
+    compileSdk = 37
+    compileSdkMinor = 2
 
     defaultConfig {
         applicationId = "com.colitulu"
