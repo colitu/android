@@ -2,11 +2,12 @@ package com.v2ray.ang.colitu.data
 
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ColituAdBlockTest {
-    // The real servers come from the build (ADBLOCK_DOH); these are stand-ins.
+    // The real servers come from the panel's bootstrap (ad_block.doh); these are stand-ins.
     private val servers = listOf("https://dns-a.example.test:3443/dns-query", "https://dns-b.example.test:3443/dns-query")
 
     private val runtime = """
@@ -53,5 +54,16 @@ class ColituAdBlockTest {
         val twice = JsonParser.parseString(ColituAdBlock.apply(once, on = true, servers = servers)).asJsonObject
         assertEquals(1, twice.getAsJsonArray("outbounds").count { it.asJsonObject.get("tag").asString == "dns-out" })
         assertEquals(1, twice.getAsJsonObject("routing").getAsJsonArray("rules").count { it.asJsonObject.get("outboundTag")?.asString == "dns-out" })
+    }
+
+    @Test
+    fun serversComeFromTheBootstrapAnswer() {
+        val answer = JsonParser.parseString(
+            """{"ad_block":{"doh":["${servers[0]}","http://plain.example.test/dns-query",7,"${servers[1]}"]}}""",
+        ).asJsonObject
+        assertEquals(servers, ColituAdBlock.serversOf(answer))
+        assertEquals(emptyList<String>(), ColituAdBlock.serversOf(JsonParser.parseString("""{"ad_block":{"doh":[]}}""").asJsonObject))
+        // An older panel without the field leaves the stored list alone.
+        assertNull(ColituAdBlock.serversOf(JsonParser.parseString("""{"maintenance":{"active":false}}""").asJsonObject))
     }
 }

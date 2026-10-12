@@ -111,4 +111,15 @@ class ColituCertPinsTest {
         override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
+
+    /** The updater (HttpURLConnection) is pinned by the manifest's network config: same roots, same end date. */
+    @Test
+    fun networkSecurityConfigMatchesThePinSet() {
+        val xml = java.io.File("src/main/res/xml/network_security_config.xml").readText()
+        val pinSet = xml.substringAfter("<pin-set").substringBefore("</pin-set>")
+        val pins = Regex("""<pin digest="SHA-256">([^<]+)</pin>""").findAll(pinSet).map { it.groupValues[1] }.toSet()
+        assertEquals(ColituCertPins.PINS, pins)
+        val expiration = Regex("""expiration="([0-9-]+)"""").find(pinSet)!!.groupValues[1]
+        assertEquals(ColituCertPins.EXPIRES.toString().substring(0, 10), expiration)
+    }
 }

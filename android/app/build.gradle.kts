@@ -20,13 +20,8 @@ val releaseKeyPassword = secret("KEY_PASS", "COLITU_ANDROID_KEY_PASSWORD") ?: re
 val releaseSigningConfigured = listOf(releaseKeystorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }
 val releaseSigningRequired = providers.gradleProperty("COLITU_REQUIRE_RELEASE_SIGNING").orNull == "true" ||
     System.getenv("COLITU_REQUIRE_RELEASE_SIGNING") == "true"
-// Ad-blocking DNS-over-HTTPS URLs (comma separated). They point at Colitu's
-// own nodes, so they stay out of the public repository like the signing keys;
-// without them the ad-blocking switch is not shown.
-val adBlockDoh = secret("ADBLOCK_DOH", "COLITU_ADBLOCK_DOH").orEmpty()
-if (releaseSigningRequired && adBlockDoh.isBlank()) {
-    throw GradleException("ADBLOCK_DOH (signing.properties) or COLITU_ADBLOCK_DOH is required for a release build")
-}
+// Ad-blocking resolvers are not built in: the panel names them in the
+// signed-in bootstrap (ColituAdBlock.remember), so no node host ships in the APK.
 // Mirror origins of the API (comma separated, https://host). Also kept out of the public repository.
 val mirrors = secret("MIRRORS", "COLITU_MIRRORS").orEmpty()
 if (releaseSigningRequired && mirrors.isBlank()) {
@@ -70,7 +65,6 @@ android {
         buildConfigField("boolean", "COLITU_FORCE_TV", "false")
         // Only the colitu.com APK ("direct") installs its own updates.
         buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
-        buildConfigField("String", "COLITU_ADBLOCK_DOH", "\"${adBlockDoh.replace("\"", "")}\"")
         buildConfigField("String", "COLITU_MIRRORS", "\"${mirrors.replace("\"", "")}\"")
         // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
         buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())

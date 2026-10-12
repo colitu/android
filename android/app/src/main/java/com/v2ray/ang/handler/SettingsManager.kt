@@ -341,6 +341,24 @@ object SettingsManager {
         } catch (e: Exception) {
             LogUtil.e(ANG_PACKAGE, "asset copy failed", e)
         }
+        removeLegacyExternalAssets(context)
+    }
+
+    /**
+     * Before 2.5.4 the geo files lived in the external files dir, which other
+     * apps can rewrite on Android 9 and older. The core no longer reads them
+     * there; the stale copies are removed so nothing can be planted next to them.
+     */
+    private fun removeLegacyExternalAssets(context: Context) {
+        runCatching {
+            val legacy = File(context.getExternalFilesDir(null) ?: return, AppConfig.DIR_ASSETS)
+            if (!legacy.isDirectory) return
+            arrayOf(AppConfig.GEOSITE_DAT, AppConfig.GEOIP_DAT, AppConfig.GEOIP_ONLY_CN_PRIVATE_DAT)
+                .map { File(legacy, it) }
+                .filter { it.exists() }
+                .forEach { it.delete() }
+            if (legacy.list()?.isEmpty() == true) legacy.delete()
+        }.onFailure { LogUtil.w(AppConfig.TAG, "legacy asset cleanup failed: ${it.javaClass.simpleName}") }
     }
 
     /**

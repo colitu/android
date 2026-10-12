@@ -41,7 +41,6 @@ jobs:
           COLITU_ANDROID_KEY_PASSWORD: ${{ secrets.COLITU_ANDROID_KEY_PASSWORD }}
           COLITU_REQUIRE_RELEASE_SIGNING: 'true'
           # Ad-block DoH hosts (node domains) stay out of the repository.
-          COLITU_ADBLOCK_DOH: ${{ secrets.COLITU_ADBLOCK_DOH }}
           # API mirror origins; required by build.gradle.kts for a signed release.
           COLITU_MIRRORS: ${{ secrets.COLITU_MIRRORS }}
         # Play: signed AAB. colitu.com: the self-updating "direct" APKs.

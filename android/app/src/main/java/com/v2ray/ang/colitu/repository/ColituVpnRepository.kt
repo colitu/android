@@ -160,7 +160,10 @@ object ColituVpnRepository {
 
     suspend fun fetchBootstrap(): Bootstrap = withContext(Dispatchers.IO) {
         when (val r = ColituApiClient.get("/client/bootstrap")) {
-            is ColituApiClient.ApiResult.Success -> Bootstrap.Ok(r.data)
+            is ColituApiClient.ApiResult.Success -> {
+                com.v2ray.ang.colitu.data.ColituAdBlock.remember(r.data)
+                Bootstrap.Ok(r.data)
+            }
             is ColituApiClient.ApiResult.Error ->
                 if (r.message == com.v2ray.ang.colitu.data.ColituDevicePause.CODE) {
                     Bootstrap.Paused(com.v2ray.ang.colitu.data.ColituDevicePause.fromJson(r.body))

@@ -4,7 +4,6 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.tencent.mmkv.MMKV
-import com.v2ray.ang.BuildConfig
 
 /**
  * Optional ad and tracker blocking. When it is on, every DNS lookup of the
@@ -15,18 +14,38 @@ import com.v2ray.ang.BuildConfig
 object ColituAdBlock {
     private const val KEY_ENABLED = "ad_block"
 
-    /**
-     * Tried in order; the next one answers when one is down. Given at build
-     * time (ADBLOCK_DOH in signing.properties): they are Colitu's own nodes
-     * and stay out of the public source.
-     */
-    val dohServers: List<String> = parseServers(BuildConfig.COLITU_ADBLOCK_DOH)
+    private const val KEY_SERVERS = "ad_block_doh"
 
-    /** False in builds without servers; the switch is then not shown. */
+    /**
+     * Tried in order; the next one answers when one is down. They come from
+     * the panel with the signed-in bootstrap ([remember]) and are kept here:
+     * Colitu's own nodes, not compiled into the public app, and replaceable
+     * without a release.
+     */
+    val dohServers: List<String> get() = parseServers(store.decodeString(KEY_SERVERS).orEmpty())
+
+    /** False until the panel has named servers; the switch is then not shown. */
     val available: Boolean get() = dohServers.isNotEmpty()
 
     /** Nodes that run one of the [dohServers]; the server list tags them. */
-    val dnsHosts: Set<String> = hostsOf(dohServers)
+    val dnsHosts: Set<String> get() = hostsOf(dohServers)
+
+    /**
+     * Keeps the resolvers of a bootstrap answer (`ad_block.doh`). An answer
+     * without the field (an older panel) leaves the stored list as it is; an
+     * empty list clears it.
+     */
+    fun remember(bootstrap: JsonObject) {
+        val servers = serversOf(bootstrap) ?: return
+        store.encode(KEY_SERVERS, servers.joinToString(","))
+    }
+
+    /** `ad_block.doh` of a bootstrap answer (https URLs only), null when the answer has no such field. */
+    internal fun serversOf(bootstrap: JsonObject): List<String>? {
+        val list = bootstrap.get("ad_block")?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("doh")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+        return parseServers(list.mapNotNull { it.takeIf { e -> e.isJsonPrimitive }?.asString }.joinToString(","))
+    }
 
     internal fun parseServers(value: String): List<String> =
         value.split(',').map { it.trim() }.filter { it.startsWith("https://") }

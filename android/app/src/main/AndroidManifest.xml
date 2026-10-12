@@ -74,6 +74,7 @@
             android:name=".colitu.ui.ColituMainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:taskAffinity=""
             android:theme="@style/ColituTheme"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

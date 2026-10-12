@@ -101,6 +101,7 @@ object ColituServerRepository {
     private suspend fun bootstrapFailure(): String? =
         when (val bootstrap = ColituApiClient.get("/client/bootstrap")) {
             is ColituApiClient.ApiResult.Success -> {
+                com.v2ray.ang.colitu.data.ColituAdBlock.remember(bootstrap.data)
                 val policy = runCatching { ClientBootstrapPolicy.fromJson(bootstrap.data) }.getOrNull()
                     ?: return "CONFIG_NOT_READY"
                 if (policy.denial != null) {
