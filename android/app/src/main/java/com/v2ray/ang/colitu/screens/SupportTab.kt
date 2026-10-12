@@ -523,7 +523,7 @@ private fun Bubble(
                 Spacer(Modifier.height(4.dp))
             }
             if (message.body.isNotBlank()) {
-                CText(message.body, ColituText.body.copy(fontSize = 15.sp, lineHeight = 21.sp), color = if (mine) ColituColors.onAccent else ColituColors.text)
+                CText(message.body.take(MAX_MESSAGE_CHARS), ColituText.body.copy(fontSize = 15.sp, lineHeight = 21.sp), color = if (mine) ColituColors.onAccent else ColituColors.text)
             }
             message.attachments.forEach { attachment ->
                 Spacer(Modifier.height(8.dp))
@@ -683,6 +683,8 @@ private fun shortTime(value: Instant): String {
 private const val MAX_PREVIEW_BITMAPS = 16
 private const val MAX_CONVERSATIONS = 200
 private const val MAX_THREAD_MESSAGES = 500
+// One message is drawn as a single text block; a server-sent giant body must not stall the UI thread.
+private const val MAX_MESSAGE_CHARS = 20_000
 
 internal fun decodePreview(bytes: ByteArray, maxSide: Int = 1600): android.graphics.Bitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
