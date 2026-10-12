@@ -859,8 +859,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private fun beginMetricRecovery(failedAt: Long, protocol: String?, detected: Boolean, nodeId: String? = null, failedProtocol: String? = protocol) {
         val now = android.os.SystemClock.elapsedRealtime()
-        ColituMetrics.count("recoveries")
-        if (protocol != null) ColituMetrics.count("protocol_switches")
+        // One recovery until it ends: a drop followed by a failed transport inside the same
+        // reconnect is not a second recovery (it was counted twice and never ended).
+        if (metricRecoveryAt != 0L) return
         if (detected && failedAt > 0L) ColituMetrics.observe("detection_ms", now - failedAt)
         metricRecoveryAt = if (failedAt > 0L) failedAt else now
         metricRecoveryFrom = protocol
@@ -882,6 +883,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
             flap = ColituMetricsRules.isFlap(metricLastSwitch, from, newProtocol, now)
             metricLastSwitch = Triple(from, newProtocol, now)
         }
+        // Counted when the recovery ends, so attempts and successes stay in step (a recovery the
+        // process did not live to finish used to count as a failure that never happened).
+        ColituMetrics.count("recoveries")
+        if (from != null) ColituMetrics.count("protocol_switches")
         acRecord(ColituAcEvents.recovery(acRecoveryNode, acRecoveryProtocol, newProtocol.takeIf { ok }, ok, code, ms, acRecoveryDetectMs, acRecoverySpare))
         if (from != null) acRecord(ColituAcEvents.switch(from, newProtocol.takeIf { ok }, ok && newProtocol != from, flap))
         if (!ok) return
@@ -901,10 +906,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         metricAttemptAt = 0L
         metricFirst = false
-        if (metricRecoveryAt != 0L) {
-            ColituMetrics.count("recoveries", -1)
-            if (metricRecoveryFrom != null) ColituMetrics.count("protocol_switches", -1)
-        }
         metricRecoveryAt = 0L
         metricRecoveryFrom = null
     }
