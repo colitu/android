@@ -45,6 +45,7 @@ object SettingsManager {
         initRoutingRulesets(context)
         migrateServerListToSubscriptions()
         migrateHysteria2PinSHA256()
+        removeLegacyExternalAssets(context)
     }
 
     /**
