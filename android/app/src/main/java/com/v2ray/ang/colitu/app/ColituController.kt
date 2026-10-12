@@ -788,6 +788,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** The running connect is in automatic mode; how many servers failed before the one that is tried. */
     private var acAuto = true
     private var acFallbacks = 0
+    private var acTransportFallback = false
     /** The node and transport tried last (what a failed connect names). */
     private var acNode: String? = null
     private var acProtocol: String? = null
@@ -828,6 +829,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (metricAttemptAt == 0L) return
         val ms = android.os.SystemClock.elapsedRealtime() - metricAttemptAt
         metricAttemptAt = 0L
+        // Internet verified through the tunnel: once per connect (not per transport tried, which
+        // counted blocked transports and showed ~60 %); an offline phone is not a failed check.
+        if (ok || code != "network_error") {
+            ColituMetrics.count("functional_checks")
+            if (ok) ColituMetrics.count("functional_ok")
+        }
         if (ok) {
             ColituMetrics.count("connect_successes")
             ColituMetrics.count("sessions")
@@ -838,7 +845,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         acRecord(
             ColituAcEvents.connect(
                 nodeId ?: acNode, protocol ?: acProtocol, ok, code, ms,
-                firstTry = acFallbacks == 0, auto = acAuto,
+                // First try: the first round on the first server (its primary or its spare), as on Windows.
+                firstTry = acFallbacks == 0 && !acTransportFallback, auto = acAuto,
             ),
         )
         if (metricFirst) ColituMetrics.markFirstDone()
@@ -1073,6 +1081,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val automatic = autoSelection && !server.isMultihop
         acAuto = automatic
         acFallbacks = 0
+        acTransportFallback = false
         if (automatic) acChoice(server)
         val connectDeadline = begin + CONNECT_BUDGET_MS
         val failed = mutableListOf<String>()
@@ -1501,8 +1510,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val checkBegin = android.os.SystemClock.elapsedRealtime()
             val (primaryMs, spareMs) = verifyPair(budget, withSpare = spareConfig != null)
             val winner = ColituWarmSpare.parallelWinner(primaryMs, spareMs)
-            ColituMetrics.count("functional_checks")
-            if (winner != ColituWarmSpare.ParallelWinner.None) ColituMetrics.count("functional_ok")
             LogUtil.w(
                 AppConfig.TAG,
                 "Colitu: parallel round: ${config.protocolType} vs ${spareConfig?.let { "${it.protocolType} on ${it.serverId.take(8)}" } ?: "none"} " +
@@ -1512,6 +1519,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val actual = if (server.isMultihop) server else servers.firstOrNull { it.id == config.serverId } ?: server
             when (winner) {
                 ColituWarmSpare.ParallelWinner.Primary -> {
+                    if (attempt > 0) acTransportFallback = true
                     if (spareConfig != null && spareMs != null && spareMs < 0) {
                         // Known dead at once: noted, the spare probe replaces it later.
                         LogUtil.w(AppConfig.TAG, "Colitu: spare ${spareConfig.protocolType} failed its first check")
@@ -1528,6 +1536,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     val newServer = servers.firstOrNull { it.id == newPrimary.serverId } ?: actual
                     val newSpare = spareAfterSwap(newPrimary, sameServer, config)
                     stopService(force = true, hold = true)
+                    if (attempt > 0) acTransportFallback = true
                     val swappedGuid = startCore(context, newPrimary, newSpare) ?: continue
                     val delayMs = verifyTunnel(budget, VerifyPath.Primary)
                     if (delayMs >= 0) {
