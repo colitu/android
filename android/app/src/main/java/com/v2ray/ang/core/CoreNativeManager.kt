@@ -66,7 +66,7 @@ object CoreNativeManager {
      */
     fun measureOutboundDelay(config: String, testUrl: String): Long {
         return try {
-            Libv2ray.measureOutboundDelay(config, testUrl)
+            Libv2ray.measureOutboundDelay(com.v2ray.ang.colitu.data.XrayRuleTags.unique(config), testUrl)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to measure outbound delay", e)
             -1L

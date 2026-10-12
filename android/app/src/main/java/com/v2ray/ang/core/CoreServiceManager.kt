@@ -186,7 +186,8 @@ object CoreServiceManager {
 
         val result = CoreConfigManager.getV2rayConfig(service, guid)
         if (!result.status) error(result.errorMessage.ifBlank { "ENGINE_FAILED" })
-        LogUtil.w(AppConfig.TAG, "Colitu: core routing ${com.v2ray.ang.colitu.data.ColituWarmSpare.describe(result.content)}")
+        val content = com.v2ray.ang.colitu.data.XrayRuleTags.unique(result.content)
+        LogUtil.w(AppConfig.TAG, "Colitu: core routing ${com.v2ray.ang.colitu.data.ColituWarmSpare.describe(content)}")
 
         currentConfig = config
         // hev-socks5-tunnel reads the TUN; Xray only listens on its
@@ -194,7 +195,7 @@ object CoreServiceManager {
         val tunFd = if (SettingsManager.isUsingHevTun()) 0 else vpnInterface?.fd ?: 0
 
         NotificationManager.showNotification(currentConfig)
-        coreController.startLoop(result.content, tunFd)
+        coreController.startLoop(content, tunFd)
         if (!coreController.isRunning) error("ENGINE_FAILED")
 
         colituStore.encode(AppConfig.PREF_COLITU_CONNECTED_AT, System.currentTimeMillis())
@@ -366,6 +367,19 @@ object CoreServiceManager {
                 else response.request.newBuilder()
                     .header("Proxy-Authorization", okhttp3.Credentials.basic(verify.user, verify.password))
                     .build()
+            }
+            // A plain-http check (the spare's) is sent to the proxy as is: Xray answers it
+            // without credentials with a 407 and closes the connection, which OkHttp would
+            // reuse for the retry (no retry on connection failure here), so the check always
+            // failed. The login goes along from the start; Xray strips it before the origin.
+            .addInterceptor { chain ->
+                val request = chain.request()
+                chain.proceed(
+                    if (request.isHttps) request
+                    else request.newBuilder()
+                        .header("Proxy-Authorization", okhttp3.Credentials.basic(verify.user, verify.password))
+                        .build(),
+                )
             }
             .callTimeout(COLITU_CHECK_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             .followRedirects(false)
