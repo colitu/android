@@ -342,15 +342,20 @@ object XrayMobileAdapter {
             })
             // Port hopping: Russian mobile networks throttle one long-lived
             // UDP flow, so the client moves to another port of the range every
-            // few seconds. Xray 26 reads it only from finalmask.quicParams
-            // (hysteriaSettings.udphop is silently ignored). settings.port
+            // few seconds. Since Xray 26.9.8 it is a UDP mask (finalmask.udp,
+            // type "udphop"); the older finalmask.quicParams.udpHop is ignored
+            // without an error, so hopping silently stopped. settings.port
             // stays the endpoint port.
             hopPorts(t)?.let { ports ->
                 add("finalmask", JsonObject().apply {
-                    add("quicParams", JsonObject().apply {
-                        add("udpHop", JsonObject().apply {
-                            addProperty("ports", ports)
-                            addProperty("interval", hopInterval(t).toString())
+                    add("udp", JsonArray().apply {
+                        add(JsonObject().apply {
+                            addProperty("type", "udphop")
+                            add("settings", JsonObject().apply {
+                                addProperty("mode", "intervalLocal,intervalRemote")
+                                addProperty("interval", hopInterval(t))
+                                addProperty("remotePorts", ports)
+                            })
                         })
                     })
                 })

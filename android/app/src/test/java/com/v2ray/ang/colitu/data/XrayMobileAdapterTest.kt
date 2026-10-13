@@ -262,12 +262,15 @@ class XrayMobileAdapterTest {
         val outbound = hysteria2Outbound("""{"type":"hysteria","hop_ports":"20000-40000","hop_interval":30}""")
         assertEquals(8443, outbound.getAsJsonObject("settings").get("port").asInt)
         val stream = outbound.getAsJsonObject("streamSettings")
-        val hop = stream.getAsJsonObject("finalmask").getAsJsonObject("quicParams").getAsJsonObject("udpHop")
-        assertEquals("20000-40000", hop.get("ports").asString)
-        // Xray 26 wants the interval as a string.
-        assertTrue(hop.get("interval").asJsonPrimitive.isString)
-        assertEquals("30", hop.get("interval").asString)
-        // The old shape is ignored by Xray 26 and must not be emitted.
+        val finalmask = stream.getAsJsonObject("finalmask")
+        val mask = finalmask.getAsJsonArray("udp").single().asJsonObject
+        assertEquals("udphop", mask.get("type").asString)
+        val hop = mask.getAsJsonObject("settings")
+        assertEquals("20000-40000", hop.get("remotePorts").asString)
+        assertEquals("intervalLocal,intervalRemote", hop.get("mode").asString)
+        assertEquals(30, hop.get("interval").asInt)
+        // Both older shapes are ignored by Xray 26.10 without an error and must not be emitted.
+        assertFalse(finalmask.has("quicParams"))
         assertFalse(stream.getAsJsonObject("hysteriaSettings").has("udphop"))
     }
 
@@ -275,8 +278,8 @@ class XrayMobileAdapterTest {
     fun hysteria2HopIntervalDefaultsWhenMissing() {
         val outbound = hysteria2Outbound("""{"type":"hysteria","hop_ports":"20000-40000"}""")
         val hop = outbound.getAsJsonObject("streamSettings").getAsJsonObject("finalmask")
-            .getAsJsonObject("quicParams").getAsJsonObject("udpHop")
-        assertEquals("30", hop.get("interval").asString)
+            .getAsJsonArray("udp").single().asJsonObject.getAsJsonObject("settings")
+        assertEquals(30, hop.get("interval").asInt)
     }
 
     @Test
