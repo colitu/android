@@ -54,7 +54,6 @@ import com.v2ray.ang.colitu.design.ColituNotice
 import com.v2ray.ang.colitu.design.ColituPanel
 import com.v2ray.ang.colitu.design.ColituRadius
 import com.v2ray.ang.colitu.design.ColituRoundIcon
-import com.v2ray.ang.colitu.data.ColituAdBlock
 import com.v2ray.ang.colitu.design.ColituSegment
 import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.ColituSpinner
@@ -228,7 +227,7 @@ fun AccountTab(
             value = c.warmSpare,
             onChange = { c.setWarmSpareEnabled(it) },
         )
-        if (ColituAdBlock.available) {
+        if (c.adBlockAvailable) {
             Spacer(Modifier.height(8.dp))
             ColituSwitchRow(
                 icon = ColituIcons.EyeSlash,

@@ -50,7 +50,15 @@ object ColituNoticeNotifier {
                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
                 .setAutoCancel(true)
                 .setContentIntent(tapIntent(context, notice, notificationId))
-            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            // Checked again right here (the user can revoke it at any moment); lint wants it next to notify.
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) return@runCatching false
+            try {
+                NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            } catch (_: SecurityException) {
+                return@runCatching false
+            }
             true
         }.getOrDefault(false)
     }

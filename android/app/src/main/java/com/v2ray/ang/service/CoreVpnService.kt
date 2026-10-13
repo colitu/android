@@ -298,7 +298,11 @@ class CoreVpnService : VpnService(), ServiceControl {
             }
         }
 
-        if (ColituAdBlock.enabled) {
+        // Decided by the config the core is about to run (not the setting): a
+        // profile built before the setting or the panel's resolver list changed
+        // keeps its own DNS until the next connect rebuilds it.
+        val adBlockConfig = MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerRaw(it) }
+        if (ColituAdBlock.activeIn(adBlockConfig)) {
             // Xray answers port 53 itself (ColituAdBlock). The tunnel's own
             // peer address has no DoT/DoH, so Android's automatic Private DNS
             // and Chrome's secure DNS cannot upgrade around the blocking.

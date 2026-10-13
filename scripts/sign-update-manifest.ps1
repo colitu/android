@@ -31,6 +31,19 @@
         signingCertSha256=<lower-case hex, no colons>
         variant=<abi> <url> <lower-case sha256> <sizeBytes>   (ABIs in ordinal order)
 
+    The v2 text never changes (2.6.0 .. 2.9.0 verify exactly it).
+
+    "signature_v3" - freshness, read by Colitu 2.9.1+ (ColituUpdateSignature.
+    messageV3): the v2 text plus one line
+
+        expiresAt=<ISO-8601 UTC instant, e.g. 2026-12-31T00:00:00Z>
+
+    "expiresAt" is set to now + -ExpiresDays (default 60). Once an app has
+    seen a manifest with a valid signature_v3 it refuses manifests that are
+    expired or lack it, so the manifest must be signed again before it
+    expires (every release does that; re-run this script otherwise).
+    -ExpiresDays 0 leaves expiresAt and signature_v3 out.
+
     With -ApkDir every APK the manifest links (matched by file name) is read
     from that folder: its sha256 and size are written into the manifest and
     the signing certificate is read with apksigner. All APKs must carry the
@@ -47,7 +60,8 @@ param(
     [string]$Output = $Manifest,
     [string]$ApkDir,
     [string]$SigningKeyPath = $(if ($env:COLITU_ANDROID_UPDATE_SIGNING_KEY) { $env:COLITU_ANDROID_UPDATE_SIGNING_KEY } else { Join-Path $PSScriptRoot "..\..\_gizli_anahtarlar\colitu-android--update-signing-private.pem" }),
-    [string]$Apksigner = $env:COLITU_APKSIGNER
+    [string]$Apksigner = $env:COLITU_APKSIGNER,
+    [ValidateRange(0, 365)][int]$ExpiresDays = 60
 )
 $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Run with PowerShell 7 (pwsh)." }
@@ -56,6 +70,11 @@ if (-not (Test-Path -LiteralPath $SigningKeyPath)) { throw "Signing key not foun
 $json = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json -AsHashtable
 $json.Remove("signature") | Out-Null
 $json.Remove("signature_v2") | Out-Null
+$json.Remove("signature_v3") | Out-Null
+$json.Remove("expiresAt") | Out-Null
+if ($ExpiresDays -gt 0) {
+    $json["expiresAt"] = [DateTime]::UtcNow.Date.AddDays($ExpiresDays).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+}
 
 function Text($value) { if ($null -eq $value) { "" } else { [string]$value } }
 function Int64Text($value) {
@@ -154,6 +173,8 @@ if ($v2 | Where-Object { $_ -match "[`r`n]" }) { throw "A manifest field contain
 
 $messageV1 = [string]::Join("`n", $v1)
 $messageV2 = [string]::Join("`n", $v2)
+# ── v3 (Colitu 2.9.1+): v2 + expiresAt ──
+$messageV3 = if ($json.ContainsKey("expiresAt")) { "$messageV2`nexpiresAt=$($json["expiresAt"])" } else { $null }
 
 $key = [System.Security.Cryptography.ECDsa]::Create()
 try {
@@ -169,8 +190,10 @@ try {
     }
     $json["signature"] = & $sign $messageV1
     $json["signature_v2"] = & $sign $messageV2
+    if ($messageV3) { $json["signature_v3"] = & $sign $messageV3 }
 } finally {
     $key.Dispose()
 }
 $json | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Output -Encoding utf8NoBOM
-Write-Host "Signed $Output (v1 + v2, signingCertSha256 $certText)"
+$fresh = if ($messageV3) { ", v3 expires $($json["expiresAt"])" } else { "" }
+Write-Host "Signed $Output (v1 + v2$fresh, signingCertSha256 $certText)"

@@ -39,14 +39,15 @@ object ColituVpnRepository {
                 val proxied = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
                 // The spare goes on next to last: it moves every rule the layers before
                 // added for `proxy`; the check inbound's rule then goes in front of all.
-                val runtime = XrayMobileAdapter.withVerifyInbound(ColituWarmSpare.attach(
+                // The core's own DNS lookups then go through the tunnel ahead of every direct rule.
+                val runtime = XrayMobileAdapter.withVerifyInbound(com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.attach(
                     ColituAdBlock.apply(
                         ColituSplitTunnel.configure(
                             ColituRuBypass.configure(proxied, config.serverCountry, ColituRuBypass.privacyMode),
                         ),
                     ),
                     spare?.rawConfig?.takeIf { com.v2ray.ang.colitu.data.ColituUiMode.warmSpareActive(com.v2ray.ang.colitu.data.ColituUiMode.advanced, ColituWarmSpare.enabled) },
-                ), ColituLocalProxy.newVerifySession(), ColituLocalProxy.newVerifySpareSession())
+                )), ColituLocalProxy.newVerifySession(), ColituLocalProxy.newVerifySpareSession())
                 val subId = ensureColituSubscription()
                 MmkvManager.decodeServerList(subId).forEach { MmkvManager.removeServer(it) }
                 val profile = CustomFmt.parse(runtime).apply {
@@ -76,7 +77,8 @@ object ColituVpnRepository {
     fun renewLocalProxy(guid: String): Boolean {
         val raw = MmkvManager.decodeServerRaw(guid) ?: return false
         return runCatching {
-            val proxied = XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession())
+            // Profiles stored by an older version get the DNS-through-tunnel rule here too.
+            val proxied = com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(XrayMobileAdapter.withLocalProxy(raw, ColituLocalProxy.newSession()))
             MmkvManager.encodeServerRaw(
                 guid,
                 XrayMobileAdapter.withVerifyInbound(proxied, ColituLocalProxy.newVerifySession(), ColituLocalProxy.newVerifySpareSession()),
@@ -130,7 +132,7 @@ object ColituVpnRepository {
             ?: return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { ColituWarmSpare.detach(raw) }
+            runCatching { com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.detach(raw)) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }

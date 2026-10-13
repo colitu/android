@@ -69,12 +69,21 @@ object ColituUpdater {
                 LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v2; ignored")
                 return@runCatching null
             }
-            // Freshness: a signed-but-expired manifest (replayed by a compromised
-            // CDN to freeze updates) is refused. Only enforced when the signed
-            // message carries expiresAt, so older manifests keep working.
-            if (!ColituUpdateSignature.notExpired(json)) {
-                LogUtil.w(AppConfig.TAG, "Colitu update manifest is past its expiresAt; ignored")
-                return@runCatching null
+            // Freshness (signature_v3 over expiresAt): an expired manifest, or once a
+            // fresh-signed one was seen a manifest without it, is refused, so a
+            // compromised CDN cannot freeze updates by replaying an old file.
+            val v3Valid = ColituUpdateSignature.verifyV3(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })
+            when (ColituUpdateSignature.freshness(json, v3Valid, freshnessSeen(context))) {
+                ColituUpdateSignature.Freshness.FRESH -> rememberFreshnessSeen(context)
+                ColituUpdateSignature.Freshness.UNSIGNED_ALLOWED -> Unit
+                ColituUpdateSignature.Freshness.EXPIRED -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu update manifest is past its expiresAt; ignored")
+                    return@runCatching null
+                }
+                ColituUpdateSignature.Freshness.UNSIGNED_REFUSED -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v3 after a fresh one was seen; ignored")
+                    return@runCatching null
+                }
             }
             val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
             // Rollback guard: a validly signed but older manifest (replayed by
@@ -210,6 +219,15 @@ object ColituUpdater {
 
     private fun rememberVersionCode(context: Context, code: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_HIGHEST_CODE, code).apply()
+    }
+
+    private const val KEY_FRESHNESS_SEEN = "fresh_manifest_seen"
+
+    private fun freshnessSeen(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_FRESHNESS_SEEN, false)
+
+    private fun rememberFreshnessSeen(context: Context) {
+        if (!freshnessSeen(context)) context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_FRESHNESS_SEEN, true).apply()
     }
 
     private fun pickVariant(json: JsonObject): JsonObject? {

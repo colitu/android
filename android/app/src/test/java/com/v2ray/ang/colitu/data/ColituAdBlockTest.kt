@@ -2,6 +2,7 @@ package com.v2ray.ang.colitu.data
 
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,5 +66,29 @@ class ColituAdBlockTest {
         assertEquals(emptyList<String>(), ColituAdBlock.serversOf(JsonParser.parseString("""{"ad_block":{"doh":[]}}""").asJsonObject))
         // An older panel without the field leaves the stored list alone.
         assertNull(ColituAdBlock.serversOf(JsonParser.parseString("""{"maintenance":{"active":false}}""").asJsonObject))
+    }
+
+    @Test
+    fun dropsResolversOnNonPublicAddresses() {
+        // The config sends local networks direct, so such a resolver would see every lookup outside the tunnel.
+        val parsed = ColituAdBlock.parseServers(
+            listOf(
+                "https://192.168.1.1/dns-query", "https://127.0.0.1/dns-query", "https://[::1]/dns-query",
+                "https://10.10.14.2/dns-query", "https://user@dns-c.example.test/dns-query", servers[0],
+                "https://203.0.113.5/dns-query",
+            ).joinToString(","),
+        )
+        assertEquals(listOf(servers[0], "https://203.0.113.5/dns-query"), parsed)
+        assertEquals(ColituAdBlock.MAX_SERVERS, ColituAdBlock.parseServers((1..20).joinToString(",") { "https://dns$it.example.test/q" }).size)
+    }
+
+    @Test
+    fun activeInReadsTheBuiltConfig() {
+        assertTrue(ColituAdBlock.activeIn(ColituAdBlock.apply(runtime, on = true, servers = servers)))
+        assertFalse(ColituAdBlock.activeIn(runtime))
+        assertFalse(ColituAdBlock.activeIn(null))
+        assertFalse(ColituAdBlock.activeIn("not json colitu-adblock-dns"))
+        // Kept through the warm spare and the DNS route, which keep an existing dns tag.
+        assertTrue(ColituAdBlock.activeIn(ColituDnsRoute.throughTunnel(ColituAdBlock.apply(runtime, on = true, servers = servers))))
     }
 }

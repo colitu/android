@@ -65,13 +65,14 @@ object ColituUpdateSignature {
      *     sha256=<lower-case hex>
      *     sizeBytes=<integer>
      *     signingCertSha256=<lower-case hex, no colons>
-     *     expiresAt=<ISO-8601 instant>   (optional; line present only when set)
      *     variant=<abi> <url> <lower-case sha256> <sizeBytes>   (ABIs in ordinal order)
      *
      * LF separated, no trailing newline, UTF-8. scripts/sign-update-manifest.ps1
-     * builds the same text (it must add the expiresAt line in this position when
-     * the manifest carries one). Null when a value contains a line break or space
-     * where it must not (such a manifest is never accepted).
+     * builds the same text. Null when a value contains a line break or space
+     * where it must not (such a manifest is never accepted). This text must
+     * not change: 2.6.0 .. 2.9.0 verify exactly it, so a new field here would
+     * make every installed app reject the manifest. New fields go into
+     * [messageV3].
      */
     fun messageV2(json: JsonObject): String? {
         val lines = mutableListOf(
@@ -85,11 +86,6 @@ object ColituUpdateSignature {
             "sizeBytes=${json.long("sizeBytes").coerceAtLeast(0)}",
             "signingCertSha256=${normalizeCert(json.str("signingCertSha256"))}",
         )
-        // Optional, signed freshness bound: a replayed-but-valid manifest past
-        // this instant is refused (see ColituUpdater.check), so a compromised
-        // CDN cannot freeze updates by serving an old file forever. Omitted when
-        // the manifest carries none, so manifests signed before this still verify.
-        json.str("expiresAt").takeIf { it.isNotBlank() }?.let { lines += "expiresAt=$it" }
         val variants = json.get("variants")?.takeIf { it.isJsonObject }?.asJsonObject
         variants?.keySet()?.sorted()?.forEach { abi ->
             val v = variants.get(abi)?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
@@ -105,15 +101,59 @@ object ColituUpdateSignature {
     fun normalizeCert(value: String): String = value.trim().replace(":", "").lowercase()
 
     /**
-     * True when the manifest has no "expiresAt" (older manifests) or its signed
-     * "expiresAt" is a valid ISO-8601 instant still in the future. A present but
-     * unparseable value is treated as expired (refused). Call only on a manifest
-     * whose signature_v2 already verified, so the value is authenticated.
+     * The freshness signature's text: [messageV2] plus one line
+     *
+     *     expiresAt=<ISO-8601 instant, e.g. 2026-12-31T00:00:00Z>
+     *
+     * signed as "signature_v3" with the same release key. Kept apart from
+     * signature_v2 so apps up to 2.9.0, which know only v2, keep verifying the
+     * same manifest. Null without an expiresAt or when [messageV2] is null.
+     */
+    fun messageV3(json: JsonObject): String? {
+        val expires = json.str("expiresAt").trim().takeIf { it.isNotEmpty() } ?: return null
+        if (expires.any { it.isWhitespace() }) return null
+        val v2 = messageV2(json) ?: return null
+        return "$v2\nexpiresAt=$expires"
+    }
+
+    /** True when "signature_v3" is a valid release signature over [messageV3]. */
+    fun verifyV3(json: JsonObject, decode: (String) -> ByteArray, publicKeyB64: String = PUBLIC_KEY_B64): Boolean =
+        runCatching {
+            val signature = json.str("signature_v3").takeIf { it.isNotBlank() } ?: return false
+            val message = messageV3(json) ?: return false
+            val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(decode(publicKeyB64)))
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(key)
+                update(message.toByteArray(Charsets.UTF_8))
+                verify(decode(signature.trim()))
+            }
+        }.getOrDefault(false)
+
+    /**
+     * True when the manifest's "expiresAt" is a valid ISO-8601 instant still
+     * in the future; a missing or unparseable value is not fresh. Call only on
+     * a manifest whose signature_v3 verified, so the value is authenticated.
      */
     fun notExpired(json: JsonObject, now: java.time.Instant = java.time.Instant.now()): Boolean {
-        val raw = json.str("expiresAt").takeIf { it.isNotBlank() } ?: return true
+        val raw = json.str("expiresAt").trim().takeIf { it.isNotEmpty() } ?: return false
         val expires = runCatching { java.time.Instant.parse(raw) }.getOrNull() ?: return false
         return now.isBefore(expires)
+    }
+
+    /**
+     * The freshness rule of [ColituUpdater.check]. A manifest with a valid
+     * signature_v3 must not be past its expiresAt. One without it (an older
+     * manifest, or one whose freshness fields were stripped by a compromised
+     * CDN) is accepted only until this app has once seen a fresh-signed
+     * manifest ([freshnessSeen]); after that it is refused, so a replayed old
+     * manifest cannot freeze updates.
+     */
+    enum class Freshness { FRESH, EXPIRED, UNSIGNED_ALLOWED, UNSIGNED_REFUSED }
+
+    fun freshness(json: JsonObject, v3Valid: Boolean, freshnessSeen: Boolean, now: java.time.Instant = java.time.Instant.now()): Freshness = when {
+        v3Valid -> if (notExpired(json, now)) Freshness.FRESH else Freshness.EXPIRED
+        freshnessSeen -> Freshness.UNSIGNED_REFUSED
+        else -> Freshness.UNSIGNED_ALLOWED
     }
 
     /**

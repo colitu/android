@@ -187,6 +187,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private set
     var adBlock by mutableStateOf(ColituAdBlock.enabled)
         private set
+    /** The panel has named ad-blocking resolvers; the switch is shown only then. */
+    var adBlockAvailable by mutableStateOf(ColituAdBlock.available)
+        private set
     /** Advanced mode shows split tunneling, privacy mode, multihop and the rest; Simple hides them (ColituUiMode). */
     var advancedMode by mutableStateOf(ColituUiMode.advanced)
         private set
@@ -371,6 +374,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         registerNetworkCallback()
         viewModelScope.launch {
             ColituAuthEvents.authExpired.collect { endSession(ColituLoc["auth.expired"]) }
+        }
+        viewModelScope.launch {
+            // The resolver list arrives with a bootstrap after start (first run after an
+            // update has none yet): the switch and its state follow the stored list.
+            ColituAdBlock.changes.collect {
+                adBlockAvailable = ColituAdBlock.available
+                adBlock = ColituAdBlock.enabled
+            }
         }
         viewModelScope.launch {
             while (true) {

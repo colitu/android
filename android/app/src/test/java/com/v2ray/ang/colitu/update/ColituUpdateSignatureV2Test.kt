@@ -64,22 +64,42 @@ class ColituUpdateSignatureV2Test {
         assertTrue(ColituUpdateSignature.verifyV2(signed(), decode, publicKey))
     }
 
+    private fun signedV3(json: JsonObject) = json.apply {
+        val signature = Signature.getInstance("SHA256withECDSA").run {
+            initSign(keys.private)
+            update(ColituUpdateSignature.messageV3(this@apply)!!.toByteArray())
+            sign()
+        }
+        addProperty("signature_v3", Base64.getEncoder().encodeToString(signature))
+    }
+
     @Test
-    fun expiresAtIsOptionalSignedAndEnforced() {
-        // Absent: backward compatible — not in the payload, treated as fresh.
-        assertFalse(ColituUpdateSignature.messageV2(manifest())!!.contains("expiresAt="))
-        assertTrue(ColituUpdateSignature.notExpired(manifest()))
+    fun expiresAtStaysOutOfV2SoInstalledAppsKeepVerifying() {
+        // 2.6.0 .. 2.9.0 verify exactly the v2 text: an expiresAt must not change it.
+        val withExpiry = signed(manifest().apply { addProperty("expiresAt", "2026-10-20T00:00:00Z") })
+        assertEquals(ColituUpdateSignature.messageV2(manifest()), ColituUpdateSignature.messageV2(withExpiry))
+        assertTrue(ColituUpdateSignature.verifyV2(withExpiry, decode, publicKey))
+        assertNull(ColituUpdateSignature.messageV3(manifest()))
+        assertEquals(
+            ColituUpdateSignature.messageV2(manifest()) + "\nexpiresAt=2026-10-20T00:00:00Z",
+            ColituUpdateSignature.messageV3(withExpiry),
+        )
+    }
 
-        // Present: signed (so it is tamper-evident) between signingCertSha256 and the variants.
-        val withExpiry = manifest().apply { addProperty("expiresAt", "2026-10-20T00:00:00Z") }
-        assertTrue(ColituUpdateSignature.messageV2(withExpiry)!!.contains("\nexpiresAt=2026-10-20T00:00:00Z\nvariant="))
-        assertTrue(ColituUpdateSignature.verifyV2(signed(withExpiry), decode, publicKey))
-        assertFalse(ColituUpdateSignature.verifyV2(signed(withExpiry).apply { addProperty("expiresAt", "2099-01-01T00:00:00Z") }, decode, publicKey))
-
-        // notExpired: future ok; past and unparseable are refused.
+    @Test
+    fun expiresAtIsSignedByV3AndEnforced() {
         val t = java.time.Instant.parse("2026-10-12T00:00:00Z")
-        assertTrue(ColituUpdateSignature.notExpired(withExpiry, t))
-        assertFalse(ColituUpdateSignature.notExpired(manifest().apply { addProperty("expiresAt", "2026-10-11T00:00:00Z") }, t))
+        val fresh = signedV3(signed(manifest().apply { addProperty("expiresAt", "2026-10-20T00:00:00Z") }))
+        assertTrue(ColituUpdateSignature.verifyV3(fresh, decode, publicKey))
+        // A moved expiry breaks v3 (v2 does not cover it).
+        val moved = signedV3(signed(manifest().apply { addProperty("expiresAt", "2026-10-20T00:00:00Z") })).apply { addProperty("expiresAt", "2099-01-01T00:00:00Z") }
+        assertFalse(ColituUpdateSignature.verifyV3(moved, decode, publicKey))
+
+        assertEquals(ColituUpdateSignature.Freshness.FRESH, ColituUpdateSignature.freshness(fresh, true, false, t))
+        assertEquals(ColituUpdateSignature.Freshness.EXPIRED, ColituUpdateSignature.freshness(fresh, true, true, java.time.Instant.parse("2026-10-21T00:00:00Z")))
+        // Without v3: accepted until a fresh one was seen, refused afterwards (stripped fields).
+        assertEquals(ColituUpdateSignature.Freshness.UNSIGNED_ALLOWED, ColituUpdateSignature.freshness(signed(), false, false, t))
+        assertEquals(ColituUpdateSignature.Freshness.UNSIGNED_REFUSED, ColituUpdateSignature.freshness(signed(), false, true, t))
         assertFalse(ColituUpdateSignature.notExpired(manifest().apply { addProperty("expiresAt", "not-a-date") }, t))
     }
 

@@ -28,9 +28,13 @@ jobs:
       - name: Unit, lint and unsigned PR artifact
         working-directory: android
         run: |
-          ./gradlew testPlaystoreDebugUnitTest lintPlaystoreRelease compilePlaystoreDebugAndroidTestKotlin assemblePlaystoreDebug --no-daemon
+          ./gradlew testPlaystoreDebugUnitTest lintPlaystoreRelease lintDirectRelease compilePlaystoreDebugAndroidTestKotlin assemblePlaystoreDebug --no-daemon
           sha256sum app/libs/libv2ray.aar > app/build/libv2ray.aar.sha256
           ./gradlew app:dependencies --configuration playstoreReleaseRuntimeClasspath > app/build/playstore-release-dependencies.txt
+      - name: Native libraries in every ABI
+        # Each APK must carry MMKV, the Xray core and hev for its ABI (a dependency
+        # that drops 32-bit ABIs would crash those devices at start).
+        run: bash scripts/check-native-libs.sh android/app/build/outputs/apk/playstore/debug/*.apk
       - name: Generate CycloneDX SBOM
         run: |
           python scripts/generate-android-sbom.py \
