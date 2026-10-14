@@ -47,6 +47,9 @@ object ColituSecureStore {
         preferences.edit().putString(key, seal(value.toByteArray(Charsets.UTF_8), null)).apply()
     }
 
+    /** True when a value is stored under [key], readable or not. */
+    fun has(key: String): Boolean = preferences.contains(key)
+
     fun remove(vararg keys: String) { preferences.edit().also { editor -> keys.forEach(editor::remove) }.apply() }
 
     internal fun sealConfig(value: String, context: String): String = seal(value.toByteArray(Charsets.UTF_8), context)

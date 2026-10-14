@@ -61,9 +61,52 @@ object ColituTokenManager {
         ColituSecureStore.remove(KEY_DEPRECATED_ENTITLEMENT_FLAG)
     }
 
+    /**
+     * The installation's device key. It must not change while the app stays
+     * installed: the panel sees a new key as a new device, and on a
+     * one-device plan the phone's own record then fills the limit
+     * (DEVICE_LIMIT_REACHED). A stored key the secure store cannot read for
+     * a moment (a busy or reset Keystore, seen on Xiaomi) is retried, then
+     * taken from an app-private copy; only a phone with neither gets a new key.
+     */
+    @Synchronized
     fun getDeviceKey(): String {
-        ColituSecureStore.get(KEY_DEVICE_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
-        return java.util.UUID.randomUUID().toString().also { ColituSecureStore.put(KEY_DEVICE_KEY, it) }
+        readDeviceKey()?.let { return it }
+        if (ColituSecureStore.has(KEY_DEVICE_KEY)) {
+            repeat(2) {
+                Thread.sleep(150)
+                readDeviceKey()?.let { return it }
+            }
+        }
+        deviceKeyCopy()?.let { copy ->
+            ColituSecureStore.put(KEY_DEVICE_KEY, copy)
+            return copy
+        }
+        return java.util.UUID.randomUUID().toString().also {
+            ColituSecureStore.put(KEY_DEVICE_KEY, it)
+            saveDeviceKeyCopy(it)
+        }
+    }
+
+    private fun readDeviceKey(): String? =
+        ColituSecureStore.get(KEY_DEVICE_KEY)?.takeIf { it.isNotBlank() }?.also(::saveDeviceKeyCopy)
+
+    // An identifier, not a credential (it signs nothing and the panel also
+    // needs the account's tokens), so a plain copy in no-backup app storage
+    // is fine; it is never restored onto another phone.
+    private val deviceKeyFile get() = java.io.File(com.v2ray.ang.AngApplication.application.noBackupFilesDir, "colitu_device_key")
+
+    private fun deviceKeyCopy(): String? = runCatching {
+        deviceKeyFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.length in 20..256 }
+    }.getOrNull()
+
+    private fun saveDeviceKeyCopy(key: String) {
+        runCatching {
+            if (deviceKeyCopy() == key) return
+            val tmp = java.io.File(deviceKeyFile.parentFile, deviceKeyFile.name + ".tmp")
+            tmp.writeText(key)
+            if (!tmp.renameTo(deviceKeyFile)) { deviceKeyFile.delete(); tmp.renameTo(deviceKeyFile) }
+        }
     }
     fun getDeviceId(): String? = ColituSecureStore.get(KEY_DEVICE_ID)
     fun saveDeviceId(deviceId: String) = ColituSecureStore.put(KEY_DEVICE_ID, deviceId)
