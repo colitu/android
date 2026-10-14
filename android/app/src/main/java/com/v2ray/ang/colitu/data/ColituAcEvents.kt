@@ -100,10 +100,13 @@ object ColituAcEvents {
 
     fun switch(from: String?, to: String?, ok: Boolean, flap: Boolean): JsonObject? {
         val p = protocol(from) ?: return null
+        // The panel needs both ends and refuses a whole report over one invalid event: a
+        // recovery that reached no protocol is told by its recovery event alone.
+        val target = protocol(to) ?: return null
         return JsonObject().apply {
             addProperty("kind", "switch")
             addProperty("protocol", p)
-            protocol(to)?.let { addProperty("to_protocol", it) }
+            addProperty("to_protocol", target)
             addProperty("outcome", outcome(ok))
             addProperty("flap", flap)
         }

@@ -2591,8 +2591,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
             "UNREACHABLE", "VERIFY_FAILED", "TUNNEL_TIMEOUT", "ENGINE_FAILED", "TUN_FAILED",
             "NETWORK_ERROR", "TIMEOUT", "IO_ERROR", "SERVER_UNAVAILABLE", "SERVICE_UNAVAILABLE", "CONFIG_NOT_READY",
         )
-        /** Direct (outside the tunnel) reachability when the system did not validate the network. */
-        private val DIRECT_CHECK_HOSTS = listOf("cp.cloudflare.com" to 443, "www.msftconnecttest.com" to 80)
+        /**
+         * Direct (outside the tunnel) reachability when the system did not validate the network. No
+         * Cloudflare (throttled in Russia); Yandex stays reachable on Russian whitelist-only mobile networks.
+         */
+        private val DIRECT_CHECK_HOSTS = listOf("www.gstatic.com" to 443, "ya.ru" to 443, "www.msftconnecttest.com" to 80)
         private const val DIRECT_CHECK_TIMEOUT_MS = 1_500
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val PROBE_TIMEOUT_MS = 4_500L
