@@ -79,6 +79,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -374,6 +375,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
         registerNetworkCallback()
         viewModelScope.launch {
             ColituAuthEvents.authExpired.collect { endSession(ColituLoc["auth.expired"]) }
+        }
+        viewModelScope.launch {
+            // A new app language: the next bootstrap carries it (Accept-Language), so the
+            // panel writes notifications and e-mails in it from now on.
+            androidx.compose.runtime.snapshotFlow { ColituLoc.language }
+                .drop(1)
+                .collect { if (ColituTokenManager.isLoggedIn()) refreshPolicy() }
         }
         viewModelScope.launch {
             // The resolver list arrives with a bootstrap after start (first run after an

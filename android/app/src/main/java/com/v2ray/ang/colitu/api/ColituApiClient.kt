@@ -47,6 +47,7 @@ object ColituApiClient {
         .writeTimeout(15, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .addInterceptor(ColituAuthInterceptor())
+        .addInterceptor(ColituLanguageInterceptor())
         .build()
 
     // Refresh client: no auth interceptor, so a 401 cannot recurse.
@@ -55,6 +56,7 @@ object ColituApiClient {
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
+        .addInterceptor(ColituLanguageInterceptor())
         .build()
 
     // Signed endpoint list files: no auth header, 10 s limit.
