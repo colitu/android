@@ -122,4 +122,29 @@ class ColituCertPinsTest {
         val expiration = Regex("""expiration="([0-9-]+)"""").find(pinSet)!!.groupValues[1]
         assertEquals(ColituCertPins.EXPIRES.toString().substring(0, 10), expiration)
     }
+
+    /**
+     * The bundled trust anchor (Android 7.0 lacks it in the system store) is
+     * the self-signed ISRG Root X1 whose key is pinned, and both trust-anchor
+     * lists that need it name it next to the system store.
+     */
+    @Test
+    fun bundledRootIsTheX1OfThePinSet() {
+        val cert = java.io.File("src/main/res/raw/isrg_root_x1.pem").inputStream().use {
+            java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+        }
+        assertEquals(cert.subjectX500Principal, cert.issuerX500Principal)
+        cert.verify(cert.publicKey)
+        assertTrue(cert.subjectX500Principal.name.contains("CN=ISRG Root X1"))
+        val spki = java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded))
+        assertEquals("C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=", spki)
+        assertTrue(spki in ColituCertPins.PINS)
+        val xml = java.io.File("src/main/res/xml/network_security_config.xml").readText()
+        val anchors = Regex("""<trust-anchors>(.*?)</trust-anchors>""", RegexOption.DOT_MATCHES_ALL).findAll(xml).map { it.groupValues[1] }.toList()
+        assertEquals(2, anchors.size)
+        anchors.forEach {
+            assertTrue(it.contains("""src="system""""))
+            assertTrue(it.contains("""src="@raw/isrg_root_x1""""))
+        }
+    }
 }

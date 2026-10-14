@@ -783,7 +783,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** A drop could not be repaired: try again once a network is back (see [onNetworkChanged]). */
     private var resumeOnNetwork = false
 
-    // ── Anonymous usage statistics (ColituMetrics; every call is a no-op while the setting is off) ──
+    // ── Usage statistics (ColituMetrics, ColituAcEvents; every call is a no-op while the setting is off) ──
 
     /** elapsedRealtime when the connect the user (or auto-connect) started began; 0 = none open. */
     private var metricAttemptAt = 0L
@@ -2264,6 +2264,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (connected || status == VpnStatus.Connecting) {
             showToast(ColituLoc[if (value) "settings.adBlockOn" else "settings.adBlockOff"], error = false)
             startConnectFlow()
+        } else {
+            // The tile, the widget and Always-on start the stored profile without the app.
+            viewModelScope.launch { ColituVpnRepository.reapplyAdBlockToStoredProfile(ColituAdBlock.enabled) }
         }
     }
 

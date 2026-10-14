@@ -58,60 +58,129 @@ object ColituUpdater {
         val signingCertSha256: String,
     )
 
-    /** The newer release on colitu.com, or null when this build is current or the check failed. */
-    suspend fun check(context: Context): Update? = withContext(Dispatchers.IO) {
-        if (!enabled) return@withContext null
-        runCatching {
+    /** What a check found. */
+    sealed interface CheckResult {
+        /** A newer release, verified by signature_v2 (the APK's hash and signer are checked again on download). */
+        data class Available(val update: Update) : CheckResult
+        /** This build is the latest, and the manifest saying so is fresh. */
+        data object Current : CheckResult
+        /**
+         * The manifest cannot be trusted to say "no update": its signature is
+         * wrong, it is past its signed expiresAt, it lacks the freshness
+         * signature after a fresh one was seen, or it is older than one seen
+         * before. A replayed old manifest (a frozen CDN) looks exactly like
+         * this, so it is shown as its own state, never as "latest version".
+         */
+        data object Unverifiable : CheckResult
+        /** No answer (offline, timeout, malformed file). */
+        data object Failed : CheckResult
+    }
+
+    /** What to make of a manifest whose signature_v2 verified. */
+    internal enum class Decision { OFFER, CURRENT, UNVERIFIABLE }
+
+    /**
+     * A newer release is offered even from a stale manifest: signature_v2
+     * covers it and the download is checked against its hash and signer, so
+     * staleness can only hide updates, never fake one. "No update" from a
+     * stale or rolled-back manifest is not believed ([Decision.UNVERIFIABLE]).
+     */
+    internal fun decide(freshness: ColituUpdateSignature.Freshness, remoteCode: Long, highestSeen: Long, installed: Long): Decision {
+        if (!acceptsManifestVersion(remoteCode, highestSeen)) return Decision.UNVERIFIABLE
+        if (remoteCode > installed) return Decision.OFFER
+        val stale = freshness == ColituUpdateSignature.Freshness.EXPIRED || freshness == ColituUpdateSignature.Freshness.UNSIGNED_REFUSED
+        return if (stale) Decision.UNVERIFIABLE else Decision.CURRENT
+    }
+
+    /** The newer release on colitu.com, or null when there is none or it could not be checked. */
+    suspend fun check(context: Context): Update? = (checkResult(context) as? CheckResult.Available)?.update
+
+    suspend fun checkResult(context: Context): CheckResult = withContext(Dispatchers.IO) {
+        if (!enabled) return@withContext CheckResult.Failed
+        runCatching<CheckResult> {
             val json = JsonParser.parseString(fetchText("$MANIFEST_URL?t=${System.currentTimeMillis() / 60000}")).asJsonObject
             // 2.6.0+ trusts only signature_v2, which also binds the signing
             // certificate and the sizes; the v1 "signature" is for older apps.
             if (!ColituUpdateSignature.verifyV2(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })) {
-                LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v2; ignored")
-                return@runCatching null
+                LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v2; not trusted")
+                return@runCatching CheckResult.Unverifiable
             }
-            // Freshness (signature_v3 over expiresAt): an expired manifest, or once a
-            // fresh-signed one was seen a manifest without it, is refused, so a
-            // compromised CDN cannot freeze updates by replaying an old file.
+            // Freshness (signature_v3 over expiresAt). An expired manifest, or once a
+            // fresh-signed one was seen a manifest without it, cannot say "no update".
+            // Until this app has seen a v3 manifest, v2-only manifests count as fresh.
             val v3Valid = ColituUpdateSignature.verifyV3(json, { android.util.Base64.decode(it, android.util.Base64.DEFAULT) })
-            when (ColituUpdateSignature.freshness(json, v3Valid, freshnessSeen(context))) {
+            val freshness = ColituUpdateSignature.freshness(json, v3Valid, freshnessSeen(context))
+            when (freshness) {
                 ColituUpdateSignature.Freshness.FRESH -> rememberFreshnessSeen(context)
                 ColituUpdateSignature.Freshness.UNSIGNED_ALLOWED -> Unit
-                ColituUpdateSignature.Freshness.EXPIRED -> {
-                    LogUtil.w(AppConfig.TAG, "Colitu update manifest is past its expiresAt; ignored")
-                    return@runCatching null
-                }
-                ColituUpdateSignature.Freshness.UNSIGNED_REFUSED -> {
-                    LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v3 after a fresh one was seen; ignored")
-                    return@runCatching null
-                }
+                ColituUpdateSignature.Freshness.EXPIRED -> LogUtil.w(AppConfig.TAG, "Colitu update manifest is past its expiresAt")
+                ColituUpdateSignature.Freshness.UNSIGNED_REFUSED -> LogUtil.w(AppConfig.TAG, "Colitu update manifest has no valid signature_v3 after a fresh one was seen")
             }
-            val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching null
+            val remoteCode = json.get("latestVersionCode")?.asLong ?: return@runCatching CheckResult.Failed
             // Rollback guard: a validly signed but older manifest (replayed by
             // a compromised web server or CDN) is never acted on once a newer
             // one was seen. latestVersionCode is covered by signature_v2.
             val highest = highestSeenVersionCode(context)
-            if (!acceptsManifestVersion(remoteCode, highest)) {
-                LogUtil.w(AppConfig.TAG, "Colitu update manifest is older than one seen before; ignored")
-                return@runCatching null
+            when (decide(freshness, remoteCode, highest, installedVersionCode(context))) {
+                Decision.UNVERIFIABLE -> {
+                    LogUtil.w(AppConfig.TAG, "Colitu update manifest is stale or older than one seen before; not trusted")
+                    return@runCatching CheckResult.Unverifiable
+                }
+                Decision.CURRENT -> {
+                    if (remoteCode > highest) rememberVersionCode(context, remoteCode)
+                    return@runCatching CheckResult.Current
+                }
+                Decision.OFFER -> if (remoteCode > highest) rememberVersionCode(context, remoteCode)
             }
-            if (remoteCode > highest) rememberVersionCode(context, remoteCode)
-            if (remoteCode <= installedVersionCode(context)) return@runCatching null
             val variant = pickVariant(json)
-            val url = variant?.get("url")?.asString ?: json.get("downloadUrl")?.asString ?: return@runCatching null
-            val sha = variant?.get("sha256")?.asString ?: json.get("sha256")?.asString ?: return@runCatching null
+            val url = variant?.get("url")?.asString ?: json.get("downloadUrl")?.asString ?: return@runCatching CheckResult.Failed
+            val sha = variant?.get("sha256")?.asString ?: json.get("sha256")?.asString ?: return@runCatching CheckResult.Failed
             val size = variant?.get("sizeBytes")?.asLong ?: json.get("sizeBytes")?.asLong ?: 0L
-            if (!trusted(url)) return@runCatching null
-            Update(
-                versionName = json.get("versionName")?.asString ?: remoteCode.toString(),
-                versionCode = remoteCode,
-                url = url,
-                sha256 = sha.lowercase(),
-                sizeBytes = size,
-                // Same strict reading as the signed message: only a JSON true forces.
-                force = json.get("forceUpdate")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean == true,
-                signingCertSha256 = ColituUpdateSignature.normalizeCert(json.get("signingCertSha256").asString),
+            if (!trusted(url)) return@runCatching CheckResult.Unverifiable
+            CheckResult.Available(
+                Update(
+                    versionName = json.get("versionName")?.asString ?: remoteCode.toString(),
+                    versionCode = remoteCode,
+                    url = url,
+                    sha256 = sha.lowercase(),
+                    sizeBytes = size,
+                    // Same strict reading as the signed message: only a JSON true forces.
+                    force = json.get("forceUpdate")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean == true,
+                    signingCertSha256 = ColituUpdateSignature.normalizeCert(json.get("signingCertSha256").asString),
+                ),
             )
-        }.onFailure { LogUtil.w(AppConfig.TAG, "Colitu update check failed: ${it.message}") }.getOrNull()
+        }.onFailure { LogUtil.w(AppConfig.TAG, "Colitu update check failed: ${it.javaClass.simpleName}") }.getOrDefault(CheckResult.Failed)
+    }
+
+    /**
+     * Shown by [ColituUpdatePrompt]: the automatic checks could not verify the
+     * update information [UNVERIFIED_STREAK] times in a row (at most once a
+     * day), so a frozen or forgotten manifest does not go unnoticed.
+     */
+    var unverifiedNotice by mutableStateOf(false)
+
+    internal const val UNVERIFIED_STREAK = 2
+    internal const val UNVERIFIED_NOTICE_GAP_MS = 24L * 60 * 60 * 1000
+
+    internal fun shouldShowUnverified(streak: Int, lastShownMs: Long, nowMs: Long): Boolean =
+        streak >= UNVERIFIED_STREAK && (lastShownMs <= 0L || nowMs - lastShownMs >= UNVERIFIED_NOTICE_GAP_MS)
+
+    /** Notes an automatic check's result; an unverifiable one, repeated, raises [unverifiedNotice]. */
+    fun noteAutomaticResult(context: Context, result: CheckResult) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        when (result) {
+            CheckResult.Unverifiable -> {
+                val streak = prefs.getInt(KEY_UNVERIFIED_STREAK, 0) + 1
+                val now = System.currentTimeMillis()
+                val show = shouldShowUnverified(streak, prefs.getLong(KEY_UNVERIFIED_SHOWN_AT, 0L), now)
+                val edit = prefs.edit().putInt(KEY_UNVERIFIED_STREAK, streak)
+                if (show) edit.putLong(KEY_UNVERIFIED_SHOWN_AT, now)
+                edit.apply()
+                if (show) unverifiedNotice = true
+            }
+            CheckResult.Failed -> Unit
+            else -> if (prefs.getInt(KEY_UNVERIFIED_STREAK, 0) != 0) prefs.edit().putInt(KEY_UNVERIFIED_STREAK, 0).apply()
+        }
     }
 
     /** Downloads and verifies the APK; [onProgress] gets 0..1. */
@@ -222,6 +291,8 @@ object ColituUpdater {
     }
 
     private const val KEY_FRESHNESS_SEEN = "fresh_manifest_seen"
+    private const val KEY_UNVERIFIED_STREAK = "unverified_streak"
+    private const val KEY_UNVERIFIED_SHOWN_AT = "unverified_shown_at"
 
     private fun freshnessSeen(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_FRESHNESS_SEEN, false)

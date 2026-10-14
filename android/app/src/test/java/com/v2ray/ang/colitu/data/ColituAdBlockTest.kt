@@ -83,6 +83,33 @@ class ColituAdBlockTest {
     }
 
     @Test
+    fun storedProfileFollowsTheSwitchWithoutAReconnect() {
+        // Off -> on: ad-blocking DNS in, its resolvers asked through the tunnel.
+        val on = ColituAdBlock.storedProfile(ColituDnsRoute.throughTunnel(runtime), enabled = true, servers = servers)
+        assertTrue(ColituAdBlock.activeIn(on))
+        val onJson = JsonParser.parseString(on).asJsonObject
+        assertEquals(servers, onJson.getAsJsonObject("dns").getAsJsonArray("servers").map { it.asString })
+        val onRules = onJson.getAsJsonObject("routing").getAsJsonArray("rules").map { it.asJsonObject }
+        assertEquals(listOf(ColituAdBlock.DNS_TAG), onRules.first().getAsJsonArray("inboundTag").map { it.asString })
+        assertEquals(1, onRules.count { it.get("outboundTag")?.asString == "dns-out" })
+        // On -> off: no dns-out, no port-53 rule, default resolvers through the tunnel again.
+        val off = ColituAdBlock.storedProfile(on, enabled = false, servers = servers)
+        assertFalse(ColituAdBlock.activeIn(off))
+        val offJson = JsonParser.parseString(off).asJsonObject
+        assertTrue(offJson.getAsJsonArray("outbounds").none { it.asJsonObject.get("tag").asString == "dns-out" })
+        val offRules = offJson.getAsJsonObject("routing").getAsJsonArray("rules").map { it.asJsonObject }
+        assertTrue(offRules.none { it.get("outboundTag")?.asString == "dns-out" })
+        assertEquals(ColituDnsRoute.DEFAULT_SERVERS, offJson.getAsJsonObject("dns").getAsJsonArray("servers").map { it.asString })
+        assertEquals(ColituDnsRoute.RULE_TAG, offRules.first().get("ruleTag").asString)
+        // The local-network rule of the panel stays.
+        assertTrue(offRules.any { it.get("outboundTag")?.asString == "direct" })
+        // On without servers (list not named yet): stays off.
+        assertFalse(ColituAdBlock.activeIn(ColituAdBlock.storedProfile(off, enabled = true, servers = emptyList())))
+        // Idempotent (same JSON; key order may differ).
+        assertEquals(JsonParser.parseString(on), JsonParser.parseString(ColituAdBlock.storedProfile(on, enabled = true, servers = servers)))
+    }
+
+    @Test
     fun activeInReadsTheBuiltConfig() {
         assertTrue(ColituAdBlock.activeIn(ColituAdBlock.apply(runtime, on = true, servers = servers)))
         assertFalse(ColituAdBlock.activeIn(runtime))

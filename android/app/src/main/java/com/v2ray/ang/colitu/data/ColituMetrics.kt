@@ -11,10 +11,10 @@ import com.v2ray.ang.colitu.api.ColituTokenManager
  * Usage statistics: aggregate counters, three histograms and the names of the
  * features used, kept on the device since the last successful send. The payload
  * adds no account, device, IP address or visited site. It is sent over the
- * app's normal signed-in connection (POST /client/metrics), so the server can
- * attribute it to the account like any other authenticated request; the content
- * itself carries no identifiers. This class is the plain data (unit tested);
- * [ColituMetrics] stores and sends it.
+ * app's normal signed-in connection (POST /client/metrics) like every request;
+ * the server keeps only daily totals, not linked to the account or device
+ * (same wording as the setting's text, "metrics.hint", and iOS/the extension).
+ * This class is the plain data (unit tested); [ColituMetrics] stores and sends it.
  */
 class ColituMetricsData {
     val counters = linkedMapOf<String, Int>()
@@ -135,7 +135,7 @@ class ColituMetricsData {
 enum class ColituMetricsOutcome { Reset, Keep }
 
 /**
- * Local store and sender of the anonymous statistics (default on). With the
+ * Local store and sender of the usage statistics (default on). With the
  * setting off nothing is collected or sent and the stored numbers are gone.
  * Sent at most every [SEND_INTERVAL_MS] while signed in and there is data;
  * never blocks the UI (the controller calls it from a coroutine).

@@ -42,17 +42,16 @@ object ColituAdBlock {
      */
     val changes = kotlinx.coroutines.flow.MutableStateFlow(0)
 
-    // The stored list parsed once per distinct value: the server list asks for
-    // [dnsHosts] on every row and every redraw.
-    @Volatile private var parsed: Triple<String, List<String>, Set<String>>? = null
+    // The stored list, read from MMKV and parsed once per process: the server
+    // list asks for [dnsHosts] on every row and every redraw. Only [remember]
+    // (UI process) changes the list, and it replaces this copy; the VPN process
+    // never reads the list (it decides by the config, [activeIn]).
+    @Volatile private var memo: Pair<List<String>, Set<String>>? = null
 
     private fun cached(): Pair<List<String>, Set<String>> {
-        val raw = store.decodeString(KEY_SERVERS).orEmpty()
-        parsed?.takeIf { it.first == raw }?.let { return it.second to it.third }
-        val servers = parseServers(raw)
-        val hosts = hostsOf(servers)
-        parsed = Triple(raw, servers, hosts)
-        return servers to hosts
+        memo?.let { return it }
+        val servers = parseServers(store.decodeString(KEY_SERVERS).orEmpty())
+        return (servers to hostsOf(servers)).also { memo = it }
     }
 
     /**
@@ -66,6 +65,7 @@ object ColituAdBlock {
         val value = servers.joinToString(",")
         if (store.decodeString(KEY_SERVERS) == value) return
         store.encode(KEY_SERVERS, value)
+        memo = servers to hostsOf(servers)
         changes.value++
     }
 
@@ -104,6 +104,50 @@ object ColituAdBlock {
         dns.get("tag")?.takeIf { it.isJsonPrimitive }?.asString == DNS_TAG &&
             dns.get("servers")?.takeIf { it.isJsonArray }?.asJsonArray?.size()?.let { it > 0 } == true
     }.getOrDefault(false)
+
+    /**
+     * [raw] without what [apply] added: the ad-blocking `dns` block, the
+     * `dns-out` outbound and every rule that sends to it or names the
+     * ad-blocking DNS tag. [ColituDnsRoute.throughTunnel] then gives the
+     * config its default resolvers and their rule again. Unchanged when [raw]
+     * has no ad blocking.
+     */
+    fun remove(raw: String): String {
+        if (!activeIn(raw)) return raw
+        val json = JsonParser.parseString(raw).asJsonObject
+        json.remove("dns")
+        json.get("outbounds")?.takeIf { it.isJsonArray }?.asJsonArray?.let { outbounds ->
+            json.add("outbounds", JsonArray().apply {
+                outbounds.filterNot { it.isJsonObject && it.asJsonObject.get("tag")?.takeIf { t -> t.isJsonPrimitive }?.asString == DNS_OUT }.forEach(::add)
+            })
+        }
+        json.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject?.let { routing ->
+            routing.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray?.let { rules ->
+                routing.add("rules", JsonArray().apply {
+                    rules.filterNot { element ->
+                        val rule = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@filterNot false
+                        rule.get("outboundTag")?.takeIf { it.isJsonPrimitive }?.asString == DNS_OUT ||
+                            rule.get("inboundTag")?.takeIf { it.isJsonArray }?.asJsonArray?.any { it.isJsonPrimitive && it.asString == DNS_TAG } == true
+                    }.forEach(::add)
+                })
+            }
+        }
+        return json.toString()
+    }
+
+    private const val DNS_OUT = "dns-out"
+
+    /**
+     * A stored runtime profile with ad blocking switched on or off without a
+     * reconnect (tile, widget and Always-on start it): the old ad-blocking DNS
+     * comes out, the new one goes in when [enabled] and [servers] are given,
+     * the warm spare's rules follow and the core's DNS stays in the tunnel.
+     */
+    fun storedProfile(raw: String, enabled: Boolean, servers: List<String>): String {
+        val base = remove(raw)
+        val layered = if (enabled && servers.isNotEmpty()) apply(base, on = true, servers = servers) else base
+        return ColituDnsRoute.throughTunnel(ColituWarmSpare.reroute(layered))
+    }
 
     // Same store as ColituController; the VPN service reads it in its own process.
     private val store by lazy { MMKV.mmkvWithID("COLITU_SETTINGS", MMKV.MULTI_PROCESS_MODE) }

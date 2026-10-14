@@ -408,9 +408,14 @@ fun AccountTab(
             loc.format("settings.version", "version" to "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") + " · " + loc["update.check"],
             onClick = {
                 scope.launch {
-                    val update = com.v2ray.ang.colitu.update.ColituUpdater.check(context.applicationContext)
-                    if (update == null) c.showToast(loc["update.latest"], error = false)
-                    else com.v2ray.ang.colitu.update.ColituUpdater.offered = update
+                    // "Latest version" only when a fresh manifest says so; a stale or
+                    // unverifiable one (a frozen download server) is said as such.
+                    when (val result = com.v2ray.ang.colitu.update.ColituUpdater.checkResult(context.applicationContext)) {
+                        is com.v2ray.ang.colitu.update.ColituUpdater.CheckResult.Available -> com.v2ray.ang.colitu.update.ColituUpdater.offered = result.update
+                        com.v2ray.ang.colitu.update.ColituUpdater.CheckResult.Current -> c.showToast(loc["update.latest"], error = false)
+                        com.v2ray.ang.colitu.update.ColituUpdater.CheckResult.Unverifiable -> c.showToast(loc["update.unverified"], error = true)
+                        com.v2ray.ang.colitu.update.ColituUpdater.CheckResult.Failed -> c.showToast(loc["update.checkFailed"], error = true)
+                    }
                 }
             },
         )

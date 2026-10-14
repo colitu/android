@@ -63,10 +63,56 @@ private sealed interface Step {
 fun ColituUpdatePrompt() {
     if (!ColituUpdater.enabled) return
     val context = LocalContext.current
-    LaunchedEffect(Unit) { ColituUpdater.check(context.applicationContext)?.let { ColituUpdater.offered = it } }
+    LaunchedEffect(Unit) {
+        val result = ColituUpdater.checkResult(context.applicationContext)
+        ColituUpdater.noteAutomaticResult(context.applicationContext, result)
+        (result as? ColituUpdater.CheckResult.Available)?.let { ColituUpdater.offered = it.update }
+    }
     ColituUpdater.offered?.let { update ->
         androidx.compose.runtime.key(update.versionCode) {
             ColituUpdateDialog(update, onLater = { ColituUpdater.offered = null })
+        }
+    }
+    if (ColituUpdater.offered == null && ColituUpdater.unverifiedNotice) {
+        ColituUnverifiedDialog(onClose = { ColituUpdater.unverifiedNotice = false })
+    }
+}
+
+/**
+ * The update information could not be verified at several starts in a row
+ * (stale, unsigned or rolled back): said plainly, with the download page, so a
+ * frozen update server does not pass for "you are up to date".
+ */
+@Composable
+private fun ColituUnverifiedDialog(onClose: () -> Unit) {
+    val loc = ColituLoc
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)) {
+        val shape = RoundedCornerShape(ColituRadius.md)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .colituGlow(Color(0xB3000000), 20.dp, shape, 10.dp)
+                .clip(shape)
+                .background(Color(0xFF1B1B24))
+                .border(1.dp, ColituColors.lineStrong, shape)
+                .padding(start = 20.dp, top = 22.dp, end = 20.dp, bottom = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            ColituRoundIcon(ColituIcons.Info, size = 56.dp, accent = true)
+            Spacer(Modifier.height(14.dp))
+            CText(loc["update.unverifiedTitle"], ColituText.h2, align = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            CText(loc["update.unverified"], ColituText.muted, align = TextAlign.Center)
+            Spacer(Modifier.height(18.dp))
+            ColituButton(loc["update.openDownload"], {
+                onClose()
+                com.v2ray.ang.colitu.screens.openWeb(context, "/download/android")
+            })
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ColituButton(loc["update.later"], onClose, kind = ColituButtonKind.Secondary)
+            }
         }
     }
 }

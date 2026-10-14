@@ -1,0 +1,39 @@
+name: Update manifest freshness
+
+# Colitu 2.9.1+ stops trusting a "no update" answer from
+# downloads/android/latest.json once its signed expiresAt has passed
+# (signature_v3, scripts/sign-update-manifest.ps1). This check fails, and so
+# notifies the maintainers, two weeks before that date, so the manifest is
+# signed again in time.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check expiresAt of the published manifest
+        env:
+          MANIFEST_URL: https://colitu.com/downloads/android/latest.json
+          WARN_DAYS: '14'
+        run: |
+          curl -fsS --max-time 30 "$MANIFEST_URL?t=$(date +%s)" -o latest.json
+          python3 - <<'PY'
+          import datetime, json, os, sys
+          manifest = json.load(open("latest.json"))
+          expires = manifest.get("expiresAt")
+          if not expires or not manifest.get("signature_v3"):
+              print("::warning::latest.json has no expiresAt/signature_v3 yet (signed by an older script).")
+              sys.exit(0)
+          at = datetime.datetime.strptime(expires, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+          left = at - datetime.datetime.now(datetime.timezone.utc)
+          print(f"latest.json {manifest.get('versionName')} expires {expires} ({left.days} days left)")
+          if left.days < int(os.environ["WARN_DAYS"]):
+              print(f"::error::latest.json expires in {left.days} days: sign it again with scripts/sign-update-manifest.ps1")
+              sys.exit(1)
+          PY

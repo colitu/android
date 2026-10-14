@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!--
+        ISRG Root X1 ships with the app as well: Android 7.0 (API 24) has no
+        Let's Encrypt root in its system store (X1 arrived in 7.1.1), and the
+        colitu.com chain ends at ISRG Root X2 signed by X1. Same root as the
+        X1 pin below (ColituCertPinsTest checks the file against PINS).
+    -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
+            <certificates src="@raw/isrg_root_x1" />
         </trust-anchors>
     </base-config>
 
@@ -34,6 +41,7 @@
         </pin-set>
         <trust-anchors>
             <certificates src="system" />
+            <certificates src="@raw/isrg_root_x1" />
         </trust-anchors>
     </domain-config>
 

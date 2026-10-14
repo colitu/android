@@ -51,10 +51,25 @@ class ColituDnsRouteTest {
     }
 
     @Test
-    fun leavesConfigsWithoutDnsServersAlone() {
-        val noDns = config.replace(""""dns":{"servers":["198.51.100.53"]},""", "")
-        assertEquals(noDns, ColituDnsRoute.throughTunnel(noDns))
+    fun withoutResolversTheDefaultsAreAskedThroughTheTunnel() {
+        // No dns block, or one whose servers the sanitizer emptied: Xray would use the
+        // system resolver outside the VPN, so the default DoH resolvers go in.
+        for (raw in listOf(
+            config.replace(""""dns":{"servers":["198.51.100.53"]},""", ""),
+            config.replace(""""servers":["198.51.100.53"]""", """"servers":[],"queryStrategy":"UseIPv4""""),
+        )) {
+            val out = ColituDnsRoute.throughTunnel(raw)
+            val dns = JsonParser.parseString(out).asJsonObject.getAsJsonObject("dns")
+            assertEquals(ColituDnsRoute.DEFAULT_SERVERS, dns.getAsJsonArray("servers").map { it.asString })
+            assertEquals(ColituDnsRoute.RULE_TAG, rules(out).first().get("ruleTag").asString)
+            assertEquals("proxy", rules(out).first().get("outboundTag").asString)
+            assertEquals(out, ColituDnsRoute.throughTunnel(out))
+        }
+        // The defaults pass the panel-policy rules themselves.
+        ColituDnsRoute.DEFAULT_SERVERS.forEach { assertTrue(XrayPolicySanitizer.validDnsAddress(it)) }
+        // Not a core config: left alone.
         assertEquals("not json", ColituDnsRoute.throughTunnel("not json"))
+        assertEquals("""{"dns":{}}""", ColituDnsRoute.throughTunnel("""{"dns":{}}"""))
     }
 
     @Test

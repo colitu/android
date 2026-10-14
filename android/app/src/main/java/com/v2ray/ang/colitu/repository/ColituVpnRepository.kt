@@ -100,7 +100,7 @@ object ColituVpnRepository {
         if (!privacyMode && country == null) return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { ColituWarmSpare.reroute(ColituRuBypass.configure(raw, country?.ifEmpty { null }, privacyMode)) }
+            runCatching { com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.reroute(ColituRuBypass.configure(raw, country?.ifEmpty { null }, privacyMode))) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }
@@ -116,7 +116,25 @@ object ColituVpnRepository {
             ?: return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { ColituWarmSpare.reroute(ColituSplitTunnel.configure(raw)) }
+            runCatching { com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.reroute(ColituSplitTunnel.configure(raw))) }
+                .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
+                .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
+        }
+    }
+
+    /**
+     * Ad blocking changed while no tunnel runs: the stored profile, which the
+     * quick-settings tile, the widget and Always-on start without the app,
+     * gets (or loses) the ad-blocking DNS right away. The VPN service reads the
+     * tunnel's DNS address from this profile ([ColituAdBlock.activeIn]), so the
+     * two always agree.
+     */
+    suspend fun reapplyAdBlockToStoredProfile(enabled: Boolean) = withContext(Dispatchers.IO) {
+        val subId = MmkvManager.decodeSubscriptions().find { it.subscription.remarks == SUBSCRIPTION_NAME }?.guid
+            ?: return@withContext
+        MmkvManager.decodeServerList(subId).forEach { guid ->
+            val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
+            runCatching { ColituAdBlock.storedProfile(raw, enabled, ColituAdBlock.dohServers) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }

@@ -12,10 +12,11 @@ import com.v2ray.ang.colitu.api.ColituTokenManager
  * switch, drop, latency probe and automatic choice, queued on the device and
  * sent at most hourly to POST /client/ac-events. Only collected while the
  * usage-statistics switch is on (the same switch as the counters). Events name
- * nodes (UUIDs of the servers list) and protocols; the payload adds no address
- * or visited site. Like the counters it is sent over the app's signed-in
- * connection, so the server can attribute it to the account; the event content
- * itself carries no account identifier.
+ * nodes (UUIDs of the servers list) and protocols, with times and the
+ * network's country and provider as the signed network_token (and the network
+ * type); the payload adds no address or visited site. Like the counters it is
+ * sent over the app's signed-in connection; the server keeps only daily
+ * totals, not linked to the account or device ("metrics.hint" says the same).
  */
 object ColituAcEvents {
     const val MAX_QUEUE = 1000

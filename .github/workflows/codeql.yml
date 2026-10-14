@@ -34,7 +34,7 @@ jobs:
         if: matrix.build-mode == 'manual'
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: gradle
 
       - uses: android-actions/setup-android@v4

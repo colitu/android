@@ -250,20 +250,7 @@ object CoreServiceManager {
      */
     fun outboundTraffic(): Map<String, Pair<Long, Long>> {
         val raw = runCatching { coreController.queryAllOutboundTrafficStats() }.getOrDefault("")
-        if (raw.isBlank()) return emptyMap()
-        val totals = HashMap<String, LongArray>()
-        for (entry in raw.split(';')) {
-            if (entry.isBlank()) continue
-            val parts = entry.split(',')
-            if (parts.size != 3) continue
-            val value = parts[2].toLongOrNull() ?: continue
-            val slot = totals.getOrPut(parts[0]) { LongArray(2) }
-            when (parts[1]) {
-                AppConfig.UPLINK -> slot[0] += value
-                AppConfig.DOWNLINK -> slot[1] += value
-            }
-        }
-        return totals.mapValues { it.value[0] to it.value[1] }
+        return com.v2ray.ang.colitu.data.XrayTrafficStats.parse(raw)
     }
 
     /**
