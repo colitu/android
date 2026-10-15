@@ -54,4 +54,11 @@ class ColituSupportModelsTest {
         }
         assertTrue(hosts.contains("https://api.colitu.com/api/v1"))
     }
+
+    @Test
+    fun diagnosticsLogsKeepTimesButHideIpv6() {
+        val text = ColituSupportRepository.redact("10-15 05:15:16.412 I/Colitu dial 2a02:6b8::1 and 2001:db8:85a3:0:0:8a2e:370:7334")
+        assertTrue(text, text.contains("10-15 05:15:16.412"))
+        assertFalse(text, text.contains("2a02:6b8") || text.contains("2001:db8"))
+    }
 }

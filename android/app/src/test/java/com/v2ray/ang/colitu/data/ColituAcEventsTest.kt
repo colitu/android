@@ -183,4 +183,12 @@ class ColituAcEventsTest {
         assertFalse(ColituAcEvents.due(true, false, true, 0, 10 * h))
         assertFalse(ColituAcEvents.due(true, true, false, 0, 10 * h))
     }
+
+    @Test
+    fun journalLineIsReadable() {
+        val event = ColituAcEvents.connect("0f5c2d9e-aaaa-bbbb-cccc-111111111111", "hysteria2", false, "tls", 1234, true, true)!!
+        val line = ColituAcEvents.journalLine(event, "wifi", 0)
+        assertTrue(line, line.contains(" connect net=wifi ") && line.contains("outcome=fail") && line.contains("protocol=hysteria2") && line.contains("ms=1234"))
+        assertFalse(line, line.contains("kind="))
+    }
 }

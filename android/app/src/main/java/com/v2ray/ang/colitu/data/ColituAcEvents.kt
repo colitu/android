@@ -244,9 +244,42 @@ object ColituAcEvents {
     private fun current(): Queue = queue ?: Queue.fromJson(runCatching { store.decodeString(KEY_QUEUE) }.getOrNull()).also { queue = it }
     private fun persist(q: Queue) { runCatching { store.encode(KEY_QUEUE, q.toJson()) } }
 
-    /** Queues [event] (null is ignored) unless the statistics switch is off. */
+    private const val KEY_JOURNAL = "connection_journal"
+    private const val JOURNAL_LINES = 300
+
+    /** One journal line: local time and the event's fields ("connect outcome=fail reason=tls …"). */
+    fun journalLine(event: JsonObject, type: String, nowMs: Long): String {
+        val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(nowMs))
+        val fields = event.entrySet().filter { it.key != "kind" && !it.value.isJsonNull && it.value.toString() != "\"\"" }
+            .joinToString(" ") { "${it.key}=${if (it.value.isJsonPrimitive) it.value.asString else it.value}" }
+        val net = networkTypeOf(type).ifEmpty { "?" }
+        return "$time ${event.get("kind")?.asString ?: "?"} net=$net $fields".trimEnd()
+    }
+
+    /**
+     * The last connection events on this device (newest last), kept locally
+     * for the support connection report; never sent on their own and kept
+     * whatever the statistics switch says.
+     */
+    fun journal(): List<String> = synchronized(lock) {
+        runCatching { store.decodeString(KEY_JOURNAL) }.getOrNull().orEmpty().lines().filter { it.isNotBlank() }
+    }
+
+    private fun appendJournal(event: JsonObject, type: String, nowMs: Long) {
+        // Server ping rounds (one line per server) and the automatic choice
+        // would push the connection events out of the journal.
+        if (event.get("kind")?.asString in setOf("probe", "choice")) return
+        synchronized(lock) {
+            val lines = journal() + journalLine(event, type, nowMs)
+            runCatching { store.encode(KEY_JOURNAL, lines.takeLast(JOURNAL_LINES).joinToString("\n")) }
+        }
+    }
+
+    /** Queues [event] (null is ignored) unless the statistics switch is off; the local journal keeps it either way. */
     fun record(event: JsonObject?, token: String, type: String, nowMs: Long = System.currentTimeMillis()) {
-        if (event == null || !ColituMetrics.enabled) return
+        if (event == null) return
+        appendJournal(event, type, nowMs)
+        if (!ColituMetrics.enabled) return
         synchronized(lock) {
             val q = current()
             q.add(event, token, networkTypeOf(type), nowMs)

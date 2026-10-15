@@ -225,6 +225,10 @@ object ColituSupportRepository {
             section("Last errors") {
                 if (errors.isEmpty()) append("(none)\n") else errors.forEach { append(it).append('\n') }
             }
+            section("Connection events (newest last)") {
+                val events = runCatching { com.v2ray.ang.colitu.data.ColituAcEvents.journal() }.getOrDefault(emptyList())
+                if (events.isEmpty()) append("(none)\n") else events.forEach { append(it).append('\n') }
+            }
             section("Log (Colitu, last lines)") { append(log ?: "(empty)").append('\n') }
         }
         SiteRedaction.apply(redact(report), knownHosts)
@@ -300,7 +304,10 @@ object ColituSupportRepository {
 
     private val email = Regex("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}\\b")
     private val ipv4 = Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
-    private val ipv6 = Regex("\\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\\b", RegexOption.IGNORE_CASE)
+    // An IPv6 address has "::" or at least five colons; "05:15:16" in a log
+    // line's time stamp has two and stays readable.
+    private val ipv6 = Regex("(?<![\\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\\w:])", RegexOption.IGNORE_CASE)
+    private fun isIpv6(v: String): Boolean = "::" in v || v.count { it == ':' } >= 5
 
     fun redact(text: String): String = text
         .replace(shareLink, "$1***@")
@@ -313,5 +320,5 @@ object ColituSupportRepository {
         .replace(urlHost) { m -> if (ownHost(m.groupValues[2])) m.value else m.groupValues[1] + "***" }
         .replace(hostPort) { m -> if (ownHost(m.value)) m.value else "***" }
         .replace(ipv4, "x.x.x.x")
-        .replace(ipv6, "x:x::x")
+        .replace(ipv6) { m -> if (isIpv6(m.value)) "x:x::x" else m.value }
 }
