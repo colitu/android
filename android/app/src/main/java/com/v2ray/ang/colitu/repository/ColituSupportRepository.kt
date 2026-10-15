@@ -13,6 +13,7 @@ import com.v2ray.ang.colitu.data.ColituDiagnosticsRequest
 import com.v2ray.ang.colitu.data.ColituDiagnosticsUpload
 import com.v2ray.ang.colitu.data.ColituSupportConversation
 import com.v2ray.ang.colitu.data.ColituSupportDiagnostics
+import com.v2ray.ang.colitu.data.SiteRedaction
 import com.v2ray.ang.colitu.data.ColituSupportMessage
 import com.v2ray.ang.colitu.l10n.ColituLoc
 import kotlinx.coroutines.Dispatchers
@@ -162,20 +163,25 @@ object ColituSupportRepository {
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
 
-    /** Uploads [report] to a conversation; [requestId] only when answering an agent's request. */
-    suspend fun uploadReport(conversationId: String, requestId: String?, report: String): Result<Unit> {
-        val body = ColituDiagnosticsUpload.body(requestId, report, appVersionLabel(), osLabel())
+    /** Attaches [report] to a conversation (a new one, with diagnostics on). */
+    suspend fun uploadReport(conversationId: String, report: String): Result<Unit> {
+        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel())
         return when (val result = ColituApiClient.post("/support/conversations/${Uri.encode(conversationId)}/diagnostics", body)) {
             is ColituApiClient.ApiResult.Success -> Result.success(Unit)
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
     }
 
-    suspend fun declineDiagnosticsRequest(id: String): Result<Unit> =
-        when (val result = ColituApiClient.post("/support/diagnostics-requests/${Uri.encode(id)}/decline", JsonObject())) {
-            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
-            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+    enum class RequestReportResult { Sent, NoLongerPending, Failed }
+
+    /** Answers an agent's request; a 404 means it is no longer pending (never retried). */
+    suspend fun sendRequestedReport(requestId: String, report: String): RequestReportResult {
+        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel())
+        return when (val result = ColituApiClient.post("/support/diagnostics-requests/${Uri.encode(requestId)}/report", body)) {
+            is ColituApiClient.ApiResult.Success -> RequestReportResult.Sent
+            is ColituApiClient.ApiResult.Error -> if (result.code == 404) RequestReportResult.NoLongerPending else RequestReportResult.Failed
         }
+    }
 
     private fun appVersionLabel() = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
     private fun osLabel() = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
@@ -184,7 +190,7 @@ object ColituSupportRepository {
      * The full connection report as plain text in "===== Section =====" blocks:
      * the header fields of [diagnostics] plus a long tail of the app's own Colitu
      * log. Everything is passed through [redact] (credentials, node names,
-     * addresses, e-mails); the Xray core's log, which can name visited sites, is
+     * addresses, e-mails) and then by [SiteRedaction] (dial targets, lookups, URL hosts); the Xray core's log, which can name visited sites, is
      * never included.
      */
     suspend fun fullReport(
@@ -193,6 +199,7 @@ object ColituSupportRepository {
         protocol: String?,
         connected: Boolean,
         lastError: String?,
+        knownHosts: Collection<String> = emptyList(),
     ): String = withContext(Dispatchers.IO) {
         val errors = listOfNotNull(lastError?.takeIf { it.isNotBlank() }, ColituApiClient.getLastFriendlyError()).distinct()
         val log = recentLog(FULL_LOG_CHARS, FULL_LOG_LINES)
@@ -220,7 +227,7 @@ object ColituSupportRepository {
             }
             section("Log (Colitu, last lines)") { append(log ?: "(empty)").append('\n') }
         }
-        redact(report)
+        SiteRedaction.apply(redact(report), knownHosts)
     }
 
     private fun StringBuilder.section(title: String, body: StringBuilder.() -> Unit) {

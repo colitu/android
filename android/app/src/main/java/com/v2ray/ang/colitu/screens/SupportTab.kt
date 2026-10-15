@@ -317,7 +317,7 @@ private fun uploadFullReport(c: ColituController, conversationId: String) {
     // Not tied to the screen: leaving the tab right after sending must not cancel it.
     kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
         runCatching {
-            ColituSupportRepository.uploadReport(conversationId, null, c.fullSupportReport())
+            ColituSupportRepository.uploadReport(conversationId, c.fullSupportReport())
         }
     }
 }

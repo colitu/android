@@ -1,21 +1,22 @@
 package com.v2ray.ang.colitu.data
 
 /**
- * When the app asks the panel for a connection-report request and when it asks
- * the user about one. Pure (the clock is injected) so it is unit tested.
+ * When the app asks the panel for a connection-report request and when it
+ * answers one. Pure (the clock is injected) so it is unit tested.
  *
  *  - the panel is asked at most once per [CHECK_INTERVAL_MS];
- *  - a request is shown once; after "later" (dialog dismissed) or a failed
- *    upload it is shown again no sooner than [REASK_INTERVAL_MS];
- *  - a request that was sent or declined in this run is never shown again;
- *  - an expired request is never shown.
+ *  - a pending request is answered silently; after a failed upload it is tried
+ *    again no sooner than [RETRY_INTERVAL_MS];
+ *  - a request that was sent, or that the panel says is no longer pending, is
+ *    never answered again in this run;
+ *  - an expired request is skipped; only one upload runs at a time.
  */
 class ColituDiagnosticsGate(private val clock: () -> Long = System::currentTimeMillis) {
     private var lastCheck = 0L
     private var checked = false
-    private val lastAsked = HashMap<String, Long>()
+    private val lastAttempt = HashMap<String, Long>()
     private val answered = HashSet<String>()
-    private var showing: String? = null
+    private var inFlight: String? = null
 
     /** True (and the check is recorded) when the panel may be asked now. A clock set back counts as due. */
     @Synchronized
@@ -27,34 +28,34 @@ class ColituDiagnosticsGate(private val clock: () -> Long = System::currentTimeM
         return true
     }
 
-    /** True when [request] should be put in front of the user now. */
+    /** True when [request] should be answered now. */
     @Synchronized
-    fun shouldAsk(request: ColituDiagnosticsRequest): Boolean {
-        if (!request.pending || request.id in answered || showing != null) return false
+    fun shouldSend(request: ColituDiagnosticsRequest): Boolean {
+        if (!request.pending || request.id in answered || inFlight != null) return false
         val now = clock()
         request.expiresAt?.let { if (it.toEpochMilli() <= now) return false }
-        val asked = lastAsked[request.id] ?: return true
-        return now < asked || now - asked >= REASK_INTERVAL_MS
+        val last = lastAttempt[request.id] ?: return true
+        return now < last || now - last >= RETRY_INTERVAL_MS
     }
 
-    /** The dialog is on screen for [id]. */
+    /** The upload for [id] starts. */
     @Synchronized
-    fun markShown(id: String) {
-        showing = id
-        lastAsked[id] = clock()
+    fun markAttempt(id: String) {
+        inFlight = id
+        lastAttempt[id] = clock()
     }
 
-    /** The dialog went away without an answer, or the upload failed: the 10 minutes start now. */
+    /** The upload failed: the retry wait starts now. */
     @Synchronized
-    fun markLater(id: String) {
-        if (showing == id) showing = null
-        lastAsked[id] = clock()
+    fun markFailed(id: String) {
+        if (inFlight == id) inFlight = null
+        lastAttempt[id] = clock()
     }
 
-    /** Sent or declined: never asked about again in this run. */
+    /** Sent, or no longer pending: never answered again in this run. */
     @Synchronized
     fun markAnswered(id: String) {
-        if (showing == id) showing = null
+        if (inFlight == id) inFlight = null
         answered.add(id)
     }
 
@@ -62,13 +63,13 @@ class ColituDiagnosticsGate(private val clock: () -> Long = System::currentTimeM
     fun reset() {
         lastCheck = 0L
         checked = false
-        lastAsked.clear()
+        lastAttempt.clear()
         answered.clear()
-        showing = null
+        inFlight = null
     }
 
     companion object {
         const val CHECK_INTERVAL_MS = 60_000L
-        const val REASK_INTERVAL_MS = 10L * 60_000L
+        const val RETRY_INTERVAL_MS = 10L * 60_000L
     }
 }

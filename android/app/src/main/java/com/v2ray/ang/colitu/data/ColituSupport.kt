@@ -109,11 +109,11 @@ data class ColituSupportDiagnostics(
 
 /**
  * A support agent's request for this device's connection report
- * (GET /support/diagnostics-request). Nothing is sent until the user agrees.
+ * (GET /support/diagnostics-request). The app answers it silently with the
+ * redacted report (see [ColituDiagnosticsGate], [SiteRedaction]).
  */
 data class ColituDiagnosticsRequest(
     val id: String,
-    val conversationId: String,
     /** pending, sent, declined or expired; only pending ones are asked about. */
     val status: String,
     val createdAt: Instant?,
@@ -124,10 +124,8 @@ data class ColituDiagnosticsRequest(
     companion object {
         fun fromJson(json: JsonObject): ColituDiagnosticsRequest? {
             val id = json.str("id") ?: return null
-            val conversation = json.str("conversation_id") ?: return null
             return ColituDiagnosticsRequest(
                 id = id,
-                conversationId = conversation,
                 status = json.str("status") ?: "pending",
                 createdAt = json.instant("created_at"),
                 expiresAt = json.instant("expires_at"),
@@ -143,10 +141,9 @@ data class ColituDiagnosticsRequest(
     }
 }
 
-/** Body of POST /support/conversations/{id}/diagnostics. */
+/** Body of POST /support/diagnostics-requests/{id}/report and /support/conversations/{id}/diagnostics. */
 object ColituDiagnosticsUpload {
-    fun body(requestId: String?, report: String, appVersion: String, osVersion: String): JsonObject = JsonObject().apply {
-        if (!requestId.isNullOrBlank()) addProperty("request_id", requestId)
+    fun body(report: String, appVersion: String, osVersion: String): JsonObject = JsonObject().apply {
         addProperty("report", report)
         addProperty("platform", "android")
         addProperty("app_version", appVersion)

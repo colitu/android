@@ -453,32 +453,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
             .onFailure { if (it.message == "SUPPORT_UNAVAILABLE") supportAvailable = false }
     }
 
-    /** Asks whether support wants a connection report (throttled to once a minute); the dialog then opens by itself. */
-    suspend fun checkDiagnosticsRequest() = ColituDiagnosticsCenter.check()
+    /** Answers a support agent's connection-report request silently (throttled to once a minute). */
+    suspend fun checkDiagnosticsRequest() = ColituDiagnosticsCenter.check { fullSupportReport() }
 
-    /** The full connection report with the app's current state. */
+    /** The full connection report with the app's current state, sites masked. */
     suspend fun fullSupportReport(): String = ColituSupportRepository.fullReport(
         getApplication<Application>(),
         server = connectedServer?.let { "${titleOf(it)} ${it.city.orEmpty()} (${it.id})".trim() },
         protocol = if (connected) transport else null,
         connected = connected,
         lastError = error,
+        knownHosts = allServers.mapNotNull { it.latencyHost },
     )
-
-    /** The dialog's "Send": uploads the report to the requesting conversation. */
-    fun sendDiagnosticsReport() {
-        viewModelScope.launch {
-            when (ColituDiagnosticsCenter.send { fullSupportReport() }) {
-                ColituDiagnosticsCenter.Outcome.Sent -> showToast(ColituLoc["support.report.sent"], error = false)
-                else -> showToast(ColituLoc["support.report.failed"], error = true)
-            }
-        }
-    }
-
-    /** The dialog's "Don't send". */
-    fun declineDiagnosticsReport() {
-        viewModelScope.launch { ColituDiagnosticsCenter.decline() }
-    }
 
     fun updateSupportUnread(value: Int) {
         supportUnread = value.coerceAtLeast(0)
