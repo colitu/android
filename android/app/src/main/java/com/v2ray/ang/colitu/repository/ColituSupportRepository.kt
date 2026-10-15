@@ -9,6 +9,8 @@ import android.provider.OpenableColumns
 import com.google.gson.JsonObject
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.colitu.api.ColituApiClient
+import com.v2ray.ang.colitu.data.ColituDiagnosticsRequest
+import com.v2ray.ang.colitu.data.ColituDiagnosticsUpload
 import com.v2ray.ang.colitu.data.ColituSupportConversation
 import com.v2ray.ang.colitu.data.ColituSupportDiagnostics
 import com.v2ray.ang.colitu.data.ColituSupportMessage
@@ -151,6 +153,89 @@ object ColituSupportRepository {
         )
     }
 
+    // ── Connection report requests ──────────────────────────────────────────
+
+    /** The open request of a support agent, or null (also for an older panel without the endpoint). */
+    suspend fun pendingDiagnosticsRequest(): Result<ColituDiagnosticsRequest?> =
+        when (val result = ColituApiClient.get("/support/diagnostics-request")) {
+            is ColituApiClient.ApiResult.Success -> Result.success(ColituDiagnosticsRequest.parseResponse(result.data))
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+
+    /** Uploads [report] to a conversation; [requestId] only when answering an agent's request. */
+    suspend fun uploadReport(conversationId: String, requestId: String?, report: String): Result<Unit> {
+        val body = ColituDiagnosticsUpload.body(requestId, report, appVersionLabel(), osLabel())
+        return when (val result = ColituApiClient.post("/support/conversations/${Uri.encode(conversationId)}/diagnostics", body)) {
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+    }
+
+    suspend fun declineDiagnosticsRequest(id: String): Result<Unit> =
+        when (val result = ColituApiClient.post("/support/diagnostics-requests/${Uri.encode(id)}/decline", JsonObject())) {
+            is ColituApiClient.ApiResult.Success -> Result.success(Unit)
+            is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
+        }
+
+    private fun appVersionLabel() = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+    private fun osLabel() = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+
+    /**
+     * The full connection report as plain text in "===== Section =====" blocks:
+     * the header fields of [diagnostics] plus a long tail of the app's own Colitu
+     * log. Everything is passed through [redact] (credentials, node names,
+     * addresses, e-mails); the Xray core's log, which can name visited sites, is
+     * never included.
+     */
+    suspend fun fullReport(
+        context: Context,
+        server: String?,
+        protocol: String?,
+        connected: Boolean,
+        lastError: String?,
+    ): String = withContext(Dispatchers.IO) {
+        val errors = listOfNotNull(lastError?.takeIf { it.isNotBlank() }, ColituApiClient.getLastFriendlyError()).distinct()
+        val log = recentLog(FULL_LOG_CHARS, FULL_LOG_LINES)
+        val report = buildString {
+            section("Report") {
+                line("Generated", java.time.Instant.now().toString())
+                line("Language", ColituLoc.language)
+            }
+            section("Device") {
+                line("Device", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
+                line("OS", osLabel())
+            }
+            section("App") {
+                line("Version", appVersionLabel())
+                line("Package", BuildConfig.APPLICATION_ID)
+            }
+            section("Connection") {
+                line("Connected", connected.toString())
+                line("Server", server)
+                line("Protocol", protocol)
+                line("Network", networkType(context))
+            }
+            section("Last errors") {
+                if (errors.isEmpty()) append("(none)\n") else errors.forEach { append(it).append('\n') }
+            }
+            section("Log (Colitu, last lines)") { append(log ?: "(empty)").append('\n') }
+        }
+        redact(report)
+    }
+
+    private fun StringBuilder.section(title: String, body: StringBuilder.() -> Unit) {
+        append("===== ").append(title).append(" =====\n")
+        body()
+        append('\n')
+    }
+
+    private fun StringBuilder.line(key: String, value: String?) {
+        if (!value.isNullOrBlank()) append(key).append(": ").append(value).append('\n')
+    }
+
+    private const val FULL_LOG_CHARS = 200_000
+    private const val FULL_LOG_LINES = 3000
+
     private fun networkType(context: Context): String? = runCatching {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return null
         val caps = manager.getNetworkCapabilities(manager.activeNetwork) ?: return "offline"
@@ -172,11 +257,11 @@ object ColituSupportRepository {
 
     /**
      * The app's own Colitu log lines only (the Xray core, whose warnings can
-     * name the sites a user visits, is filtered out by tag), at most ~24 KB,
+     * name the sites a user visits, is filtered out by tag), at most ~24 KB (more for the full report),
      * with credentials and IP addresses masked.
      */
-    private fun recentLog(maxChars: Int = 24_000): String? = runCatching {
-        val command = listOf("logcat", "-d", "-t", "400", "-v", "time") + LOG_TAGS.map { "$it:V" } + "*:S"
+    private fun recentLog(maxChars: Int = 24_000, lines: Int = 400): String? = runCatching {
+        val command = listOf("logcat", "-d", "-t", lines.toString(), "-v", "time") + LOG_TAGS.map { "$it:V" } + "*:S"
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         val text = process.inputStream.bufferedReader().use { it.readText() }
         process.destroy()

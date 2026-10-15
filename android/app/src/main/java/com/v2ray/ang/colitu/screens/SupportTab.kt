@@ -299,6 +299,8 @@ private fun SupportNewRequest(c: ColituController, onCancel: () -> Unit, onCreat
                         safeCall { ColituSupportRepository.create(subject.trim(), message.trim(), files.toList(), report) }
                             .onSuccess {
                                 c.showToast(loc["support.sent"], error = false)
+                                // The full report goes along in the background; a failure is ignored.
+                                if (diagnostics && it != null) uploadFullReport(c, it.id)
                                 onCreated(it?.id)
                             }
                             .onFailure { error = colituErrorMessage(it.message) }
@@ -306,6 +308,16 @@ private fun SupportNewRequest(c: ColituController, onCancel: () -> Unit, onCreat
                     }
                 }, loading = sending)
             }
+        }
+    }
+}
+
+/** Attaches the full connection report to a new conversation without waiting for it; errors are ignored. */
+private fun uploadFullReport(c: ColituController, conversationId: String) {
+    // Not tied to the screen: leaving the tab right after sending must not cancel it.
+    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+        runCatching {
+            ColituSupportRepository.uploadReport(conversationId, null, c.fullSupportReport())
         }
     }
 }

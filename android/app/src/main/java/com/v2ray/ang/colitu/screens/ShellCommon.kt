@@ -132,6 +132,8 @@ fun ColituConfirmDialog(
     destructive: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** The cancel button, when it differs from dismissing (back, tap outside). */
+    onCancel: (() -> Unit)? = null,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         val shape = RoundedCornerShape(ColituRadius.md)
@@ -150,7 +152,7 @@ fun ColituConfirmDialog(
             }
             ColituDivider()
             Row(Modifier.fillMaxWidth().height(50.dp)) {
-                DialogButton(cancel, ColituColors.lilac, onDismiss, Modifier.weight(1f))
+                DialogButton(cancel, ColituColors.lilac, onCancel ?: onDismiss, Modifier.weight(1f))
                 Box(Modifier.width(1.dp).fillMaxSize().background(ColituColors.line))
                 DialogButton(confirm, if (destructive) ColituColors.danger else ColituColors.lilac, onConfirm, Modifier.weight(1f))
             }

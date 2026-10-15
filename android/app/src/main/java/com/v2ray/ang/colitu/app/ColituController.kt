@@ -425,11 +425,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
         pollJob = viewModelScope.launch {
             if (initialized) load(showLoading = false)
             checkSupport()
+            checkDiagnosticsRequest()
             sendMetrics()
             while (true) {
                 delay(60_000)
                 refreshPolicy()
                 checkSupport()
+                checkDiagnosticsRequest()
                 sendMetrics()
                 ColituNoticeCenter.refresh() // throttled to once per 15 minutes
             }
@@ -449,6 +451,33 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 supportChecked = true
             }
             .onFailure { if (it.message == "SUPPORT_UNAVAILABLE") supportAvailable = false }
+    }
+
+    /** Asks whether support wants a connection report (throttled to once a minute); the dialog then opens by itself. */
+    suspend fun checkDiagnosticsRequest() = ColituDiagnosticsCenter.check()
+
+    /** The full connection report with the app's current state. */
+    suspend fun fullSupportReport(): String = ColituSupportRepository.fullReport(
+        getApplication<Application>(),
+        server = connectedServer?.let { "${titleOf(it)} ${it.city.orEmpty()} (${it.id})".trim() },
+        protocol = if (connected) transport else null,
+        connected = connected,
+        lastError = error,
+    )
+
+    /** The dialog's "Send": uploads the report to the requesting conversation. */
+    fun sendDiagnosticsReport() {
+        viewModelScope.launch {
+            when (ColituDiagnosticsCenter.send { fullSupportReport() }) {
+                ColituDiagnosticsCenter.Outcome.Sent -> showToast(ColituLoc["support.report.sent"], error = false)
+                else -> showToast(ColituLoc["support.report.failed"], error = true)
+            }
+        }
+    }
+
+    /** The dialog's "Don't send". */
+    fun declineDiagnosticsReport() {
+        viewModelScope.launch { ColituDiagnosticsCenter.decline() }
     }
 
     fun updateSupportUnread(value: Int) {
@@ -2434,6 +2463,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         devicePause = null
         outlook = null
         ColituNoticeCenter.reset()
+        ColituDiagnosticsCenter.reset()
     }
 
     // ── Service messages ───────────────────────────────────────────────────

@@ -107,6 +107,53 @@ data class ColituSupportDiagnostics(
     }
 }
 
+/**
+ * A support agent's request for this device's connection report
+ * (GET /support/diagnostics-request). Nothing is sent until the user agrees.
+ */
+data class ColituDiagnosticsRequest(
+    val id: String,
+    val conversationId: String,
+    /** pending, sent, declined or expired; only pending ones are asked about. */
+    val status: String,
+    val createdAt: Instant?,
+    val expiresAt: Instant?,
+) {
+    val pending: Boolean get() = status == "pending"
+
+    companion object {
+        fun fromJson(json: JsonObject): ColituDiagnosticsRequest? {
+            val id = json.str("id") ?: return null
+            val conversation = json.str("conversation_id") ?: return null
+            return ColituDiagnosticsRequest(
+                id = id,
+                conversationId = conversation,
+                status = json.str("status") ?: "pending",
+                createdAt = json.instant("created_at"),
+                expiresAt = json.instant("expires_at"),
+            )
+        }
+
+        /** `{"data":{"request":null | {...}}}`; null for no request, a request that is not pending or a bad shape. */
+        fun parseResponse(root: JsonObject): ColituDiagnosticsRequest? {
+            val data = root.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+            val request = data.get("request")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+            return fromJson(request)?.takeIf { it.pending }
+        }
+    }
+}
+
+/** Body of POST /support/conversations/{id}/diagnostics. */
+object ColituDiagnosticsUpload {
+    fun body(requestId: String?, report: String, appVersion: String, osVersion: String): JsonObject = JsonObject().apply {
+        if (!requestId.isNullOrBlank()) addProperty("request_id", requestId)
+        addProperty("report", report)
+        addProperty("platform", "android")
+        addProperty("app_version", appVersion)
+        addProperty("os_version", osVersion)
+    }
+}
+
 private fun JsonObject.str(key: String): String? =
     if (has(key) && !get(key).isJsonNull && get(key).isJsonPrimitive) get(key).asString.takeIf { it.isNotBlank() } else null
 

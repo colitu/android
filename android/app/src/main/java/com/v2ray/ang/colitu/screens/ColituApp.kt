@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import com.tencent.mmkv.MMKV
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.app.ColituController
+import com.v2ray.ang.colitu.app.ColituDiagnosticsCenter
 import com.v2ray.ang.colitu.app.ToggleResult
 import com.v2ray.ang.colitu.design.ColituBackdrop
 import com.v2ray.ang.colitu.design.ColituIcons
@@ -302,6 +303,19 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
             onKeep = { c.answerRuNotice(enablePrivacy = false) },
             onEnablePrivacy = { c.answerRuNotice(enablePrivacy = true) },
             onDetails = { openUrl(context, splitTunnelingUrl()) },
+        )
+    }
+
+    if (ColituDiagnosticsCenter.pending != null) {
+        ColituConfirmDialog(
+            title = loc["support.report.title"],
+            message = loc["support.report.body"],
+            confirm = loc["support.report.send"],
+            cancel = loc["support.report.decline"],
+            destructive = false,
+            onConfirm = { if (!ColituDiagnosticsCenter.busy) c.sendDiagnosticsReport() },
+            onDismiss = { ColituDiagnosticsCenter.dismiss() },
+            onCancel = { if (!ColituDiagnosticsCenter.busy) c.declineDiagnosticsReport() },
         )
     }
 
