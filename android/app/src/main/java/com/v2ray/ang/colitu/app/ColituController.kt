@@ -2429,6 +2429,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
     }
 
     private fun resetAccountState() {
+        // Another account must not send this one's connection history.
+        com.v2ray.ang.colitu.data.ColituAcEvents.clearJournal()
         servers = emptyList()
         routes = emptyList()
         rotation = null

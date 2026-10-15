@@ -287,6 +287,11 @@ object ColituAcEvents {
         }
     }
 
+    /** Forgets the local journal (sign-out or another account). */
+    fun clearJournal() {
+        synchronized(lock) { runCatching { store.removeValueForKey(KEY_JOURNAL) } }
+    }
+
     /** Forgets every queued event (the statistics switch was turned off). */
     fun clear() {
         synchronized(lock) {
