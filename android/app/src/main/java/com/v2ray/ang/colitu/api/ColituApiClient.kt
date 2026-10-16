@@ -290,7 +290,7 @@ object ColituApiClient {
 
         return when {
             code == 401 -> handle401(req, url, attempt, allowRefresh, bodyStr)
-            code in RETRYABLE_STATUS -> handleRetryable(req, url, attempt, allowRefresh, code, response.header("Retry-After"))
+            code in RETRYABLE_STATUS -> handleRetryable(req, url, attempt, allowRefresh, code, response.header("Retry-After"), bodyStr)
             code == 304 -> ApiResult.Success(JsonObject(), code, response.header("ETag"))
             code !in 200..299 -> {
                 logFailedRequest(req, code, attempt)
@@ -420,6 +420,7 @@ object ColituApiClient {
     // ── 5xx / rate limit retry ──────────────────────────────────────────────────
 
     private val RETRYABLE_STATUS = setOf(429, 500, 502, 503, 504)
+    private val PANEL_CODES_ON_RETRYABLE = setOf("REAUTH_RATE_LIMITED", "MFA_UNAVAILABLE")
 
     private suspend fun handleRetryable(
         req: Request,
@@ -428,6 +429,7 @@ object ColituApiClient {
         allowRefresh: Boolean,
         code: Int,
         retryAfter: String?,
+        bodyStr: String = "",
     ): ApiResult<JsonObject> {
         // Only reads are repeated: a 500 on a mutation may already have been applied.
         return if (isSafeRetry(req) && attempt < MAX_RETRY) {
@@ -437,7 +439,9 @@ object ColituApiClient {
             executeWithRetry(req, url, attempt + 1, allowRefresh)
         } else {
             logFailedRequest(req, code, attempt)
-            val message = if (code == 429) "rate_limited" else "server_unavailable"
+            // A few answers on these statuses carry a code the screens explain themselves.
+            val panelCode = extractErrorCode(bodyStr)?.takeIf { it in PANEL_CODES_ON_RETRYABLE }
+            val message = panelCode ?: if (code == 429) "rate_limited" else "server_unavailable"
             rememberFriendlyError(message)
             ApiResult.Error(code, message)
         }

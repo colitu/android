@@ -243,6 +243,8 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var request by remember { mutableStateOf<ColituAuthRepository.LinkRequest?>(null) }
+    // The password, or the 2FA / recovery code, the panel asks for before approving.
+    var proof by remember { mutableStateOf("") }
     // The camera keeps delivering the same code; one lookup at a time.
     val scanning = remember { AtomicBoolean(true) }
 
@@ -260,7 +262,7 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
         error = null
         scope.launch {
             safeCall { ColituAuthRepository.lookupLink(code) }
-                .onSuccess { request = it }
+                .onSuccess { proof = ""; request = it }
                 .onFailure { error = friendly(it.message); scanning.set(true) }
             busy = false
         }
@@ -268,10 +270,11 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
 
     fun decide(approve: Boolean) {
         val current = request ?: return
+        if (approve && current.reauth != null && proof.isBlank()) return
         busy = true
         error = null
         scope.launch {
-            safeCall { ColituAuthRepository.decideLink(current.code, approve) }
+            safeCall { ColituAuthRepository.decideLink(current.code, approve, current.reauth, proof) }
                 .onSuccess { if (approve) onApproved() else onDismiss() }
                 .onFailure { error = friendly(it.message) }
             busy = false
@@ -342,12 +345,33 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
                                 loc.format("link.confirmBody", "email" to ColituTokenManager.getUserEmail().orEmpty()),
                                 ColituText.muted,
                             )
+                            if (current.countryMismatch && !current.country.isNullOrBlank() && !current.approverCountry.isNullOrBlank()) {
+                                Spacer(Modifier.height(12.dp))
+                                ColituNotice(loc.format("link.mismatch", "from" to current.country, "here" to current.approverCountry))
+                            }
+                            if (current.reauth != null) {
+                                val byPassword = current.reauth == "password"
+                                Spacer(Modifier.height(14.dp))
+                                CText(loc[if (byPassword) "link.reauthPassword" else "link.reauthMfa"], ColituText.muted)
+                                Spacer(Modifier.height(8.dp))
+                                ColituField(
+                                    value = proof,
+                                    onChange = { proof = it.take(128) },
+                                    label = loc[if (byPassword) "auth.password" else "link.reauthCodeLabel"],
+                                    password = byPassword,
+                                    keyboardType = if (byPassword) KeyboardType.Password else KeyboardType.Ascii,
+                                    imeAction = ImeAction.Done,
+                                    onSubmit = { if (!busy) decide(true) },
+                                    enabled = !busy,
+                                )
+                            }
                             error?.let {
                                 Spacer(Modifier.height(12.dp))
                                 ColituNotice(it)
                             }
                             Spacer(Modifier.height(16.dp))
-                            ColituButton(loc["link.approve"], { decide(true) }, loading = busy)
+                            val needsProof = current.reauth != null && proof.isBlank()
+                            ColituButton(loc["link.approve"], if (needsProof) null else ({ decide(true) }), loading = busy)
                             Spacer(Modifier.height(8.dp))
                             ColituButton(loc["link.deny"], if (busy) null else ({ decide(false) }), kind = ColituButtonKind.Secondary, height = 48.dp)
                         }

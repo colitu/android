@@ -189,7 +189,17 @@ object ColituAuthRepository {
     data class LinkStart(val code: String, val url: String, val pollToken: String, val expiresInSeconds: Long, val intervalSeconds: Long)
 
     /** The device asking to be signed in, shown on the phone before approving. */
-    data class LinkRequest(val code: String, val deviceName: String, val platform: String, val country: String?)
+    data class LinkRequest(
+        val code: String,
+        val deviceName: String,
+        val platform: String,
+        val country: String?,
+        /** Where this phone is, for the mismatch warning. */
+        val approverCountry: String? = null,
+        val countryMismatch: Boolean = false,
+        /** "password" or "mfa": the proof the panel wants before approving. Null on an older panel. */
+        val reauth: String? = null,
+    )
 
     sealed class LinkPoll {
         data object Pending : LinkPoll()
@@ -254,15 +264,34 @@ object ColituAuthRepository {
         val body = JsonObject().apply { addProperty("code", code) }
         return when (val result = ColituApiClient.post("/auth/link/lookup", body)) {
             is ColituApiClient.ApiResult.Success -> {
-                val d = result.data
-                Result.success(LinkRequest(d.tryString("code") ?: code, d.tryString("device_name").orEmpty(), d.tryString("platform").orEmpty(), d.tryString("country")))
+                Result.success(parseLinkRequest(result.data, code))
             }
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
         }
     }
 
-    suspend fun decideLink(code: String, approve: Boolean): Result<Unit> {
-        val body = JsonObject().apply { addProperty("code", code) }
+    /** Reads the lookup answer; `reauth` is kept only when it is a method this app knows. */
+    internal fun parseLinkRequest(d: JsonObject, fallbackCode: String): LinkRequest = LinkRequest(
+        code = d.tryString("code") ?: fallbackCode,
+        deviceName = d.tryString("device_name").orEmpty(),
+        platform = d.tryString("platform").orEmpty(),
+        country = d.tryString("country")?.takeIf { it.isNotBlank() },
+        approverCountry = d.tryString("approver_country")?.takeIf { it.isNotBlank() },
+        countryMismatch = runCatching { d.get("country_mismatch")?.takeIf { it.isJsonPrimitive }?.asBoolean }.getOrNull() == true,
+        reauth = d.tryString("reauth")?.trim()?.lowercase()?.takeIf { it == "password" || it == "mfa" },
+    )
+
+    /**
+     * Approves or declines. [proof] is the password or the 2FA / recovery code
+     * the lookup asked for ([reauth] says which); it is only sent when approving.
+     */
+    suspend fun decideLink(code: String, approve: Boolean, reauth: String? = null, proof: String? = null): Result<Unit> {
+        val body = JsonObject().apply {
+            addProperty("code", code)
+            if (approve && !proof.isNullOrEmpty()) {
+                if (reauth == "password") addProperty("password", proof) else addProperty("mfa_code", proof.trim())
+            }
+        }
         return when (val result = ColituApiClient.post(if (approve) "/auth/link/approve" else "/auth/link/deny", body)) {
             is ColituApiClient.ApiResult.Success -> Result.success(Unit)
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
