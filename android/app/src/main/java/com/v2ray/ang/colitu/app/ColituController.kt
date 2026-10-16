@@ -1824,6 +1824,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 if (failures == 0) firstMissAt = android.os.SystemClock.elapsedRealtime()
                 if (++failures >= KNOWN_DEAD_SPARE_FAILURES && deviceOnline()) {
                     LogUtil.w(AppConfig.TAG, "Colitu: $protocol died while the spare is known dead, reconnecting")
+                    leaveServerIfBothDead(server, bothPathsDead = true)
                     stalledThisConnect += protocol
                     observe(server, protocol, reachable = false, latencyMs = null)
                     flushObservations()
@@ -1877,6 +1878,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 memory.markStalled(networkKey, server.id, protocol, System.currentTimeMillis(), confirmed = false)
                 saveMemory()
             }
+            leaveServerIfBothDead(server, bothPathsDead = spare != null)
             stalledThisConnect += protocol
             observe(server, protocol, reachable = false, latencyMs = null)
             flushObservations()
@@ -1885,6 +1887,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
             startConnectFlow(fresh = false, continuing = true)
             return
         }
+    }
+
+    /**
+     * Primary and warm spare both carried nothing while the phone is online: in automatic mode the
+     * server is penalized (30 min, this network), so the reconnect starts on the next ranked server
+     * instead of this server's other transports. A picked server is kept. Same rule as Windows/Linux.
+     */
+    private suspend fun leaveServerIfBothDead(server: ColituServer, bothPathsDead: Boolean) {
+        if (!ColituTransportOrder.leaveServerWhenBothDead(connectsAutomatically && !server.isMultihop, deviceOnline(), bothPathsDead)) return
+        memory.penalize(networkKey, server.id, System.currentTimeMillis())
+        saveMemory()
+        LogUtil.w(AppConfig.TAG, "Colitu: both paths died on ${server.id.take(8)}; penalized for 30 minutes, the reconnect starts on the next server")
     }
 
     /** The warm spare of the running tunnel (its server and transport), null without one. */
@@ -2721,6 +2735,9 @@ internal object ColituTransportOrder {
      * i.e. primary and spare both) may lead to a reconnect; a dead primary
      * whose spare still carries the traffic never does.
      */
+    /** Automatic mode leaves a server whose primary and spare both died while the device is online. */
+    fun leaveServerWhenBothDead(automatic: Boolean, online: Boolean, bothPathsDead: Boolean): Boolean = automatic && online && bothPathsDead
+
     /** A streak of [misses] that has started but not yet reached [threshold] (a verdict held back keeps the normal pace). */
     fun confirmingMiss(misses: Int, threshold: Int): Boolean = misses in 1 until threshold
 

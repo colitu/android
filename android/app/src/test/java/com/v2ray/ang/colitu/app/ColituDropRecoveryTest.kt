@@ -153,4 +153,13 @@ class ColituDropRecoveryTest {
         assertEquals(false, ColituTransportOrder.confirmingMiss(3, 3))
         assertEquals(false, ColituTransportOrder.confirmingMiss(7, 3))
     }
+
+    @Test
+    fun automaticModeLeavesAServerOnlyWhenBothPathsDied() {
+        assertTrue(ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = true))
+        assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = false, online = true, bothPathsDead = true))
+        assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = false, bothPathsDead = true))
+        // Only the primary died (no spare): its server's other transports come first, as before.
+        assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = false))
+    }
 }
