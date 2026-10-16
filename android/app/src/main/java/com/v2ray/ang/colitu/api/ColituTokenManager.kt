@@ -136,6 +136,7 @@ object ColituTokenManager {
             .forEach { com.v2ray.ang.handler.MmkvManager.removeSubscription(it.guid) }
         com.tencent.mmkv.MMKV.mmkvWithID("COLITU_SERVERS", com.tencent.mmkv.MMKV.MULTI_PROCESS_MODE)
             .removeValuesForKeys(arrayOf("config_etag", "selected_server_id", "auto_connect_server_id", "recovery_last_attempt"))
+        com.v2ray.ang.colitu.data.ColituRemoteFeatures.clear()
         ColituSecureStore.remove(
             KEY_ACCESS_TOKEN,
             KEY_REFRESH_TOKEN,

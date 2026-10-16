@@ -75,7 +75,7 @@ object ColituServerRepository {
     }
 
     private fun parseServerList(json: JsonObject): ColituServerListResponse =
-        ColituServerListResponse.fromJson(json)
+        ColituServerListResponse.fromJson(json).also { com.v2ray.ang.colitu.data.ColituRemoteFeatures.update(it.features) }
 
     // ── Config ───────────────────────────────────────────────────────────────────
 

@@ -132,6 +132,8 @@ data class ColituServerListResponse(
     val networkToken: String? = null,
     /** Transports that fail for most users on that network; null when none or too little data. */
     val networkHints: ColituNetworkHints? = null,
+    /** Rollout switches for this device (`features`); null from an older panel. */
+    val features: Map<String, Boolean>? = null,
 ) {
     companion object {
         /**
@@ -157,6 +159,7 @@ data class ColituServerListResponse(
                 servers, routes, clientCountry, clientNetwork,
                 json.optText("network_token"),
                 ColituNetworkHints.fromJson(json.get("network_hints")?.takeIf { it.isJsonObject }?.asJsonObject),
+                ColituRemoteFeatures.parse(json.get("features")?.takeIf { it.isJsonObject }?.asJsonObject),
             )
         }
 
