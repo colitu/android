@@ -48,6 +48,7 @@ import com.v2ray.ang.colitu.data.ColituSplitTunnel
 import com.v2ray.ang.colitu.data.ColituRuBypass
 import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.data.ColituServerRanking
+import com.v2ray.ang.colitu.data.ColituEngine
 import com.v2ray.ang.colitu.data.ColituSubscription
 import com.v2ray.ang.colitu.data.ColituUser
 import com.v2ray.ang.colitu.data.ColituVpnConfig
@@ -845,6 +846,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         ColituAcEvents.record(event, token, networkLink)
     }
 
+    /** Shadow mode of the Go decision engine ([ColituEngine]): logged only where its automatic order would differ. */
+    private fun shadowRank() {
+        val now = System.currentTimeMillis()
+        val network = networkKey
+        val ranked = com.google.gson.JsonArray().apply { rankedServers.forEach { add(it.id) } }
+        val request = ColituEngine.rankRequest(
+            servers, pings, network, memory.lastGoodServer(network, now), memory.penaltyTimes(network, now), clientCountry, now,
+        )
+        viewModelScope.launch { ColituEngine.compare(getApplication(), "rank", request, ranked) }
+    }
+
     /** Automatic mode picked [server]: how its measured ping compares with the best measured one. */
     private fun acChoice(server: ColituServer) {
         if (!ColituMetrics.enabled || server.isMultihop) return
@@ -1120,7 +1132,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         acAuto = automatic
         acFallbacks = 0
         acTransportFallback = false
-        if (automatic) acChoice(server)
+        if (automatic) {
+            acChoice(server)
+            shadowRank()
+        }
         val connectDeadline = begin + CONNECT_BUDGET_MS
         val failed = mutableListOf<String>()
         var cameUp = false
