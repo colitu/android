@@ -38,8 +38,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 29100
-        versionName = "2.9.1"
+        versionCode = 29200
+        versionName = "2.9.2"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
