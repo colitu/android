@@ -1356,8 +1356,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (offered.isEmpty()) return ServerOutcome.Fatal(if (isRoute) "MULTIHOP_NEEDS_VLESS" else "ROTATION_NEEDS_VLESS")
         offeredTransports = offered.mapNotNull { it.protocolType }.toSet()
 
+        // A new credential the node had not confirmed yet (the panel's
+        // credentials_pending): its silence says nothing about the network,
+        // so it is not remembered, and the same server is tried again while
+        // the node takes it (normally within a second or two).
+        val pending = offered.any { it.credentialsPending }
         // What already stalled in this connect goes last (see orderForStart).
-        return when (val outcome = tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = false, deadline, spare, offered)) {
+        var outcome = tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = pending, deadline, spare, offered)
+        if (pending) {
+            val settleUntil = minOf(deadline, android.os.SystemClock.elapsedRealtime() + PENDING_SETTLE_MS)
+            while (outcome is StartOutcome.Failed && android.os.SystemClock.elapsedRealtime() + PENDING_RETRY_MS < settleUntil) {
+                LogUtil.w(AppConfig.TAG, "Colitu: new credentials not on ${server.id.take(8)} yet; trying it again")
+                cameUp = cameUp || outcome.cameUp
+                delay(PENDING_RETRY_MS)
+                stalledThisConnect.removeAll(offeredTransports)
+                outcome = tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = true, deadline, spare, offered)
+            }
+        }
+        return when (outcome) {
             StartOutcome.Connected -> ServerOutcome.Connected
             StartOutcome.Offline -> ServerOutcome.Fatal("network_error")
             is StartOutcome.Failed -> ServerOutcome.Failed(cameUp || outcome.cameUp)
@@ -2691,6 +2707,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val PROBE_TIMEOUT_MS = 4_500L
         private const val TEARDOWN_SETTLE_MS = 600L
+        /** How long a server with credentials_pending is retried, and how often. */
+        private const val PENDING_SETTLE_MS = 20_000L
+        private const val PENDING_RETRY_MS = 2_000L
         private const val STALL_PROBE_INTERVAL_MS = 5_000L
         /** A check through a working tunnel answers in well under a second. */
         private const val STALL_PROBE_TIMEOUT_MS = 3_000L

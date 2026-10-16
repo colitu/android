@@ -187,6 +187,12 @@ data class ColituVpnConfig(
     val offlineGraceUntil: String? = null,
     /** CSL alpha for this server (tester accounts, CSL-enabled node); null otherwise. */
     val csl: ColituCslConfig? = null,
+    /**
+     * The panel's `credentials_pending`: this device's credential on the
+     * server is new and the node had not confirmed it yet. The server is
+     * retried for a few seconds before it counts as failed.
+     */
+    val credentialsPending: Boolean = false,
 ) {
     companion object {
         /** Accept only the versioned profile returned by the Colitu config API. */

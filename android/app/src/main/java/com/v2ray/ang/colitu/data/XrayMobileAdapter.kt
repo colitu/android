@@ -141,6 +141,8 @@ object XrayMobileAdapter {
             revision = revision,
             offlineGraceUntil = grace.toString(),
             csl = ColituCslConfig.fromJson(envelope.get("csl")),
+            credentialsPending = envelope.get("credentials_pending")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive
+                ?.takeIf { it.isBoolean }?.asBoolean == true,
         )
     }
 
