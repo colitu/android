@@ -198,6 +198,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** Warm spare: a second path inside the core takes over when the first dies (ColituWarmSpare). */
     var warmSpare by mutableStateOf(ColituWarmSpare.enabled)
         private set
+    /** CSL alpha ("Seamless session") and the testers' switch for alpha nodes in automatic mode. */
+    var cslAlpha by mutableStateOf(com.v2ray.ang.colitu.data.ColituCslStore.enabled)
+        private set
+    var autoAlpha by mutableStateOf(com.v2ray.ang.colitu.data.ColituCslStore.autoAlpha)
+        private set
+    /** Only tester accounts see alpha nodes, so only they see the CSL settings. */
+    val cslAvailable: Boolean get() = servers.any { it.alpha }
     /** Privacy mode: no Russian direct-routing exception (ColituRuBypass). */
     var privacyMode by mutableStateOf(ColituRuBypass.privacyMode)
         private set
@@ -846,15 +853,20 @@ class ColituController(application: Application) : AndroidViewModel(application)
         ColituAcEvents.record(event, token, networkLink)
     }
 
-    /** Shadow mode of the Go decision engine ([ColituEngine]): logged only where its automatic order would differ. */
-    private fun shadowRank() {
+    /**
+     * The automatic order for this connect: the Go decision engine ([ColituEngine])
+     * orders the candidates, the app's own ranking is the fallback.
+     */
+    private suspend fun connectOrder(context: Context): List<ColituServer> {
         val now = System.currentTimeMillis()
         val network = networkKey
-        val ranked = com.google.gson.JsonArray().apply { rankedServers.forEach { add(it.id) } }
+        val app = rankedServers
         val request = ColituEngine.rankRequest(
             servers, pings, network, memory.lastGoodServer(network, now), memory.penaltyTimes(network, now), clientCountry, now,
         )
-        viewModelScope.launch { ColituEngine.compare(getApplication(), "rank", request, ranked) }
+        val (order, source) = ColituEngine.decideOrder(context, "rank", request, app) { it.id }
+        LogUtil.i(AppConfig.TAG, "Colitu: automatic order ($source): ${order.take(5).joinToString(" > ") { it.id }}")
+        return order
     }
 
     /** Automatic mode picked [server]: how its measured ping compares with the best measured one. */
@@ -1132,9 +1144,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         acAuto = automatic
         acFallbacks = 0
         acTransportFallback = false
+        // Automatic: this connect's order (engine, else the app's), its first server and its fallbacks.
+        val order = if (automatic) connectOrder(context) else rankedServers
         if (automatic) {
+            server = order.firstOrNull() ?: server
             acChoice(server)
-            shadowRank()
         }
         val connectDeadline = begin + CONNECT_BUDGET_MS
         val failed = mutableListOf<String>()
@@ -1169,7 +1183,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     saveMemory()
                     failed += server.id
                     val left = connectDeadline - android.os.SystemClock.elapsedRealtime()
-                    server = ColituServerRanking.fallbackServer(automatic, rankedServers, failed, MAX_SERVERS_PER_CONNECT, left >= MIN_TRANSPORT_MS)
+                    server = ColituServerRanking.fallbackServer(automatic, order, failed, MAX_SERVERS_PER_CONNECT, left >= MIN_TRANSPORT_MS)
                     if (server != null) {
                         acFallbacks++
                         acChoice(server)
@@ -2306,6 +2320,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
         advancedMode = value
         ColituUiMode.advanced = value
         if (value && fromHome) showToast(ColituLoc["mode.advancedOn"], error = false)
+    }
+
+    /** CSL takes effect at the next core start, so a live connection is rebuilt. */
+    fun setCslAlphaEnabled(value: Boolean) {
+        if (cslAlpha == value) return
+        cslAlpha = value
+        com.v2ray.ang.colitu.data.ColituCslStore.enabled = value
+        if (connected || status == VpnStatus.Connecting) {
+            showToast("${ColituLoc["settings.csl"]} · ${ColituLoc["settings.saved"]}", error = false)
+            startConnectFlow()
+        }
+    }
+
+    fun setAutoAlphaEnabled(value: Boolean) {
+        if (autoAlpha == value) return
+        autoAlpha = value
+        com.v2ray.ang.colitu.data.ColituCslStore.autoAlpha = value
+        memoryVersion++
     }
 
     fun setWarmSpareEnabled(value: Boolean) {

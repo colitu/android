@@ -39,6 +39,11 @@ data class ColituServer(
     val latencyPort: Int? = null,
     /** Set for a multihop route (double VPN); [id] is then the route id, never a node id. */
     val route: ColituRoute? = null,
+    /**
+     * A hidden test node (CSL alpha) only tester accounts see: chosen by hand,
+     * never by automatic mode ([ColituServerRanking.autoExcluded]).
+     */
+    val alpha: Boolean = false,
 ) {
     val isMultihop: Boolean get() = route != null
     val flagEmoji: String get() = countryCodeToFlag(countryCode)
@@ -86,6 +91,7 @@ data class ColituServer(
                         .orEmpty(),
                     latencyHost = json.getString("latency_host"),
                     latencyPort = json.getString("latency_port")?.toIntOrNull(),
+                    alpha = json.get("alpha")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } == true,
                 )
             } catch (e: Exception) {
                 null
@@ -178,7 +184,9 @@ data class ColituVpnConfig(
     val expiresAt: String?,
     val unlimited: Boolean,
     val revision: Long = 0,
-    val offlineGraceUntil: String? = null
+    val offlineGraceUntil: String? = null,
+    /** CSL alpha for this server (tester accounts, CSL-enabled node); null otherwise. */
+    val csl: ColituCslConfig? = null,
 ) {
     companion object {
         /** Accept only the versioned profile returned by the Colitu config API. */

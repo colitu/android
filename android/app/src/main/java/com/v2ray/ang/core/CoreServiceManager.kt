@@ -194,9 +194,24 @@ object CoreServiceManager {
         // authenticated loopback SOCKS inbound.
         val tunFd = if (SettingsManager.isUsingHevTun()) 0 else vpnInterface?.fd ?: 0
 
+        // CSL alpha: the core gets the CSL routes and csl-client runs next to it.
+        val session = cslSession.incrementAndGet()
+        com.v2ray.ang.colitu.data.ColituCslRuntime.stop()
+        val csl = com.v2ray.ang.colitu.data.ColituCslStore.get(guid)
+        val cslOff = com.v2ray.ang.colitu.data.ColituCslRuntime.offReason(service, csl)
+        val withCsl = if (cslOff == null) com.v2ray.ang.colitu.data.ColituCslRules.apply(content, csl!!.port, com.v2ray.ang.colitu.data.ColituCslRules::newAccount) else null
+        if (com.v2ray.ang.colitu.data.ColituCslStore.enabled && withCsl == null) {
+            LogUtil.w(AppConfig.TAG, "Colitu: CSL alpha: off (${cslOff ?: "the config could not take CSL"})")
+        }
+
         NotificationManager.showNotification(currentConfig)
-        coreController.startLoop(content, tunFd)
+        coreController.startLoop(withCsl?.first ?: content, tunFd)
         if (!coreController.isRunning) error("ENGINE_FAILED")
+        if (withCsl != null) {
+            com.v2ray.ang.colitu.data.ColituCslRuntime.start(service, withCsl.second, csl!!.credential) {
+                restartWithoutCsl(service, session, content, tunFd)
+            }
+        }
 
         colituStore.encode(AppConfig.PREF_COLITU_CONNECTED_AT, System.currentTimeMillis())
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
@@ -207,9 +222,34 @@ object CoreServiceManager {
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 
+    /** Bumped at every core start and stop: a late CSL failure only restarts its own session. */
+    private val cslSession = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * csl-client failed: the same session's core runs again without CSL (the
+     * VPN interface stays, so nothing leaves around the tunnel meanwhile).
+     */
+    private fun restartWithoutCsl(service: Service, session: Int, content: String, tunFd: Int) {
+        CoroutineScope(Dispatchers.IO).launch {
+            if (cslSession.get() != session) return@launch
+            LogUtil.w(AppConfig.TAG, "Colitu: CSL alpha: core restarts without CSL")
+            runCatching { coreController.stopLoop() }
+            val deadline = SystemClock.elapsedRealtime() + CORE_STOP_WAIT_MS
+            while (coreController.isRunning && SystemClock.elapsedRealtime() < deadline) {
+                kotlinx.coroutines.delay(50)
+            }
+            if (cslSession.get() != session || coreController.isRunning) return@launch
+            runCatching { coreController.startLoop(content, tunFd) }
+                .onFailure { LogUtil.e(AppConfig.TAG, "Colitu: CSL alpha: restart without CSL failed", it) }
+            if (coreController.isRunning) startColituTraffic(service)
+        }
+    }
+
     /** [keepReceiver]: a hold, the service still has to hear the next stop or hold. */
     fun stopCoreLoop(keepReceiver: Boolean = false): Boolean {
         val service = getService() ?: return false
+        cslSession.incrementAndGet()
+        com.v2ray.ang.colitu.data.ColituCslRuntime.stop()
 
         if (coreController.isRunning) {
             CoroutineScope(Dispatchers.IO).launch {

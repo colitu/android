@@ -140,6 +140,7 @@ object XrayMobileAdapter {
             unlimited = false,
             revision = revision,
             offlineGraceUntil = grace.toString(),
+            csl = ColituCslConfig.fromJson(envelope.get("csl")),
         )
     }
 

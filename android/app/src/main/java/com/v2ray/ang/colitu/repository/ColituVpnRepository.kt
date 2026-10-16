@@ -59,6 +59,8 @@ object ColituVpnRepository {
                 }
                 val guid = MmkvManager.encodeServerConfig("", profile)
                 MmkvManager.encodeServerRaw(guid, runtime)
+                // CSL alpha: the VPN process reads it at every core start (sealed, per profile).
+                com.v2ray.ang.colitu.data.ColituCslStore.put(guid, config.csl)
                 ColituRuBypass.profileCountry = config.serverCountry.orEmpty()
                 Result.success(guid)
             } catch (e: Exception) {

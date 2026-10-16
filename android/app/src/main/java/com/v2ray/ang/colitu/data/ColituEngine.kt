@@ -7,7 +7,9 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
@@ -24,10 +26,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * sidecar: `libcolituengine.so` in the APK's native library directory (an
  * executable, not a library: an app may only run files from there), one
  * JSON request per line on its stdin, one answer per line on its stdout. It
- * needs no network and keeps no state. Shadow mode for now: the app still
- * decides with its own code (same rules, shared test vectors) and logs where
- * the engine would have decided otherwise. A missing, slow or crashed engine
- * is left alone for [RETRY_AFTER_MS]; nothing waits on it.
+ * needs no network and keeps no state. It decides the automatic server order
+ * ([decideOrder]); the app's own code (same rules, shared test vectors) is the
+ * fallback whenever the engine is missing, slow, failing or answers with other
+ * servers than the app's candidates. A missing, slow or crashed engine is left
+ * alone for [RETRY_AFTER_MS].
  */
 object ColituEngine {
     private const val TAG = "ColituEngine"
@@ -35,6 +38,11 @@ object ColituEngine {
     private const val ANSWER_TIMEOUT_MS = 2_000L
     private const val RETRY_AFTER_MS = 10 * 60_000L
     private const val MAX_LOGGED_MISMATCHES = 20
+    /** How long a connect waits for the engine's order before it uses the app's own. */
+    private const val DECISION_BUDGET_MS = 800L
+
+    /** Calls a connect stops waiting for still finish here, so the line protocol stays in step. */
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val lock = Mutex()
     private var process: Process? = null
@@ -88,6 +96,40 @@ object ColituEngine {
         }
     }
 
+    /**
+     * The engine's order of [app] for [op] (an array of ids), used only when it
+     * holds exactly the app's candidates (same ids, none added, none dropped,
+     * no repeats): the engine may reorder but never bring back a server the app
+     * left out (Russia, penalised, hidden). Otherwise, or without an answer
+     * within [DECISION_BUDGET_MS], the app's own order. The second value says
+     * which one was used.
+     */
+    suspend fun <T> decideOrder(context: Context, op: String, input: JsonElement, app: List<T>, id: (T) -> String): Pair<List<T>, String> {
+        if (app.size < 2) return app to "app"
+        val pending = background.async { call(context.applicationContext, op, input) }
+        val answer = withTimeoutOrNull(DECISION_BUDGET_MS) { pending.await() } ?: return app to "app (engine unavailable or slow)"
+        if (!answer.isJsonArray) return app to "app (engine unavailable)"
+        val byId = LinkedHashMap<String, T>()
+        for (item in app) {
+            if (byId.put(id(item), item) != null) return app to "app"
+        }
+        val order = ArrayList<T>(app.size)
+        for (element in answer.asJsonArray) {
+            val key = element.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+            val item = key?.let { byId.remove(it) } ?: return app to setDiffers(op, app.map(id), answer)
+            order.add(item)
+        }
+        if (byId.isNotEmpty()) return app to setDiffers(op, app.map(id), answer)
+        return order to "engine"
+    }
+
+    private fun setDiffers(op: String, app: List<String>, engine: JsonElement): String {
+        if (mismatches.incrementAndGet() <= MAX_LOGGED_MISMATCHES) {
+            Log.w(TAG, "Colitu: engine $op answered other servers than the app's candidates (app $app, engine $engine); app order used")
+        }
+        return "app (engine set differs)"
+    }
+
     /** The `rank` request for the automatic order (engine.RankInput on the Go side). */
     fun rankRequest(
         servers: List<ColituServer>,
@@ -101,7 +143,8 @@ object ColituEngine {
         val list = JsonArray()
         val pingObject = JsonObject()
         val penalized = JsonArray()
-        for (server in servers) {
+        // Alpha test nodes never reach the engine unless the tester's test switch lets automatic mode use them.
+        for (server in servers.filterNot { it.alpha && !ColituCslStore.autoAlpha }) {
             list.add(JsonObject().apply {
                 addProperty("id", server.id)
                 addProperty("country", server.countryCode)

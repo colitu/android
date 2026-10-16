@@ -227,6 +227,24 @@ fun AccountTab(
             value = c.warmSpare,
             onChange = { c.setWarmSpareEnabled(it) },
         )
+        if (c.cslAvailable) {
+            Spacer(Modifier.height(8.dp))
+            ColituSwitchRow(
+                icon = ColituIcons.Antenna,
+                title = loc["settings.csl"],
+                hint = loc["settings.cslHint"],
+                value = c.cslAlpha,
+                onChange = { c.setCslAlphaEnabled(it) },
+            )
+            Spacer(Modifier.height(8.dp))
+            ColituSwitchRow(
+                icon = ColituIcons.Antenna,
+                title = loc["settings.autoAlpha"],
+                hint = loc["settings.autoAlphaHint"],
+                value = c.autoAlpha,
+                onChange = { c.setAutoAlphaEnabled(it) },
+            )
+        }
         if (c.adBlockAvailable) {
             Spacer(Modifier.height(8.dp))
             ColituSwitchRow(

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
-LIBS=(libmmkv.so libgojni.so libhev-socks5-tunnel.so)
+LIBS=(libmmkv.so libgojni.so libhev-socks5-tunnel.so libcolituengine.so libcslclient.so)
 
 [ "$#" -gt 0 ] || { echo "usage: $0 <apk-or-aab> [...]" >&2; exit 2; }
 

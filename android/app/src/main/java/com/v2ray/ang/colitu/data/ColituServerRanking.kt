@@ -50,7 +50,7 @@ object ColituServerRanking {
     val AUTO_EXCLUDED_COUNTRIES = setOf("RU")
 
     fun autoExcluded(server: ColituServer): Boolean =
-        server.countryCode?.trim()?.uppercase() in AUTO_EXCLUDED_COUNTRIES
+        server.countryCode?.trim()?.uppercase() in AUTO_EXCLUDED_COUNTRIES || (server.alpha && !ColituCslStore.autoAlpha)
 
     /**
      * Client countries where a server in the client's own country cannot open
