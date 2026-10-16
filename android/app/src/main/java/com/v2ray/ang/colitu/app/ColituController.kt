@@ -2778,8 +2778,17 @@ internal object ColituTransportOrder {
 
     fun effectiveStalled(offered: Collection<String>, remembered: Set<String>, thisConnect: Set<String>): Set<String> {
         val all = remembered + thisConnect
+        return if (marksIgnored(offered, all)) thisConnect else all
+    }
+
+    /**
+     * Stall marks that leave at most one of two or more offered transports
+     * describe the network, not the transports (shared AC vectors, Go
+     * engine.MarksIgnored).
+     */
+    fun marksIgnored(offered: Collection<String>, stalled: Set<String>): Boolean {
         val distinct = offered.toSet()
-        return if (distinct.size >= 2 && (distinct - all).size <= 1) thisConnect else all
+        return distinct.size >= 2 && (distinct - stalled).size <= 1
     }
 
     /** Store key: wall-clock ms until which [protocol] goes last on [serverId] after a mid-session stall. */
@@ -2799,8 +2808,11 @@ internal object ColituTransportOrder {
 
     fun stalled(connectTime: String?, midSession: String?): Set<String> = setOfNotNull(connectTime, midSession)
 
+    /** A transport this build does not know goes after every known one (canonical rank 5). */
+    const val UNKNOWN_TRANSPORT_RANK = 5
+
     fun rankOf(protocol: String?, stalled: Set<String>) =
-        (XrayMobileAdapter.transportRank[protocol] ?: 3) + if (protocol in stalled) 10 else 0
+        (XrayMobileAdapter.transportRank[protocol] ?: UNKNOWN_TRANSPORT_RANK) + if (protocol in stalled) 10 else 0
 
     fun byRank(configs: List<ColituVpnConfig>, stalled: Set<String>) = configs.sortedBy { rankOf(it.protocolType, stalled) }
 

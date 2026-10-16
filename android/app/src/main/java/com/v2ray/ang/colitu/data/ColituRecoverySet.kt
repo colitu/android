@@ -31,6 +31,8 @@ object ColituRecoverySet {
     const val MAX_CONFIGS = 4
     /** A stored set older than this is replaced. */
     const val REFRESH_AFTER_MS = 24L * 60 * 60 * 1000
+    /** A `generated_at` this far ahead of now counts as due. */
+    const val CLOCK_SKEW_MS = 5L * 60 * 1000
     /** At most one fetch attempt per this long, successful or not. */
     const val MIN_ATTEMPT_GAP_MS = 6L * 60 * 60 * 1000
 
@@ -47,6 +49,7 @@ object ColituRecoverySet {
         val array = root.get("configs")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
         val configs = array.mapNotNull { it.takeIf { e -> e.isJsonObject }?.asJsonObject }
             .filter { serverId(it) != null }
+            .distinctBy { serverId(it) }
             .take(MAX_CONFIGS)
         if (configs.isEmpty()) return null
         return ColituRecoverySetData(generatedAt, until, configs)
@@ -87,7 +90,10 @@ object ColituRecoverySet {
         // A clock that moved back must not block the fetch for days.
         if (lastAttemptMs in 1..nowMs && nowMs - lastAttemptMs < MIN_ATTEMPT_GAP_MS) return false
         if (stored == null) return true
-        return nowMs - stored.generatedAt.toEpochMilli() >= REFRESH_AFTER_MS
+        val age = nowMs - stored.generatedAt.toEpochMilli()
+        // generated_at far in the future: the clock moved back, fetch again.
+        if (-age > CLOCK_SKEW_MS) return true
+        return age >= REFRESH_AFTER_MS
     }
 
     enum class FetchError { DeleteSet, KeepSet }

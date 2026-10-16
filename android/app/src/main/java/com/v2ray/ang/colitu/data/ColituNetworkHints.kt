@@ -16,7 +16,7 @@ data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val 
     companion object {
         private fun protocols(json: JsonObject, name: String): List<String> =
             json.get(name)?.takeIf { it.isJsonArray }?.asJsonArray
-                ?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive }?.asString?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } }
+                ?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } }
                 ?.distinct().orEmpty()
 
         fun fromJson(json: JsonObject?): ColituNetworkHints? {
@@ -87,7 +87,7 @@ object ColituNetworkHintsPolicy {
      */
     fun <T> hintedStart(configs: List<T>, protocolOf: (T) -> String?, preferred: List<String>, stalled: Set<String>, lastGood: String?, rank: (List<T>) -> List<T>): List<T>? {
         if (lastGood != null || preferred.isEmpty()) return null
-        val first = preferred.mapNotNull { p -> configs.firstOrNull { protocolOf(it) == p && p !in stalled } }
+        val first = preferred.distinct().mapNotNull { p -> configs.firstOrNull { protocolOf(it) == p && p !in stalled } }
         if (first.isEmpty()) return null
         return first + rank(configs.filter { it !in first })
     }
