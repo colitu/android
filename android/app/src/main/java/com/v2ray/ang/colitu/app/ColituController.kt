@@ -1765,7 +1765,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val started = android.os.SystemClock.elapsedRealtime()
         while (connected && transport == protocol && connectedServerId == server.id) {
             val fast = protocol == "hysteria2" || android.os.SystemClock.elapsedRealtime() - started < TCP_WATCH_FAST_MS || failures > 0
-            delay(if (fast) STALL_PROBE_INTERVAL_MS else TCP_WATCH_SLOW_MS)
+            // A miss waiting for confirmation is checked again after a second: an outage is called
+            // about 10 s after it is first seen instead of 20-30 s (5 s pace, probes in turn).
+            val confirming = ColituTransportOrder.confirmingMiss(failures, if (spareDead) KNOWN_DEAD_SPARE_FAILURES else STALL_PROBE_FAILURES) ||
+                (!primaryRecorded && ColituTransportOrder.confirmingMiss(primaryMisses, STALL_PROBE_FAILURES))
+            delay(ColituTransportOrder.watchDelayMs(confirming, fast, STALL_CONFIRM_INTERVAL_MS, STALL_PROBE_INTERVAL_MS, TCP_WATCH_SLOW_MS))
             if (!connected || transport != protocol || connectedServerId != server.id) return
             val networks = underlyingNetworks()
             // Offline, airplane mode, Doze or a network change in progress:
@@ -1775,8 +1779,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 failures = 0
                 continue
             }
-            val primaryOk = spare != null && verifyTunnel(STALL_PROBE_TIMEOUT_MS, VerifyPath.Primary) >= 0
-            val normalOk = primaryOk || verifyTunnel(STALL_PROBE_TIMEOUT_MS) >= 0
+            // Both paths at once: in turn a dead primary cost one more timeout per round.
+            val (primaryOk, normalOk) = if (spare == null) {
+                false to (verifyTunnel(STALL_PROBE_TIMEOUT_MS) >= 0)
+            } else coroutineScope {
+                val primary = async { verifyTunnel(STALL_PROBE_TIMEOUT_MS, VerifyPath.Primary) >= 0 }
+                val normal = async { verifyTunnel(STALL_PROBE_TIMEOUT_MS) >= 0 }
+                val p = primary.await()
+                p to (p || normal.await())
+            }
             if (spare != null && primaryOk) {
                 val tick = android.os.SystemClock.elapsedRealtime()
                 if (!spareDead && tick >= nextSpareProbeAt) {
@@ -2619,7 +2630,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val PROBE_TIMEOUT_MS = 4_500L
         private const val TEARDOWN_SETTLE_MS = 600L
         private const val STALL_PROBE_INTERVAL_MS = 5_000L
-        private const val STALL_PROBE_TIMEOUT_MS = 4_000L
+        /** A check through a working tunnel answers in well under a second. */
+        private const val STALL_PROBE_TIMEOUT_MS = 3_000L
+        /** The watcher's pace while a miss waits for confirmation. */
+        private const val STALL_CONFIRM_INTERVAL_MS = 1_000L
         private const val STALL_PROBE_FAILURES = 3
         /** Misses of a primary whose spare is known dead before a reconnect. */
         private const val KNOWN_DEAD_SPARE_FAILURES = 2
@@ -2707,6 +2721,16 @@ internal object ColituTransportOrder {
      * i.e. primary and spare both) may lead to a reconnect; a dead primary
      * whose spare still carries the traffic never does.
      */
+    /** A streak of [misses] that has started but not yet reached [threshold] (a verdict held back keeps the normal pace). */
+    fun confirmingMiss(misses: Int, threshold: Int): Boolean = misses in 1 until threshold
+
+    /** The mid-session watcher's next delay: quick while confirming a miss, else fast or slow. */
+    fun watchDelayMs(confirming: Boolean, fast: Boolean, confirmMs: Long, fastMs: Long, slowMs: Long): Long = when {
+        confirming -> confirmMs
+        fast -> fastMs
+        else -> slowMs
+    }
+
     fun watchAction(spareAttached: Boolean, primaryOk: Boolean, normalOk: Boolean): WatchAction = when {
         !normalOk -> WatchAction.BothDead
         spareAttached && !primaryOk -> WatchAction.SpareCarries

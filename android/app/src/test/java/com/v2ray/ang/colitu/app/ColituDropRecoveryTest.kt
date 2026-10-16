@@ -139,4 +139,18 @@ class ColituDropRecoveryTest {
             ColituWarmSpare.spareChoice("hysteria2", all, setOf("vless-xhttp", "vless-reality"), sameServer = false),
         )
     }
+
+    @Test
+    fun watcherConfirmsAMissEverySecondUntilTheVerdict() {
+        // No miss: the usual pace.
+        assertEquals(false, ColituTransportOrder.confirmingMiss(0, 3))
+        assertEquals(30_000L, ColituTransportOrder.watchDelayMs(confirming = false, fast = false, confirmMs = 1_000L, fastMs = 5_000L, slowMs = 30_000L))
+        // First and second miss: quick confirmation.
+        assertTrue(ColituTransportOrder.confirmingMiss(1, 3))
+        assertTrue(ColituTransportOrder.confirmingMiss(2, 3))
+        assertEquals(1_000L, ColituTransportOrder.watchDelayMs(confirming = true, fast = false, confirmMs = 1_000L, fastMs = 5_000L, slowMs = 30_000L))
+        // A verdict held back (switch gap) keeps counting past the threshold: no probe every second.
+        assertEquals(false, ColituTransportOrder.confirmingMiss(3, 3))
+        assertEquals(false, ColituTransportOrder.confirmingMiss(7, 3))
+    }
 }
