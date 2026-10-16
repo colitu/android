@@ -281,6 +281,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val network = networkKey
             return ColituServerRanking.rank(
                 servers, pings, network, memory.lastGoodServer(network, now), memory.penalized(network, now), clientCountry, now,
+                penaltyAt = memory.penaltyTimes(network, now),
             )
         }
     val recommendedServer: ColituServer? get() = rankedServers.firstOrNull()

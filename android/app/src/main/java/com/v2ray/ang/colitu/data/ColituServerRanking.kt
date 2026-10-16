@@ -11,6 +11,10 @@ import com.google.gson.JsonParser
 data class ColituPing(val ms: Int?, val measuredAt: Long, val network: String) {
     fun fresh(network: String, now: Long): Boolean =
         this.network == network && now - measuredAt in 0 until ColituServerRanking.PING_FRESH_MS
+
+    /** A successful ping still orders the servers up to [ColituServerRanking.PING_USABLE_MS] on its network. */
+    fun usable(network: String, now: Long): Boolean =
+        ms != null && this.network == network && now - measuredAt in 0 until ColituServerRanking.PING_USABLE_MS
 }
 
 /**
@@ -22,6 +26,13 @@ data class ColituPing(val ms: Int?, val measuredAt: Long, val network: String) {
  */
 object ColituServerRanking {
     const val PING_FRESH_MS = 10 * 60_000L
+
+    /**
+     * A successful ping older than [PING_FRESH_MS] (same network) still orders the servers for
+     * this long, after a network change or a wake-up, instead of dropping back to the panel's
+     * order, in which a far server can come first. A failed ping is only believed while fresh.
+     */
+    const val PING_USABLE_MS = 6 * 60 * 60_000L
 
     /** "<link>|<client_network>", link = wifi / cellular / ethernet / other / none. */
     fun networkKey(link: String, clientNetwork: String?): String = "$link|${clientNetwork.orEmpty()}"
@@ -58,16 +69,17 @@ object ColituServerRanking {
     const val MEMORY_BEATEN_MS = 60
 
     /**
-     * Available nodes (no multihop routes, none in [AUTO_EXCLUDED_COUNTRIES]) best first:
-     * 1. penalized on this network last;
+     * Available nodes (no multihop routes, none in [AUTO_EXCLUDED_COUNTRIES]) best first; the same
+     * rules on every platform (shared test vectors, colitu-csl engine/testdata/ac-vectors):
+     * 1. penalized on this network last, the oldest penalty ([penaltyAt]) first so retries rotate;
      * 2. a fresh failed ping after all others except the penalized;
      * 3. the user's own country after the foreign ones, only when the client is in one of
      *    [HOME_PUSHBACK_COUNTRIES] (censoring countries);
      * 4. the last good server on this network first (remembered from automatic connections
-     *    only), unless its fresh ping is known and a fresh candidate of the same standing is at
-     *    least [MEMORY_BEATEN_FRACTION] and [MEMORY_BEATEN_MS] ms faster;
-     * 5. fresh successful pings ascending;
-     * 6. without a fresh ping in panel order, after the pinged ones.
+     *    only), unless its ping is known and a candidate of the same standing is at least
+     *    [MEMORY_BEATEN_FRACTION] and [MEMORY_BEATEN_MS] ms faster;
+     * 5. successful pings (fresh, or up to [PING_USABLE_MS] old on this network) ascending;
+     * 6. without a usable ping in panel order, after the pinged ones.
      */
     fun rank(
         servers: List<ColituServer>,
@@ -77,6 +89,7 @@ object ColituServerRanking {
         penalized: Set<String>,
         clientCountry: String?,
         now: Long,
+        penaltyAt: Map<String, Long> = emptyMap(),
     ): List<ColituServer> {
         val country = clientCountry?.trim()?.uppercase()?.takeIf { it.length == 2 }
         val pushHome = country != null && country in HOME_PUSHBACK_COUNTRIES
@@ -85,19 +98,20 @@ object ColituServerRanking {
         fun failedPing(id: String) = pings[id]?.let { ping -> ping.ms == null && ping.fresh(network, now) } == true
         // Servers of the same standing (penalty, failed ping, home pushback) compete with the remembered one.
         fun standing(server: ColituServer) = Triple(server.id in penalized, failedPing(server.id), isHome(server))
-        val rememberedMs = lastGood?.let { freshMs(pings[it], network, now) }
+        val rememberedMs = lastGood?.let { usableMs(pings[it], network, now) }
         val remembered = candidates.firstOrNull { it.value.id == lastGood }?.value
         val memoryBeaten = remembered != null && rememberedMs != null && candidates.any { (_, other) ->
-            val ms = freshMs(pings[other.id], network, now)
+            val ms = usableMs(pings[other.id], network, now)
             other.id != remembered.id && ms != null && standing(other) == standing(remembered) &&
                 rememberedMs - ms >= MEMORY_BEATEN_MS && ms <= rememberedMs * (1 - MEMORY_BEATEN_FRACTION)
         }
         val ordered = candidates.sortedWith(
             compareBy<IndexedValue<ColituServer>> { it.value.id in penalized }
+                .thenBy { if (it.value.id in penalized) penaltyAt[it.value.id] ?: 0L else 0L }
                 .thenBy { failedPing(it.value.id) }
                 .thenBy { isHome(it.value) }
                 .thenBy { memoryBeaten || it.value.id != lastGood }
-                .thenBy { freshMs(pings[it.value.id], network, now) ?: Int.MAX_VALUE }
+                .thenBy { usableMs(pings[it.value.id], network, now) ?: Int.MAX_VALUE }
                 .thenBy { it.index },
         )
         return ordered.map { it.value }
@@ -112,8 +126,9 @@ object ColituServerRanking {
     fun fallbackServer(automatic: Boolean, ranked: List<ColituServer>, failed: List<String>, maxServers: Int, budgetLeft: Boolean): ColituServer? =
         if (!automatic || failed.size >= maxServers || !budgetLeft) null else ranked.firstOrNull { it.id !in failed }
 
-    private fun freshMs(ping: ColituPing?, network: String, now: Long): Int? =
-        ping?.takeIf { it.fresh(network, now) }?.ms
+    /** A successful ping that may order the servers (fresh, or up to [PING_USABLE_MS] old on this network). */
+    private fun usableMs(ping: ColituPing?, network: String, now: Long): Int? =
+        ping?.takeIf { it.usable(network, now) }?.ms
 
     // ── Ping storage ───────────────────────────────────────────────────────
 
@@ -183,9 +198,13 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
         return entries.any { (key, entry) -> key.startsWith(prefix) && entry.value == transport && alive(key, now) }
     }
 
-    fun penalized(network: String, now: Long): Set<String> {
+    fun penalized(network: String, now: Long): Set<String> = penaltyTimes(network, now).keys
+
+    /** When each penalized server of this network was penalized (the ranking rotates them, oldest first). */
+    fun penaltyTimes(network: String, now: Long): Map<String, Long> {
         val prefix = "$PENALTY|$network|"
-        return entries.keys.filter { it.startsWith(prefix) && alive(it, now) }.map { it.removePrefix(prefix) }.toSet()
+        return entries.filter { (key, _) -> key.startsWith(prefix) && alive(key, now) }
+            .entries.associate { (key, entry) -> key.removePrefix(prefix) to entry.at }
     }
 
     /**

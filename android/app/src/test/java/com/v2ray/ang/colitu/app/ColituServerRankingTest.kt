@@ -51,11 +51,13 @@ class ColituServerRankingTest {
     @Test
     fun stalePingOrPingFromAnotherNetworkCountsAsNone() {
         val pings = mapOf(
-            "fi" to ping(10, age = 11 * minute),
+            "fi" to ping(10, age = 7 * 60 * minute),
             "de" to ping(20, network = ColituServerRanking.networkKey("wifi", "RU-AS0001")),
             "us" to ping(90),
         )
         assertEquals(listOf("us", "de", "fi"), rank(listOf(de, fi, us), pings))
+        // 11 minutes old on the same network: no longer fresh, still usable for the order.
+        assertEquals(listOf("fi", "us", "de"), rank(listOf(de, fi, us), pings + ("fi" to ping(10, age = 11 * minute))))
     }
 
     @Test
@@ -77,7 +79,10 @@ class ColituServerRankingTest {
         assertEquals(listOf("de", "fi"), rank(listOf(fi, de), mapOf("de" to ping(90), "fi" to ping(150)), lastGood = "fi"))
         // The remembered server has no fresh measurement: current behaviour (it leads).
         assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(5)), lastGood = "fi"))
-        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(5), "fi" to ping(200, age = 30 * minute)), lastGood = "fi"))
+        // A 30-minute-old ping still counts (usable up to 6 h): 200 against 5 ms, the faster one leads.
+        assertEquals(listOf("de", "fi"), rank(listOf(de, fi), mapOf("de" to ping(5), "fi" to ping(200, age = 30 * minute)), lastGood = "fi"))
+        // Older than 6 h: no measurement, the memory leads.
+        assertEquals(listOf("fi", "de"), rank(listOf(de, fi), mapOf("de" to ping(5), "fi" to ping(200, age = 7 * 60 * minute)), lastGood = "fi"))
     }
 
     @Test
