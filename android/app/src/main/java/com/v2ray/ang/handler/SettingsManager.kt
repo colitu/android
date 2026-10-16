@@ -291,11 +291,11 @@ object SettingsManager {
     }
 
     fun getSocksUsername(): String? {
-        return MmkvManager.decodeSettingsString(AppConfig.PREF_SOCKS_USERNAME)?.trim()?.takeIf { it.isNotEmpty() }
+        return com.v2ray.ang.colitu.api.ColituLocalProxy.socksUsername()?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     fun getSocksPassword(): String? {
-        return MmkvManager.decodeSettingsString(AppConfig.PREF_SOCKS_PASSWORD)?.trim()?.takeIf { it.isNotEmpty() }
+        return com.v2ray.ang.colitu.api.ColituLocalProxy.socksPassword()?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     /**

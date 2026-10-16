@@ -37,4 +37,13 @@ class ColituUpdaterFreshnessTest {
         assertFalse(ColituUpdater.shouldShowUnverified(3, 10 * day, 10 * day + day / 2))
         assertTrue(ColituUpdater.shouldShowUnverified(3, 10 * day, 11 * day))
     }
+
+    @Test
+    fun expiredPinsAreRaisedOncePerDay() {
+        val day = ColituUpdater.UNVERIFIED_NOTICE_GAP_MS
+        assertFalse(ColituUpdater.shouldShowPinsExpired(false, 0L, 10 * day))
+        assertTrue(ColituUpdater.shouldShowPinsExpired(true, 0L, 10 * day))
+        assertFalse(ColituUpdater.shouldShowPinsExpired(true, 10 * day, 10 * day + day / 2))
+        assertTrue(ColituUpdater.shouldShowPinsExpired(true, 10 * day, 11 * day))
+    }
 }

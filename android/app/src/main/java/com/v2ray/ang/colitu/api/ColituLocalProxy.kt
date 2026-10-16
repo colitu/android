@@ -23,8 +23,8 @@ object ColituLocalProxy {
     fun newSession(): LocalProxy {
         val proxy = LocalProxy(port = freePort(), user = token(12), password = token(24))
         MmkvManager.encodeSettings(AppConfig.PREF_SOCKS_PORT, proxy.port.toString())
-        MmkvManager.encodeSettings(AppConfig.PREF_SOCKS_USERNAME, proxy.user)
-        MmkvManager.encodeSettings(AppConfig.PREF_SOCKS_PASSWORD, proxy.password)
+        MmkvManager.encodeSettings(AppConfig.PREF_SOCKS_USERNAME, protect(AppConfig.PREF_SOCKS_USERNAME, proxy.user))
+        MmkvManager.encodeSettings(AppConfig.PREF_SOCKS_PASSWORD, protect(AppConfig.PREF_SOCKS_PASSWORD, proxy.password))
         return proxy
     }
 
@@ -38,8 +38,8 @@ object ColituLocalProxy {
         val proxy = LocalProxy(port = freePort(), user = token(12), password = token(24))
         colituStore().apply {
             encode(KEY_VERIFY_PORT, proxy.port)
-            encode(KEY_VERIFY_USER, proxy.user)
-            encode(KEY_VERIFY_PASSWORD, proxy.password)
+            encode(KEY_VERIFY_USER, protect(KEY_VERIFY_USER, proxy.user))
+            encode(KEY_VERIFY_PASSWORD, protect(KEY_VERIFY_PASSWORD, proxy.password))
         }
         return proxy
     }
@@ -49,8 +49,8 @@ object ColituLocalProxy {
         val proxy = LocalProxy(port = freePort(), user = token(12), password = token(24))
         colituStore().apply {
             encode(KEY_VERIFY_SPARE_PORT, proxy.port)
-            encode(KEY_VERIFY_SPARE_USER, proxy.user)
-            encode(KEY_VERIFY_SPARE_PASSWORD, proxy.password)
+            encode(KEY_VERIFY_SPARE_USER, protect(KEY_VERIFY_SPARE_USER, proxy.user))
+            encode(KEY_VERIFY_SPARE_PASSWORD, protect(KEY_VERIFY_SPARE_PASSWORD, proxy.password))
         }
         return proxy
     }
@@ -58,8 +58,8 @@ object ColituLocalProxy {
     fun verifySpareProxy(): LocalProxy? = runCatching {
         val store = colituStore()
         val port = store.decodeInt(KEY_VERIFY_SPARE_PORT, 0).takeIf { it in 1..65535 } ?: return null
-        val user = store.decodeString(KEY_VERIFY_SPARE_USER)?.takeIf { it.isNotBlank() } ?: return null
-        val password = store.decodeString(KEY_VERIFY_SPARE_PASSWORD)?.takeIf { it.isNotBlank() } ?: return null
+        val user = readStored(store, KEY_VERIFY_SPARE_USER) ?: return null
+        val password = readStored(store, KEY_VERIFY_SPARE_PASSWORD) ?: return null
         LocalProxy(port, user, password)
     }.getOrNull()
 
@@ -71,8 +71,8 @@ object ColituLocalProxy {
     fun verifyProxy(): LocalProxy? = runCatching {
         val store = colituStore()
         val port = store.decodeInt(KEY_VERIFY_PORT, 0).takeIf { it in 1..65535 } ?: return null
-        val user = store.decodeString(KEY_VERIFY_USER)?.takeIf { it.isNotBlank() } ?: return null
-        val password = store.decodeString(KEY_VERIFY_PASSWORD)?.takeIf { it.isNotBlank() } ?: return null
+        val user = readStored(store, KEY_VERIFY_USER) ?: return null
+        val password = readStored(store, KEY_VERIFY_PASSWORD) ?: return null
         LocalProxy(port, user, password)
     }.getOrNull()
 
@@ -89,9 +89,47 @@ object ColituLocalProxy {
         }.getOrDefault(0L)
         if (connectedAt <= 0L) return null
         val port = MmkvManager.decodeSettingsString(AppConfig.PREF_SOCKS_PORT)?.toIntOrNull() ?: return null
-        val user = MmkvManager.decodeSettingsString(AppConfig.PREF_SOCKS_USERNAME)?.takeIf { it.isNotBlank() } ?: return null
-        val password = MmkvManager.decodeSettingsString(AppConfig.PREF_SOCKS_PASSWORD)?.takeIf { it.isNotBlank() } ?: return null
+        val user = socksUsername()?.takeIf { it.isNotBlank() } ?: return null
+        val password = socksPassword()?.takeIf { it.isNotBlank() } ?: return null
         return LocalProxy(port, user, password)
+    }
+
+    /** The loopback SOCKS account (opened from the Keystore-sealed value; an old plain value is read once and sealed). */
+    fun socksUsername(): String? = readSettingSecret(AppConfig.PREF_SOCKS_USERNAME)
+
+    fun socksPassword(): String? = readSettingSecret(AppConfig.PREF_SOCKS_PASSWORD)
+
+    private fun readSettingSecret(key: String): String? =
+        reveal(key, MmkvManager.decodeSettingsString(key)) { MmkvManager.encodeSettings(key, protect(key, it)) }
+
+    private fun readStored(store: MMKV, key: String): String? =
+        reveal(key, store.decodeString(key)) { store.encode(key, protect(key, it)) }
+
+    /**
+     * The local proxy accounts used to sit in plain MMKV files. They are sealed
+     * with [ColituSecureStore] (Keystore key shared by the app and VPN processes,
+     * context-bound to the setting name) and carry [SEALED] in front. A device
+     * whose sealing fails keeps the plain value: the tunnel must still start.
+     */
+    private const val SEALED = "colitu-sealed-v1:"
+
+    internal fun protect(key: String, value: String): String =
+        runCatching { SEALED + ColituSecureStore.sealConfig(value, "local-proxy:$key") }.getOrDefault(value)
+
+    /**
+     * [stored] in clear: a sealed value is opened with [open]; a legacy plain
+     * value is returned as it is and handed to [migrate] once so it gets sealed.
+     */
+    internal fun reveal(
+        key: String,
+        stored: String?,
+        open: (sealed: String, context: String) -> String = ColituSecureStore::openConfig,
+        migrate: (String) -> Unit,
+    ): String? {
+        if (stored.isNullOrBlank()) return null
+        if (stored.startsWith(SEALED)) return runCatching { open(stored.removePrefix(SEALED), "local-proxy:$key") }.getOrNull()?.takeIf { it.isNotBlank() }
+        runCatching { migrate(stored) }
+        return stored
     }
 
     /** A random unused high port; never the well-known 10808 that scanners look for. */

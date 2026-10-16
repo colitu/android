@@ -214,4 +214,11 @@ class ColituEndpointsTest {
         assertFalse(ColituEndpoints.isFailoverEligible(SocketTimeoutException("timeout"), "PUT"))
         assertFalse(ColituEndpoints.isFailoverEligible(IOException("Canceled"), "GET"))
     }
+
+    @Test
+    fun authIsOnlyForTheHostsOfTheApiBases() {
+        val hosts = ColituEndpoints.hostsOf(builtinApi + "https://API.Colitu.com:8443/api/v1" + "not a url")
+        assertEquals(setOf("api.colitu.com", "mirror.example.test"), hosts)
+        assertFalse("evil.example" in hosts)
+    }
 }

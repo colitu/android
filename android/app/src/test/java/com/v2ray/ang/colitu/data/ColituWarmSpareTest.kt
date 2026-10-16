@@ -88,7 +88,7 @@ class ColituWarmSpareTest {
         assertEquals(ColituWarmSpare.PROBE_INTERVAL, ping.get("interval").asString)
         assertEquals("10s", ping.get("interval").asString)
         assertEquals(1, ping.get("sampling").asInt)
-        assertEquals("http://www.gstatic.com/generate_204", ping.get("destination").asString)
+        assertEquals("https://www.gstatic.com/generate_204", ping.get("destination").asString)
         assertEquals("3s", ping.get("timeout").asString)
         // No direct connectivity check: when it fails Xray records nothing and the switch takes twice as long.
         assertFalse(ping.has("connectivity"))

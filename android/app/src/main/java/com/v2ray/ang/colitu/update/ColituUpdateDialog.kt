@@ -73,7 +73,13 @@ fun ColituUpdatePrompt() {
             ColituUpdateDialog(update, onLater = { ColituUpdater.offered = null })
         }
     }
-    if (ColituUpdater.offered == null && ColituUpdater.unverifiedNotice) {
+    if (ColituUpdater.offered == null && ColituUpdater.pinsExpiredNotice) {
+        ColituUnverifiedDialog(
+            titleKey = "update.pinsExpiredTitle",
+            bodyKey = "update.pinsExpired",
+            onClose = { ColituUpdater.pinsExpiredNotice = false },
+        )
+    } else if (ColituUpdater.offered == null && ColituUpdater.unverifiedNotice) {
         ColituUnverifiedDialog(onClose = { ColituUpdater.unverifiedNotice = false })
     }
 }
@@ -84,7 +90,11 @@ fun ColituUpdatePrompt() {
  * frozen update server does not pass for "you are up to date".
  */
 @Composable
-private fun ColituUnverifiedDialog(onClose: () -> Unit) {
+private fun ColituUnverifiedDialog(
+    onClose: () -> Unit,
+    titleKey: String = "update.unverifiedTitle",
+    bodyKey: String = "update.unverified",
+) {
     val loc = ColituLoc
     val context = LocalContext.current
     Dialog(onDismissRequest = onClose, properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)) {
@@ -101,9 +111,9 @@ private fun ColituUnverifiedDialog(onClose: () -> Unit) {
         ) {
             ColituRoundIcon(ColituIcons.Info, size = 56.dp, accent = true)
             Spacer(Modifier.height(14.dp))
-            CText(loc["update.unverifiedTitle"], ColituText.h2, align = TextAlign.Center)
+            CText(loc[titleKey], ColituText.h2, align = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            CText(loc["update.unverified"], ColituText.muted, align = TextAlign.Center)
+            CText(loc[bodyKey], ColituText.muted, align = TextAlign.Center)
             Spacer(Modifier.height(18.dp))
             ColituButton(loc["update.openDownload"], {
                 onClose()

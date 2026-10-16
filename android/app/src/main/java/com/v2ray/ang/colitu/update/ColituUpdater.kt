@@ -159,6 +159,12 @@ object ColituUpdater {
      */
     var unverifiedNotice by mutableStateOf(false)
 
+    /** Shown by [ColituUpdatePrompt] when this build's certificate pin set has expired (see [ColituCertPins.pinsExpired]). */
+    var pinsExpiredNotice by mutableStateOf(false)
+
+    internal fun shouldShowPinsExpired(expired: Boolean, lastShownMs: Long, nowMs: Long): Boolean =
+        expired && (lastShownMs <= 0L || nowMs - lastShownMs >= UNVERIFIED_NOTICE_GAP_MS)
+
     internal const val UNVERIFIED_STREAK = 2
     internal const val UNVERIFIED_NOTICE_GAP_MS = 24L * 60 * 60 * 1000
 
@@ -166,8 +172,17 @@ object ColituUpdater {
         streak >= UNVERIFIED_STREAK && (lastShownMs <= 0L || nowMs - lastShownMs >= UNVERIFIED_NOTICE_GAP_MS)
 
     /** Notes an automatic check's result; an unverifiable one, repeated, raises [unverifiedNotice]. */
-    fun noteAutomaticResult(context: Context, result: CheckResult) {
+    fun noteAutomaticResult(context: Context, result: CheckResult, pinsExpired: Boolean = com.v2ray.ang.colitu.api.ColituCertPins.pinsExpired()) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // Expired pins: the app silently stopped pinning, so ask for an update (at most once a day).
+        // An available update gets its own prompt, which already says "update".
+        if (result !is CheckResult.Available) {
+            val now = System.currentTimeMillis()
+            if (shouldShowPinsExpired(pinsExpired, prefs.getLong(KEY_PINS_EXPIRED_SHOWN_AT, 0L), now)) {
+                prefs.edit().putLong(KEY_PINS_EXPIRED_SHOWN_AT, now).apply()
+                pinsExpiredNotice = true
+            }
+        }
         when (result) {
             CheckResult.Unverifiable -> {
                 val streak = prefs.getInt(KEY_UNVERIFIED_STREAK, 0) + 1
@@ -293,6 +308,7 @@ object ColituUpdater {
     private const val KEY_FRESHNESS_SEEN = "fresh_manifest_seen"
     private const val KEY_UNVERIFIED_STREAK = "unverified_streak"
     private const val KEY_UNVERIFIED_SHOWN_AT = "unverified_shown_at"
+    private const val KEY_PINS_EXPIRED_SHOWN_AT = "pins_expired_shown_at"
 
     private fun freshnessSeen(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_FRESHNESS_SEEN, false)

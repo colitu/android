@@ -4,7 +4,16 @@ import com.v2ray.ang.BuildConfig
 import okhttp3.Interceptor
 import okhttp3.Response
 
-class ColituAuthInterceptor : Interceptor {
+/**
+ * Adds the app headers to every request, but the Bearer token and the device id
+ * only to the Colitu API hosts ([ColituEndpoints.isApiHost]): the hosts of the
+ * built-in bases, the signed endpoint list and the build's own API base. The
+ * client does not follow redirects either, so the credentials cannot be carried
+ * to another host by a Location header.
+ */
+class ColituAuthInterceptor(
+    private val isApiHost: (String) -> Boolean = ColituEndpoints::isApiHost,
+) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val token = ColituTokenManager.getAccessToken()
@@ -18,6 +27,8 @@ class ColituAuthInterceptor : Interceptor {
             .header("X-Bundle-ID", BuildConfig.APPLICATION_ID)
             .header("Cache-Control", "no-cache")
             .header("Pragma", "no-cache")
+
+        if (!isApiHost(original.url.host)) return chain.proceed(builder.build())
 
         if (!token.isNullOrBlank()) {
             builder.header("Authorization", "Bearer $token")

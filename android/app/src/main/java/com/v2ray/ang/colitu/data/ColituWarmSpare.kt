@@ -38,8 +38,8 @@ object ColituWarmSpare {
     const val PROBE_INTERVAL = "10s"
     const val PROBE_SAMPLING = 1
     const val PROBE_TIMEOUT = "3s"
-    /** Plain HTTP: the probe leaves at the node, so it needs no TLS of its own (a third of the bytes). */
-    const val PROBE_URL = "http://www.gstatic.com/generate_204"
+    /** HTTPS (no cleartext exception in the network security config); a 204 is only a few hundred bytes more. */
+    const val PROBE_URL = "https://www.gstatic.com/generate_204"
     // No `connectivity` URL: when that direct check fails (no network, or a
     // resolver the VPN process cannot use) Xray records nothing, and the
     // primary then took twice as long to be marked dead in a local test

@@ -46,6 +46,9 @@ object ColituApiClient {
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
+        // A redirect would carry the Bearer token to wherever Location points; the API never redirects.
+        .followRedirects(false)
+        .followSslRedirects(false)
         .addInterceptor(ColituAuthInterceptor())
         .addInterceptor(ColituLanguageInterceptor())
         .build()
@@ -56,6 +59,8 @@ object ColituApiClient {
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .addInterceptor(ColituLanguageInterceptor())
         .build()
 

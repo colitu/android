@@ -192,6 +192,16 @@ object ColituEndpoints {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lastRefreshAttempt = AtomicLong(0L)
 
+    /** Lower-case hosts of [bases] (https URLs). */
+    internal fun hostsOf(bases: Iterable<String>): Set<String> =
+        bases.mapNotNull { runCatching { URI(it).host }.getOrNull()?.lowercase() }.toSet()
+
+    /** True for a host of an API base this client was built for (built-in, signed list, build override). */
+    internal fun isApiHost(host: String): Boolean {
+        val bases = listOf(preferredBase(), BuildConfig.COLITU_API_BASE_URL) + BUILTIN_API + state.bases() + (state.current()?.api ?: emptyList())
+        return host.lowercase() in hostsOf(bases)
+    }
+
     /** Base for building a request URL: the one that works best right now. */
     fun preferredBase(): String =
         if (overridden) BuildConfig.COLITU_API_BASE_URL.trimEnd('/')

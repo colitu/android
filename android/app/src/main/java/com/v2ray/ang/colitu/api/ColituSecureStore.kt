@@ -35,6 +35,7 @@ object ColituSecureStore {
     @Volatile private var keystoreKey: SecretKey? = null
     @Volatile private var softwareKey: SecretKey? = null
     @Volatile private var keystoreWarned = false
+    @Volatile private var softwareWarned = false
 
     fun get(key: String): String? = preferences.getString(key, null)?.let { stored ->
         runCatching { String(open(stored, null), Charsets.UTF_8) }
@@ -111,11 +112,26 @@ object ColituSecureStore {
         }
     }
 
-    /** Fallback key in app-private storage (no Keystore protection, but never leaves the app sandbox). */
+    /**
+     * Fallback key in app-private storage (no Keystore protection, but never leaves the app sandbox).
+     *
+     * Security trade-off, kept on purpose: on a device with a broken Keystore the
+     * AES key sits in a plain file (noBackupFilesDir, excluded from backups) next to
+     * the sealed tokens, so anyone who can read the app's private files (root, a
+     * forensic image) can open them. Failing closed would lock those devices out of
+     * their account, so they keep working. Access/refresh token lifetimes are set by
+     * the server and there is no client-side hook to shorten them for this mode;
+     * the exposure is limited to rooted or imaged devices. It is logged once at
+     * warn level so it shows in diagnostics.
+     */
     private fun software(): SecretKey {
         softwareKey?.let { return it }
         synchronized(this) {
             softwareKey?.let { return it }
+            if (!softwareWarned) {
+                softwareWarned = true
+                Log.w(TAG, "Sealing secrets with the app-private fallback key (no Keystore protection on this device)")
+            }
             val key = withProcessLock {
                 val file = File(AngApplication.application.noBackupFilesDir, "colitu_fallback.key")
                 val bytes = if (file.length() == 32L) file.readBytes() else {

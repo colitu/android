@@ -147,4 +147,10 @@ class ColituCertPinsTest {
             assertTrue(it.contains("""src="@raw/isrg_root_x1""""))
         }
     }
+
+    @Test
+    fun expiryIsReportedAfterTheDateOnly() {
+        assertFalse(ColituCertPins.isExpired(before))
+        assertTrue(ColituCertPins.isExpired(after))
+    }
 }

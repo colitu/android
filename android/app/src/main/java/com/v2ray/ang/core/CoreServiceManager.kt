@@ -75,13 +75,13 @@ object CoreServiceManager {
      */
     private const val COLITU_CHECK_TIMEOUT_MS = 6_000L
 
-    /** The spare health check: one plain-HTTP request, no TLS of its own (the probe leaves at the node). */
-    private const val COLITU_SPARE_CHECK_URL = "http://www.gstatic.com/generate_204"
+    /** The spare health check: one small HTTPS request through the spare's check inbound (HEAD, 204). */
+    private const val COLITU_SPARE_CHECK_URL = "https://www.gstatic.com/generate_204"
 
     private val COLITU_CHECK_URLS = listOf(
         "https://cp.cloudflare.com/generate_204",
         "https://www.gstatic.com/generate_204",
-        "http://www.msftconnecttest.com/connecttest.txt",
+        "https://www.apple.com/library/test/success.html",
     )
 
     var serviceControl: SoftReference<ServiceControl>? = null

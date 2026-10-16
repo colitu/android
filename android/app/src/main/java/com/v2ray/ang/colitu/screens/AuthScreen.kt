@@ -275,6 +275,13 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                         if (linkedInvite != null && ColituInvite.normalize(inviteCode) != null) {
                             CText(loc["auth.inviteNote"], ColituText.small, Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp))
                         }
+                        // A code that arrived through a link is kept on the phone until used: it can be dropped before signing up.
+                        if (linkedInvite != null) {
+                            ColituLinkButton(loc["auth.inviteClear"], if (loading) null else ({
+                                ColituInvite.clear()
+                                inviteCode = ""
+                            }))
+                        }
                     } else {
                         ColituLinkButton(loc["auth.inviteLink"], if (loading) null else ({ inviteOpen = true }))
                     }

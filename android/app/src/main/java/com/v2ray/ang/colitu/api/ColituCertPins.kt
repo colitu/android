@@ -27,7 +27,10 @@ import javax.net.ssl.X509TrustManager
  * is in [PINS] (the roots of the CAs we use: Let's Encrypt's ISRG roots, Google
  * Trust Services' R1/R4). The root is pinned, not the leaf, so certificate
  * renewals and intermediate rotations never break the app. After [EXPIRES] only
- * the normal TLS validation applies, so a forgotten pin set cannot lock users out.
+ * the normal TLS validation applies, so a forgotten pin set cannot lock users out
+ * (deliberately not fail-closed). To keep that from going unnoticed, an expired
+ * pin set is logged once per process and the self-update check asks the user to
+ * update ([pinsExpired], ColituUpdater.noteAutomaticResult).
  */
 object ColituCertPins {
     const val ERROR_CODE = "CERT_PIN_MISMATCH"
@@ -45,6 +48,20 @@ object ColituCertPins {
 
     /** From this moment on pinning is skipped (normal TLS validation only). */
     internal val EXPIRES: Instant = Instant.parse("2027-12-31T23:59:59Z")
+
+    private val expiredLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** True once the pin set is past [expires]. */
+    internal fun isExpired(now: Instant = Instant.now(), expires: Instant = EXPIRES): Boolean = now.isAfter(expires)
+
+    /** True when this build's pin set has expired (pinning is off); logs that once per process. */
+    fun pinsExpired(): Boolean {
+        val expired = isExpired()
+        if (expired && expiredLogged.compareAndSet(false, true)) {
+            runCatching { Log.w(TAG, "Certificate pin set expired on $EXPIRES; only normal TLS validation applies. Update the app.") }
+        }
+        return expired
+    }
 
     /** The failure that ends a handshake with a chain that is valid but not ours. The base failover treats it like any TLS failure. */
     class PinMismatchException(val host: String?) : CertificateException(ERROR_CODE)
@@ -83,6 +100,7 @@ object ColituCertPins {
 
         private fun verify(chain: Array<X509Certificate>, authType: String, host: String?) {
             val validated = validate(chain, authType, host)
+            if (isExpired(now(), expires)) pinsExpired()
             if (!accepts(validated, now(), pins, expires)) {
                 log("$ERROR_CODE host=${host ?: "?"}")
                 throw PinMismatchException(host)
