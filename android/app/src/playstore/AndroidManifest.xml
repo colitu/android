@@ -18,4 +18,12 @@
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:node="remove" />
+
+    <application>
+        <!-- Registers Google Play Billing (colitu/play) at app start. -->
+        <provider
+            android:name="com.v2ray.ang.colitu.play.PlayBillingInit"
+            android:authorities="${applicationId}.playbilling"
+            android:exported="false" />
+    </application>
 </manifest>

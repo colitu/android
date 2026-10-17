@@ -344,7 +344,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 Spacer(Modifier.height(26.dp))
             }
         }
-        if (!c.planActive && !PLAY_POLICY) item(key = "promo", contentType = "promo") {
+        if (!c.planActive && (!PLAY_POLICY || ColituStore.playBilling)) item(key = "promo", contentType = "promo") {
             Column {
                 ColituPanel(padding = CardPadding, radius = CardRadius, onClick = onOpenPlan) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

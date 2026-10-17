@@ -224,6 +224,15 @@ android {
 
 }
 
+// Google Play build: ARM only. The x86/x86_64 sidecars (colitu-engine,
+// csl-client) are not 16 KB page aligned, which Play rejects; Play phones
+// are ARM, and the colitu.com/F-Droid APKs keep every ABI.
+androidComponents {
+    onVariants(selector().withFlavor("distribution" to "playstore")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(listOf("lib/x86/**", "lib/x86_64/**"))
+    }
+}
+
 gradle.taskGraph.whenReady {
     val buildsRelease = allTasks.any { it.name.contains("Release", ignoreCase = true) && (it.name.startsWith("assemble") || it.name.startsWith("bundle")) }
     if (buildsRelease && releaseSigningRequired && !releaseSigningConfigured) {
@@ -232,6 +241,9 @@ gradle.taskGraph.whenReady {
 }
 
 dependencies {
+    // Google Play Billing: only in the Play build (src/playstore).
+    "playstoreImplementation"("com.android.billingclient:billing-ktx:8.0.0")
+
     // Core Libraries
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
 

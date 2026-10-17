@@ -71,7 +71,7 @@ fun PlanTab(c: ColituController) {
     val expires = c.expiresAt
 
     ShellScroll {
-        if (!PLAY_POLICY) {
+        if (!PLAY_POLICY || ColituStore.playBilling) {
             Hero()
             Spacer(Modifier.height(16.dp))
         }
@@ -93,6 +93,11 @@ fun PlanTab(c: ColituController) {
                     ColituBadge(loc["plan.status.$status"], BadgeTone.Danger)
                 }
             }
+        }
+        // Google Play build: plans are bought here through Google Play Billing (src/playstore).
+        if (PLAY_POLICY) ColituStore.purchaseSection?.let { section ->
+            Spacer(Modifier.height(16.dp))
+            section(c)
         }
         Spacer(Modifier.height(12.dp))
         ColituPanel(padding = PaddingValues(16.dp), radius = ColituRadius.md) {

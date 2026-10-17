@@ -165,7 +165,8 @@ fun AccountTab(
                 }
                 Spacer(Modifier.height(12.dp))
                 if (PLAY_POLICY) {
-                    ColituButton(loc["play.planDetails"], onOpenPlan, height = 44.dp)
+                    // Opens the Plan tab; with Play Billing plans are bought there.
+                    ColituButton(if (!ColituStore.playBilling) loc["play.planDetails"] else if (isFreePlan(user)) loc["plan.upgrade"] else if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
                 } else {
                     ColituButton(if (isFreePlan(user)) loc["plan.upgrade"] else if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
                     Spacer(Modifier.height(4.dp))
