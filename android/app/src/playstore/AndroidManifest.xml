@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The "playstore" build is the AAB uploaded to Google Play. It never
+    installs its own updates (Play updates it) and never asks for package
+    visibility beyond the <queries> in main, so the permissions Play reviews
+    as sensitive are removed here even if a library brings them in.
+    Payments policy: see BuildConfig.COLITU_PLAY_POLICY and docs/playstore.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:node="remove" />
+</manifest>

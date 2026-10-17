@@ -115,7 +115,7 @@ fun TrialEndBanner(outlook: ColituDeviceOutlook, onDismiss: () -> Unit, modifier
                 ColituIcon(ColituIcons.XMark, ColituColors.dim, 16.dp, description = loc["trial.dismiss"])
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 24.dp), horizontalArrangement = Arrangement.Start) {
+        if (!PLAY_POLICY) Row(Modifier.fillMaxWidth().padding(start = 24.dp), horizontalArrangement = Arrangement.Start) {
             ColituLinkButton(loc["trial.upgrade"], { openUrl(context, PRICING_URL) }, icon = ColituIcons.ArrowUpRightSquare)
         }
     }
@@ -179,8 +179,10 @@ fun PausedDevicePanel(c: ColituController, pause: ColituDevicePause) {
             }, loading = busy)
             Spacer(Modifier.height(6.dp))
             CText(loc["paused.useHint"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
-            Spacer(Modifier.height(10.dp))
-            ColituButton(loc["paused.premium"], { openUrl(context, PRICING_URL) }, kind = ColituButtonKind.Secondary, icon = ColituIcons.ArrowUpRightSquare)
+            if (!PLAY_POLICY) {
+                Spacer(Modifier.height(10.dp))
+                ColituButton(loc["paused.premium"], { openUrl(context, PRICING_URL) }, kind = ColituButtonKind.Secondary, icon = ColituIcons.ArrowUpRightSquare)
+            }
         }
     }
 }

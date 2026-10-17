@@ -97,6 +97,16 @@ object ColituNotices {
         return value.takeIf { trusted }
     }
 
+    /**
+     * Google Play build: promotions and notices that link to buying on the
+     * website are not shown (Play payments policy); service notices are.
+     */
+    fun allowedOnPlay(notice: ColituNotice): Boolean {
+        if (notice.level == ColituNoticeLevel.Promo) return false
+        val path = notice.url?.let { runCatching { java.net.URI(it.trim()).path }.getOrNull() }.orEmpty().lowercase()
+        return listOf("/pricing", "/billing", "/subscription", "/checkout", "/pay").none { path.contains(it) }
+    }
+
     /** [ids] with [id] appended (moved to the end when present), oldest dropped beyond [max]. */
     fun appendCapped(ids: List<String>, id: String, max: Int = MAX_IDS): List<String> {
         val next = ids.filter { it != id } + id

@@ -45,7 +45,9 @@ android {
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {
             abi {
-                isEnable = true
+                // Per-ABI APKs for colitu.com/F-Droid; an app bundle (Google Play)
+                // cannot be built with splits on, and Play splits by ABI itself.
+                isEnable = gradle.startParameter.taskNames.none { it.contains("bundle", ignoreCase = true) }
                 reset()
                 if (abiFilterList != null && abiFilterList.isNotEmpty()) {
                     include(*abiFilterList.toTypedArray())
@@ -67,6 +69,9 @@ android {
         buildConfigField("boolean", "COLITU_FORCE_TV", "false")
         // Only the colitu.com APK ("direct") installs its own updates.
         buildConfigField("boolean", "COLITU_SELF_UPDATE", "false")
+        // Only the Google Play build ("playstore") follows Play's payments policy:
+        // no upgrade buttons, price promos or links to buy on the website.
+        buildConfigField("boolean", "COLITU_PLAY_POLICY", "false")
         buildConfigField("String", "COLITU_MIRRORS", "\"${mirrors.replace("\"", "")}\"")
         // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
         buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())
@@ -121,6 +126,10 @@ android {
         create("playstore") {
             dimension = "distribution"
             buildConfigField("String", "DISTRIBUTION", "\"Play Store\"")
+            buildConfigField("boolean", "COLITU_PLAY_POLICY", "true")
+            // Same version code as the colitu.com APK (4000000 + versionCode), so
+            // Play offers the next update to people who installed that APK.
+            versionCode = 4_000_000 + defaultConfig.versionCode!!
         }
         // The APK published on colitu.com: same identity and version codes as
         // the Play build, plus the self-updater (src/direct).
@@ -152,6 +161,8 @@ android {
     applicationVariants.all {
         val variant = this
         val isFdroid = variant.productFlavors.any { it.name == "fdroid" }
+        // The Play build already carries its final version code (see "playstore").
+        if (variant.productFlavors.any { it.name == "playstore" }) return@all
         if (isFdroid) {
             val versionCodes =
                 mapOf(

@@ -52,6 +52,7 @@ private fun levelColor(level: ColituNoticeLevel): Color = when (level) {
 @Composable
 fun ColituNoticeSlot() {
     val notice = ColituNoticeCenter.current ?: return
+    if (PLAY_POLICY && !com.v2ray.ang.colitu.data.ColituNotices.allowedOnPlay(notice)) return
     val context = LocalContext.current
     LaunchedEffect(notice.id) { ColituNoticeCenter.markSeen(notice) }
     Spacer(Modifier.height(12.dp))

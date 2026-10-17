@@ -51,6 +51,14 @@ const val WEB_BASE_URL = "https://colitu.com"
 
 /** Customer account: plans, renewals and devices are managed there, never in the app. */
 const val ACCOUNT_URL = "https://app.colitu.com"
+/** Account settings on the web: password, sign-in methods and account deletion. */
+const val ACCOUNT_SETTINGS_URL = "https://app.colitu.com/account"
+
+/**
+ * Google Play build only (Play payments policy): nothing in the app sells,
+ * shows prices or links to buying on the website. The other builds are unchanged.
+ */
+val PLAY_POLICY: Boolean get() = com.v2ray.ang.BuildConfig.COLITU_PLAY_POLICY
 /** Config export (keys and links for other apps) is web only for now. */
 const val MANUAL_CONFIG_URL = "https://colitu.com/account/manual-config"
 const val SUPPORT_EMAIL = "support@colitu.com"

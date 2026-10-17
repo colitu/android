@@ -164,10 +164,14 @@ fun AccountTab(
                     ColituBadge(loc["plan.status.$status"], if (active) BadgeTone.Accent else BadgeTone.Danger)
                 }
                 Spacer(Modifier.height(12.dp))
-                ColituButton(if (isFreePlan(user)) loc["plan.upgrade"] else if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
-                Spacer(Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    ColituLinkButton(loc["account.manage"], { openUrl(context, ACCOUNT_URL) }, icon = ColituIcons.ArrowUpRightSquare)
+                if (PLAY_POLICY) {
+                    ColituButton(loc["play.planDetails"], onOpenPlan, height = 44.dp)
+                } else {
+                    ColituButton(if (isFreePlan(user)) loc["plan.upgrade"] else if (active) loc["plan.extend"] else loc["plan.choose"], onOpenPlan, height = 44.dp)
+                    Spacer(Modifier.height(4.dp))
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        ColituLinkButton(loc["account.manage"], { openUrl(context, ACCOUNT_URL) }, icon = ColituIcons.ArrowUpRightSquare)
+                    }
                 }
             }
         }
@@ -419,6 +423,15 @@ fun AccountTab(
         ColituActionRow(ColituIcons.Doc, loc["settings.terms"], onClick = { openWeb(context, "/legal/terms") })
         Spacer(Modifier.height(8.dp))
         ColituActionRow(ColituIcons.LockShield, loc["settings.privacy"], onClick = { openWeb(context, "/legal/privacy") })
+        if (PLAY_POLICY) {
+            // Play: an account created in the app must be deletable from the app.
+            Spacer(Modifier.height(8.dp))
+            ColituActionRow(ColituIcons.XCircleOutline, loc["play.deleteAccount"], loc["play.deleteAccountHint"], onClick = { openUrl(context, ACCOUNT_SETTINGS_URL) },
+                trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
+            Spacer(Modifier.height(8.dp))
+            // Play updates this build; there is nothing to check here.
+            ColituActionRow(ColituIcons.Info, "Colitu VPN", loc.format("settings.version", "version" to "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))
+        } else {
         Spacer(Modifier.height(8.dp))
         ColituActionRow(
             ColituIcons.Info,
@@ -437,6 +450,7 @@ fun AccountTab(
                 }
             },
         )
+        }
         Spacer(Modifier.height(8.dp))
         // The app is GPL-3.0; on a TV openUrl shows the link as a QR code.
         ColituActionRow(ColituIcons.Code, loc["about.openSource"], loc["about.openSourceHint"], onClick = { openUrl(context, SOURCE_CODE_URL) })

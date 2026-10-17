@@ -71,8 +71,10 @@ fun PlanTab(c: ColituController) {
     val expires = c.expiresAt
 
     ShellScroll {
-        Hero()
-        Spacer(Modifier.height(16.dp))
+        if (!PLAY_POLICY) {
+            Hero()
+            Spacer(Modifier.height(16.dp))
+        }
         ColituPanel(padding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 16.dp), radius = ColituRadius.md) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -95,22 +97,24 @@ fun PlanTab(c: ColituController) {
         Spacer(Modifier.height(12.dp))
         ColituPanel(padding = PaddingValues(16.dp), radius = ColituRadius.md) {
             Column {
-                Row(verticalAlignment = Alignment.Top) {
-                    ColituRoundIcon(ColituIcons.Globe, size = 40.dp, accent = true)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        CText(loc["plan.manageTitle"], ColituText.label)
-                        Spacer(Modifier.height(4.dp))
-                        CText(loc["plan.manageBody"], ColituText.small)
+                if (!PLAY_POLICY) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        ColituRoundIcon(ColituIcons.Globe, size = 40.dp, accent = true)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            CText(loc["plan.manageTitle"], ColituText.label)
+                            Spacer(Modifier.height(4.dp))
+                            CText(loc["plan.manageBody"], ColituText.small)
+                        }
                     }
+                    Spacer(Modifier.height(14.dp))
+                    ColituButton(
+                        loc["plan.manageButton"],
+                        { openUrl(context, ACCOUNT_URL) },
+                        icon = ColituIcons.ArrowUpRightSquare,
+                    )
+                    Spacer(Modifier.height(10.dp))
                 }
-                Spacer(Modifier.height(14.dp))
-                ColituButton(
-                    loc["plan.manageButton"],
-                    { openUrl(context, ACCOUNT_URL) },
-                    icon = ColituIcons.ArrowUpRightSquare,
-                )
-                Spacer(Modifier.height(10.dp))
                 ColituButton(
                     loc["plan.refresh"],
                     { refresh() },
@@ -118,7 +122,7 @@ fun PlanTab(c: ColituController) {
                     loading = refreshing,
                 )
                 Spacer(Modifier.height(10.dp))
-                CText(loc["plan.refreshHint"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
+                CText(loc[if (PLAY_POLICY) "play.planRefreshHint" else "plan.refreshHint"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
             }
         }
     }

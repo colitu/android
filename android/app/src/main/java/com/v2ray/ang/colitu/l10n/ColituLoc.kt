@@ -701,6 +701,11 @@ object ColituLoc {
         "paused.use" to arrayOf("Использовать это устройство", "Bunun yerine bu cihazı kullan", "Use this device instead"),
         "paused.useHint" to arrayOf("Другое устройство будет приостановлено и сможет снова стать активным позже.", "Diğer cihaz duraklatılır; daha sonra yeniden etkinleştirebilirsiniz.", "The other device is paused; you can switch back later."),
         "paused.premium" to arrayOf("Оформить Premium", "Premium’a geç", "Get Premium"),
+        // Google Play build only (PLAY_POLICY).
+        "play.planDetails" to arrayOf("Сведения о тарифе", "Paket ayrıntıları", "Plan details"),
+        "play.planRefreshHint" to arrayOf("Статус тарифа синхронизируется с вашим аккаунтом.", "Paket durumunuz hesabınızla eşitlenir.", "Your plan status is synced with your account."),
+        "play.deleteAccount" to arrayOf("Удалить аккаунт", "Hesabı sil", "Delete account"),
+        "play.deleteAccountHint" to arrayOf("Открывает настройки аккаунта на app.colitu.com", "app.colitu.com’da hesap ayarlarını açar", "Opens account settings on app.colitu.com"),
         "paused.done" to arrayOf("Теперь активно это устройство.", "Artık bu cihaz etkin.", "This device is active now."),
         "paused.short" to arrayOf("Это устройство приостановлено: тариф позволяет меньше устройств.", "Bu cihaz duraklatıldı: planınız daha az cihaza izin veriyor.", "This device is paused: your plan allows fewer devices."),
         // Multihop routes and the rotating exit IP
