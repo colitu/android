@@ -179,7 +179,7 @@ object ColituEndpoints {
     internal fun parseMirrors(raw: String): List<String> =
         raw.split(',').map { it.trim().trimEnd('/') }.filter { it.startsWith("https://") && it.length > 8 }.distinct()
 
-    private val MIRRORS = parseMirrors(BuildConfig.COLITU_MIRRORS)
+    private val MIRRORS = parseMirrors(ColituBuildValues.mirrors)
 
     internal val BUILTIN_API = listOf(DEFAULT_BASE) + MIRRORS.map { "$it/capi/v1" }
     internal val BUILTIN_LISTS = listOf("https://colitu.com/downloads/endpoints.json") +

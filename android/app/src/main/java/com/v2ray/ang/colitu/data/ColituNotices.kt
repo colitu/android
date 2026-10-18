@@ -72,10 +72,10 @@ object ColituNotices {
     fun pendingPush(notices: List<ColituNotice>, notified: Set<String>, now: Instant = Instant.now()): List<ColituNotice> =
         notices.filter { it.push && it.id !in notified && it.expiresAt?.isAfter(now) != false }
 
-    /** Hosts of the build's mirror origins (BuildConfig.COLITU_MIRRORS), lower case. */
+    /** Hosts of the build's mirror origins (colitu-build.json, ColituBuildValues), lower case. */
     private val mirrorHosts: Set<String> by lazy {
         runCatching {
-            com.v2ray.ang.colitu.api.ColituEndpoints.parseMirrors(com.v2ray.ang.BuildConfig.COLITU_MIRRORS)
+            com.v2ray.ang.colitu.api.ColituEndpoints.parseMirrors(com.v2ray.ang.colitu.api.ColituBuildValues.mirrors)
                 .mapNotNull { java.net.URI(it).host?.lowercase() }
                 .toSet()
         }.getOrDefault(emptySet())

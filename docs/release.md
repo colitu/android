@@ -54,6 +54,10 @@ if the API ever moves to another CA, add its root before switching.
 
 ## Prebuilt core
 
-`android/app/libs/SHA256SUMS` lists the committed Xray AAR and
-hev-socks5-tunnel libraries (see `core-provenance.md`). CI fails when a
-binary changes without that file being updated in the same commit.
+`android/app/libs/SHA256SUMS` lists the committed Xray AAR, the
+hev-socks5-tunnel libraries and the Colitu sidecars (see `core-provenance.md`).
+CI fails when a binary changes without that file being updated in the same
+commit, and rebuilds the sidecars from source (`scripts/build-sidecars.sh`).
+
+Release APKs are reproducible; see `reproducible-builds.md`. The API mirrors
+(`COLITU_MIRRORS`) go into `colitu-build.json` at the APK root, not into the code.

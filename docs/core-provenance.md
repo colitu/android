@@ -32,12 +32,35 @@ even while the legacy wrapper provenance remains a release blocker.
 
 CI records the AAR checksum and Play Store runtime dependency graph on every run.
 
-The checked-in `libhev-socks5-tunnel.so` builds (built from the `hev-socks5-tunnel`
-submodule with `compile-hevtun.sh`) have SHA-256:
+`libhev-socks5-tunnel.so` (the JNI tun2socks library `TProxyService` loads) is
+built from source: tag `2.15.0` (commit `00c7eb9ad7ca381b0f1fee880abc1077fe9b93be`)
+of [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) with
+NDK `27.2.12479018` (r27c), pinned in `scripts/hev.env`, by `compile-hevtun.sh`.
+The hashes are in `android/app/libs/SHA256SUMS`; CI rebuilds and compares them
+on every push and before every signed release.
 
-```text
-59025a8f62e7af4a842ac66196dcd1c487d08a16bb8c6220f8ef6ea2a7713270  arm64-v8a
-0b84549ccdcf8a4f281e6c50ffcf1ce97255dcba357c6061ecc7fd0c8172a015  armeabi-v7a
-83d53c1064e7cd22d5b76a5467a8b77a5cff3efb2ccc2f297cca82ecfb690719  x86
-810d7097c245d0b7303a2f9820f244332e76ab4562b06e0873b846d1b7625334  x86_64
-```
+hev's makefiles list the sources with `$(wildcard)`, which returns them in
+directory order (sorted on NTFS, arbitrary on ext4/APFS) and so changes the
+link order; `compile-hevtun.sh` sorts that list in its build copy, compiles
+under the relative path `jni/hev-socks5-tunnel`, and links without a build id.
+
+The library shipped up to 2.9.2 came from the same source and NDK (its
+`.note.android.ident` names r27c 12479018; same exported symbols, same section
+sizes) but was linked in an unknown directory order, so it could not be
+rebuilt byte for byte. The rebuilt files differ from it only in link order.
+
+## Colitu sidecars
+
+`libcolituengine.so` (Adaptive Connect decision engine) and `libcslclient.so`
+(CSL client) are built from source: commit `6da38f5c302730f799969a58b2bbdc49d72b6b69`
+of the public [colitu/csl](https://github.com/colitu/csl) repository, by its own
+`engine/build.sh` and `cmd/csl-client/build.sh` (pure Go, `CGO_ENABLED=0`,
+`-trimpath`, `-ldflags "-s -w -buildid="`) with Go `go1.27.1`. The pins live in
+`scripts/sidecars.env`, the hashes in `android/app/libs/SHA256SUMS`.
+
+`scripts/build-sidecars.sh` clones that commit, builds with exactly that Go
+(`GOTOOLCHAIN`) and compares every file byte for byte; CI runs it on every push
+and before every signed release. Each binary also names its commit itself:
+`go version -m libcslclient.so` shows `vcs.revision` and `vcs.modified=false`.
+To move to a newer commit or Go release, change `scripts/sidecars.env` and run
+`scripts/build-sidecars.sh --update`.

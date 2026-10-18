@@ -72,7 +72,6 @@ android {
         // Only the Google Play build ("playstore") follows Play's payments policy:
         // no upgrade buttons, price promos or links to buy on the website.
         buildConfigField("boolean", "COLITU_PLAY_POLICY", "false")
-        buildConfigField("String", "COLITU_MIRRORS", "\"${mirrors.replace("\"", "")}\"")
         // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
         buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())
         // Adaptive Connect 3.0 (hinted start order + recovery set): off unless -PcolituAdaptiveConnect3=true. See ColituFeatures.
@@ -101,6 +100,9 @@ android {
             if (releaseSigningConfigured) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // Reproducible builds: no META-INF/version-control-info.textproto, whose
+            // content depends on the checkout (a source tarball has no .git).
+            vcsInfo.include = false
         }
         debug {
             val overrideUrl = providers.gradleProperty("COLITU_API_BASE_URL").orNull
@@ -216,6 +218,14 @@ android {
         }
     }
 
+    // Reproducible builds: the dependency block AGP adds to an APK is encrypted
+    // for Google and differs on every build, so APKs (colitu.com, F-Droid) leave
+    // it out. The Play bundle keeps it for the Play SDK Index.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = true
+    }
+
     lint {
         // Every lint error is fatal; the app's own texts live in ColituLoc
         // (ru/tr/en), Android resources only hold launcher/notification strings.
@@ -233,10 +243,68 @@ androidComponents {
     }
 }
 
+// The mirror origins are the one input that is not in the public source. They go into a
+// single file at the APK root, colitu-build.json (read by ColituBuildValues), not into the
+// code, so everything else in the APK is reproducible from the public source; to rebuild a
+// published APK, take COLITU_MIRRORS from that file. Fixed layout: the same value gives the
+// same bytes. No value (developer builds): no file.
+abstract class ColituBuildValuesTask : DefaultTask() {
+    @get:Input
+    abstract val mirrorList: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun write() {
+        val dir = outputDir.get().asFile
+        dir.deleteRecursively()
+        dir.mkdirs()
+        val value = mirrorList.get()
+        if (value.isNotEmpty()) {
+            val escaped = value.replace("\\", "").replace("\"", "")
+            dir.resolve("colitu-build.json").writeText("{\"mirrors\":\"$escaped\"}\n", Charsets.UTF_8)
+        }
+    }
+}
+
+val colituBuildValues = tasks.register<ColituBuildValuesTask>("colituBuildValues") {
+    mirrorList.set(mirrors)
+    outputDir.set(layout.buildDirectory.dir("generated/colitu-build-values"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.resources?.addGeneratedSourceDirectory(colituBuildValues, ColituBuildValuesTask::outputDir)
+    }
+}
+
+// Reproducible builds: what ships in a release is locked in app/gradle.lockfile.
+// After changing a dependency: ./gradlew :app:dependencies --write-locks
+configurations.matching { it.name.endsWith("ReleaseRuntimeClasspath") || it.name.endsWith("ReleaseCompileClasspath") }.configureEach {
+    resolutionStrategy.activateDependencyLocking()
+}
+
 gradle.taskGraph.whenReady {
     val buildsRelease = allTasks.any { it.name.contains("Release", ignoreCase = true) && (it.name.startsWith("assemble") || it.name.startsWith("bundle")) }
     if (buildsRelease && releaseSigningRequired && !releaseSigningConfigured) {
         throw GradleException("Protected release build requires COLITU_ANDROID_KEYSTORE_PATH, COLITU_ANDROID_STORE_PASSWORD, COLITU_ANDROID_KEY_ALIAS and COLITU_ANDROID_KEY_PASSWORD")
+    }
+    // Reproducible builds: a release is built from sources with the line endings every checkout
+    // gets (LF, see .gitattributes); a CRLF copy left by an editor (text assets go into the APK
+    // as they are) would build a different APK.
+    if (buildsRelease && releaseSigningRequired) {
+        val eol = providers.exec {
+            commandLine("git", "-C", rootDir.parentFile.path, "ls-files", "--eol")
+            isIgnoreExitValue = true
+        }.standardOutput.asText.get()
+        val crlf = eol.lineSequence()
+            .filter { (" w/crlf " in it || " w/mixed " in it) && "eol=lf" in it }
+            .map { it.substringAfter('\t') }
+            .toList()
+        if (crlf.isNotEmpty()) {
+            throw GradleException("These files have CRLF line endings, the repository uses LF (.gitattributes); convert them (or git checkout -- <file> when unchanged):\n  " + crlf.take(20).joinToString("\n  "))
+        }
     }
 }
 

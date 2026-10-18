@@ -10,4 +10,9 @@ buildscript {
     dependencies {
         classpath(libs.gradle.license.plugin)
     }
+    // Reproducible builds: the plugin classpath (AGP, R8, Kotlin) is locked in
+    // buildscript-gradle.lockfile. Refresh: ./gradlew :app:dependencies --write-locks
+    configurations.classpath {
+        resolutionStrategy.activateDependencyLocking()
+    }
 }

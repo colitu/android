@@ -1,0 +1,6 @@
+# Reproducible builds: every checkout (Windows, Linux, macOS, any core.autocrlf)
+# gets the same bytes. Text assets go into the APK as they are, so a CRLF
+# checkout would build a different APK than an LF one.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

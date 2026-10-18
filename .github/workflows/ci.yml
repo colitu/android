@@ -17,7 +17,8 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          java-version: 21
+          # Exact JDK (javac output can change between releases); same as docs/reproducible-builds.md.
+          java-version: '21.0.12'
           cache: gradle
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
       - name: Verify prebuilt VPN core
@@ -25,6 +26,18 @@ jobs:
         # (docs/core-provenance.md); any change must update SHA256SUMS on purpose.
         working-directory: android/app/libs
         run: sha256sum -c SHA256SUMS
+      - name: Rebuild the Go sidecars from source
+        # libcolituengine.so and libcslclient.so must come out byte for byte from the
+        # colitu/csl commit and Go release pinned in scripts/sidecars.env (GOTOOLCHAIN
+        # fetches that exact Go from the Go module proxy, checksum-verified).
+        run: bash scripts/build-sidecars.sh
+      - name: Rebuild hev-socks5-tunnel from source
+        # libhev-socks5-tunnel.so must come out byte for byte from the hev commit
+        # and the NDK release pinned in scripts/hev.env (compile-hevtun.sh).
+        run: |
+          . scripts/hev.env
+          sdkmanager --install "ndk;$HEV_NDK" > /dev/null
+          NDK_HOME="$ANDROID_HOME/ndk/$HEV_NDK" bash compile-hevtun.sh
       - name: Unit, lint and unsigned PR artifact
         working-directory: android
         run: |
