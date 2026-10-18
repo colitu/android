@@ -60,8 +60,11 @@ jobs:
           # API mirror origins; required by build.gradle.kts for a signed release.
           # (Ad-block resolvers are not built in: the panel's bootstrap names them.)
           COLITU_MIRRORS: ${{ secrets.COLITU_MIRRORS }}
-        # Play: signed AAB. colitu.com: the self-updating "direct" APKs.
-        run: ./gradlew testPlaystoreReleaseUnitTest lintPlaystoreRelease lintDirectRelease bundlePlaystoreRelease assembleDirectRelease --no-daemon
+        # Play: signed AAB. colitu.com: the self-updating "direct" APKs, in a second
+        # Gradle run: a run that bundles turns the per-ABI APK splits off.
+        run: |
+          ./gradlew testPlaystoreReleaseUnitTest lintPlaystoreRelease lintDirectRelease bundlePlaystoreRelease --no-daemon
+          ./gradlew assembleDirectRelease --no-daemon
       - name: Native libraries in every ABI
         # MMKV, the Xray core and hev for each ABI of the AAB and of every direct APK.
         run: |

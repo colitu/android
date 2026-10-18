@@ -5,7 +5,9 @@
 #
 # Usage: scripts/check-native-libs.sh <apk-or-aab> [...]
 #   Colitu_<version>_<abi>.apk  -> that ABI
-#   *_universal.apk, *.aab      -> every ABI
+#   *_universal.apk             -> every ABI
+#   *.aab                       -> arm64-v8a, armeabi-v7a (the Play build is ARM
+#                                  only: its x86 sidecars are not 16 KB aligned)
 set -euo pipefail
 
 ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
@@ -19,7 +21,7 @@ for file in "$@"; do
   listing=$(unzip -Z1 "$file")
   prefix="lib"
   case "$name" in
-    *.aab) prefix="base/lib"; abis=("${ABIS[@]}") ;;
+    *.aab) prefix="base/lib"; abis=(arm64-v8a armeabi-v7a) ;;
     *_universal.apk) abis=("${ABIS[@]}") ;;
     *.apk)
       abis=()
