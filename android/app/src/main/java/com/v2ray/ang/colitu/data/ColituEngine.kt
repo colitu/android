@@ -174,7 +174,7 @@ object ColituEngine {
     }
 
     private fun ensureStarted(context: Context): Process? {
-        process?.takeIf { it.isAlive }?.let { return it }
+        process?.takeIf { it.isRunning() }?.let { return it }
         stop()
         val file = File(context.applicationInfo.nativeLibraryDir, FILE_NAME)
         if (!file.exists()) return null
@@ -205,3 +205,15 @@ object ColituEngine {
         reader = null
     }
 }
+
+/**
+ * Whether the process has not exited yet. Process.isAlive needs API 26 and the
+ * app runs on 24 (Android 7.0); exitValue() throws while the process runs.
+ */
+internal fun Process.isRunning(): Boolean =
+    try {
+        exitValue()
+        false
+    } catch (_: IllegalThreadStateException) {
+        true
+    }

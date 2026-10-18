@@ -12,9 +12,11 @@
     <uses-permission
         android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:node="remove" />
+    <!-- Lint sees the name only; this element removes the permission. -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="QueryAllPackagesPermission" />
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:node="remove" />

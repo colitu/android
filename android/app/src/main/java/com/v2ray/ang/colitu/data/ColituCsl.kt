@@ -358,7 +358,7 @@ object ColituCslRuntime {
         runCatching { proc?.destroy() }
     }
 
-    val running: Boolean get() = process?.isAlive == true
+    val running: Boolean get() = process?.isRunning() == true
 
     private fun fail(gen: Int, reason: String, onFailure: (String) -> Unit) {
         if (!generation.compareAndSet(gen, gen + 1)) return
