@@ -36,7 +36,9 @@ jobs:
         run: |
           . scripts/hev.env
           sdkmanager --install "ndk;$HEV_NDK" > /dev/null
-          NDK_HOME="$ANDROID_HOME/ndk/$HEV_NDK" bash compile-hevtun.sh
+          # Anything but an "ok" line becomes an annotation, readable without signing in.
+          NDK_HOME="$ANDROID_HOME/ndk/$HEV_NDK" bash compile-hevtun.sh 2>&1 |
+            while IFS= read -r line; do case "$line" in ok*) echo "$line" ;; *) echo "::error::$line" ;; esac; done
       - name: Materialize temporary keystore
         env:
           KEYSTORE_B64: ${{ secrets.COLITU_ANDROID_KEYSTORE_B64 }}
