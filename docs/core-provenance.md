@@ -42,7 +42,9 @@ on every push and before every signed release.
 hev's makefiles list the sources with `$(wildcard)`, which returns them in
 directory order (sorted on NTFS, arbitrary on ext4/APFS) and so changes the
 link order; `compile-hevtun.sh` sorts that list in its build copy, compiles
-under the relative path `jni/hev-socks5-tunnel`, and links without a build id.
+under the relative path `jni/hev-socks5-tunnel` without a compiler `.ident`
+(the NDK's clang names itself differently on Windows and Linux), and links
+without a build id. Windows and Linux builds give the same bytes.
 
 The library shipped up to 2.9.2 came from the same source and NDK (its
 `.note.android.ident` names r27c 12479018; same exported symbols, same section

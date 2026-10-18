@@ -11,7 +11,9 @@
 # The output depends only on the hev sources, the NDK release and the flags
 # below: the sources come from a fresh clone (with submodules, no line-ending
 # conversion) and are compiled under the relative path jni/hev-socks5-tunnel,
-# the linker writes no build id, and NDK_HOME must be the pinned release.
+# the linker writes no build id, the compiler writes no .ident (the NDK's clang
+# names itself differently on Windows and Linux), and NDK_HOME must be the
+# pinned release.
 set -o errexit
 set -o pipefail
 set -o nounset
@@ -91,7 +93,7 @@ rev_id=$(git -C "$src" rev-parse --short=7 HEAD)
       NDK_LIBS_OUT=libs \
       NDK_OUT=obj \
       "REV_ID=$rev_id" \
-      "APP_CFLAGS=-O3 -DPKGNAME=com/v2ray/ang/service" \
+      "APP_CFLAGS=-O3 -DPKGNAME=com/v2ray/ang/service -fno-ident" \
       "APP_LDFLAGS=-Wl,--build-id=none -Wl,--hash-style=gnu" >/dev/null
 )
 
@@ -108,6 +110,11 @@ for abi in $ABIS; do
     echo "ok        $name"
   else
     echo "DIFFERENT $name (rebuilt $sum)"; status=1
+    # Which parts differ: the hash of each section of the rebuilt file.
+    readelf=$(ls "$NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-readelf* | head -n 1)
+    for section in .text .rodata .data .eh_frame .dynsym .comment; do
+      echo "  $abi $section $("$readelf" -x "$section" "$built" 2>/dev/null | sha256sum | cut -c1-16)"
+    done
   fi
 done
 if [ "$update" = 1 ]; then

@@ -35,9 +35,11 @@ jobs:
         # libhev-socks5-tunnel.so must come out byte for byte from the hev commit
         # and the NDK release pinned in scripts/hev.env (compile-hevtun.sh).
         run: |
+          set -o pipefail
           . scripts/hev.env
           sdkmanager --install "ndk;$HEV_NDK" > /dev/null
-          # Anything but an "ok" line becomes an annotation, readable without signing in.
+          # Anything but an "ok" line becomes an annotation, readable without signing in;
+          # pipefail keeps the script's exit status (the default shell here has none).
           NDK_HOME="$ANDROID_HOME/ndk/$HEV_NDK" bash compile-hevtun.sh 2>&1 |
             while IFS= read -r line; do case "$line" in ok*) echo "$line" ;; *) echo "::error::$line" ;; esac; done
       - name: Unit, lint and unsigned PR artifact
