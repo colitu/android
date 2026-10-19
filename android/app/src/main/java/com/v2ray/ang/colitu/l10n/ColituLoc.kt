@@ -359,6 +359,7 @@ object ColituLoc {
         "account.kicker" to arrayOf("АККАУНТ", "HESAP", "ACCOUNT"),
         "account.title" to arrayOf("Ваш аккаунт", "Hesabınız", "Your account"),
         "account.email" to arrayOf("Электронная почта", "E-posta", "Email"),
+        "account.company" to arrayOf("Компания: {name}", "Şirket: {name}", "Company: {name}"),
         "account.plan" to arrayOf("Тариф", "Paket", "Plan"),
         "account.validUntil" to arrayOf("Действует до", "Geçerlilik", "Valid until"),
         "account.devices" to arrayOf("УСТРОЙСТВА", "CİHAZLAR", "DEVICES"),

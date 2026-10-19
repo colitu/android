@@ -9,6 +9,7 @@ import com.google.gson.JsonObject
 import com.v2ray.ang.colitu.api.ColituApiClient
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ColituAuthResponse
+import com.v2ray.ang.colitu.data.ColituCompany
 import com.v2ray.ang.colitu.data.ColituInvite
 import com.v2ray.ang.colitu.data.ColituUser
 
@@ -348,6 +349,10 @@ object ColituAuthRepository {
         val status = entitlement?.tryString("status") ?: "inactive"
         val active = status == "active" || status == "trialing"
         val traffic = entitlement?.get("traffic")?.takeIf { it.isJsonObject }?.asJsonObject
+        val companyJson = json.get("company")?.takeIf { it.isJsonObject }?.asJsonObject
+        val company = companyJson?.tryString("name")?.let { name ->
+            ColituCompany(name = name, role = companyJson.tryString("role") ?: "member")
+        }
         val user = ColituUser(
             id = id,
             name = "Colitu",
@@ -358,6 +363,7 @@ object ColituAuthRepository {
             expiresAt = entitlement?.tryString("expires_at"),
             trafficUsedBytes = traffic?.tryLong("used_bytes") ?: 0L,
             trafficLimitBytes = traffic?.tryLong("limit_bytes"),
+            company = company,
         )
         ColituTokenManager.saveUserInfo(user.id, user.email, user.name, user.plan, user.entitlementStatus)
         return user

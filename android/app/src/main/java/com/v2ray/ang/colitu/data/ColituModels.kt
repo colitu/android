@@ -15,10 +15,18 @@ data class ColituUser(
     val trafficUsedBytes: Long = 0,
     /** Null when the plan has no traffic quota. */
     val trafficLimitBytes: Long? = null,
+    /** Company seat from /me; null when the account has none. */
+    val company: ColituCompany? = null,
 ) {
     val hasActiveEntitlement: Boolean
         get() = entitlementStatus.equals("active", true) || entitlementStatus.equals("trialing", true)
 }
+
+/** [role] is "owner", "admin" or "member". */
+data class ColituCompany(
+    val name: String,
+    val role: String = "member",
+)
 
 data class ColituServer(
     val id: String,

@@ -150,6 +150,10 @@ fun AccountTab(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         CText(email.ifEmpty { "—" }, ColituText.label, maxLines = 1)
+                        user?.company?.let { company ->
+                            Spacer(Modifier.height(2.dp))
+                            CText(loc.format("account.company", "name" to company.name), ColituText.small, maxLines = 1)
+                        }
                         Spacer(Modifier.height(2.dp))
                         val expires = c.expiresAt
                         CText(
