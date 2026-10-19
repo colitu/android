@@ -400,6 +400,9 @@ fun AccountTab(
         if (!ColituTv.isTv) {
             ColituActionRow(ColituIcons.Gift, loc["referral.title"], loc["referral.rowHint"], onClick = onOpenReferral)
             Spacer(Modifier.height(8.dp))
+            // No reward wording: the stores forbid rewards for reviews.
+            ColituActionRow(ColituIcons.Star, loc["review.title"], loc["review.hint"], onClick = { openUrl(context, "https://colitu.com/review") })
+            Spacer(Modifier.height(8.dp))
         }
         // The tour and the mail app are phone things; a TV has no use or app for them.
         if (!ColituTv.isTv) {

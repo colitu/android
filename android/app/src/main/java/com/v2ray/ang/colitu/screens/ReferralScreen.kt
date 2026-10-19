@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,8 +60,31 @@ import com.v2ray.ang.colitu.l10n.colituErrorMessage
 import com.v2ray.ang.colitu.repository.ColituReferralRepository
 
 /** The text handed to the share sheet: the invitation, then the link on its own line. */
-internal fun referralShareText(template: String, referral: ColituReferral): String =
-    template.replace("{n}", referral.inviteeDays.toString()) + "\n" + referral.link
+internal fun referralShareText(template: String, referral: ColituReferral): String {
+    val withDays = template.replace("{n}", referral.inviteeDays.toString())
+    return if (withDays.contains("{link}")) withDays.replace("{link}", referral.link) else withDays + "\n" + referral.link
+}
+
+/** The invitation without the link (Telegram adds the link as its own field). */
+internal fun referralTextWithoutLink(template: String, referral: ColituReferral): String =
+    template.replace("{n}", referral.inviteeDays.toString()).replace("{link}", "").trimEnd(' ', ':', '\uFF1A', '\n')
+
+internal fun telegramShareUrl(template: String, referral: ColituReferral): String =
+    "https://t.me/share/url?url=" + Uri.encode(referral.link) + "&text=" + Uri.encode(referralTextWithoutLink(template, referral))
+
+internal fun whatsappShareUrl(template: String, referral: ColituReferral): String =
+    "https://wa.me/?text=" + Uri.encode(referralShareText(template, referral))
+
+/** Telegram / WhatsApp share pages; the https links open the app when installed, else the browser. */
+internal fun shareViaTelegram(context: Context, referral: ColituReferral) =
+    openUrl(context, telegramShareUrl(ColituLoc["referral.shareText"], referral))
+
+internal fun shareViaWhatsApp(context: Context, referral: ColituReferral) =
+    openUrl(context, whatsappShareUrl(ColituLoc["referral.shareText"], referral))
+
+/** System share sheet with the invitation text. */
+internal fun shareReferralSystem(context: Context, referral: ColituReferral) =
+    shareText(context, ColituLoc["referral.title"], referralShareText(ColituLoc["referral.shareText"], referral))
 
 /**
  * "Invite a friend": the personal link (copy / share), four statistics and the
@@ -125,7 +149,9 @@ fun ReferralDialog(onClose: () -> Unit) {
                                 copyText(context, data.link)
                                 copied = true
                             },
-                            onShare = { shareText(context, loc["referral.title"], referralShareText(loc["referral.shareText"], data)) },
+                            onShare = { shareReferralSystem(context, data) },
+                            onTelegram = { shareViaTelegram(context, data) },
+                            onWhatsApp = { shareViaWhatsApp(context, data) },
                         )
                         Spacer(Modifier.height(18.dp))
                         Stats(data)
@@ -145,7 +171,14 @@ fun ReferralDialog(onClose: () -> Unit) {
 }
 
 @Composable
-private fun LinkCard(data: ColituReferral, copied: Boolean, onCopy: () -> Unit, onShare: () -> Unit) {
+private fun LinkCard(
+    data: ColituReferral,
+    copied: Boolean,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+    onTelegram: () -> Unit,
+    onWhatsApp: () -> Unit,
+) {
     val loc = ColituLoc
     ColituPanel(padding = PaddingValues(16.dp)) {
         Column {
@@ -163,6 +196,11 @@ private fun LinkCard(data: ColituReferral, copied: Boolean, onCopy: () -> Unit, 
                     )
                 }
                 Box(Modifier.weight(1f)) { ColituButton(loc["referral.share"], onShare, icon = ColituIcons.Send) }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f)) { ColituButton(loc["referral.telegram"], onTelegram, kind = ColituButtonKind.Secondary) }
+                Box(Modifier.weight(1f)) { ColituButton(loc["referral.whatsapp"], onWhatsApp, kind = ColituButtonKind.Secondary) }
             }
         }
     }

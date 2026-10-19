@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,10 +32,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,8 +50,11 @@ import com.v2ray.ang.colitu.app.VpnStatus
 import com.v2ray.ang.colitu.app.isFreePlan
 import com.v2ray.ang.colitu.app.planLeftOf
 import com.v2ray.ang.colitu.app.planNameOf
+import com.v2ray.ang.colitu.app.safeCall
+import com.v2ray.ang.colitu.data.ColituInviteCard
 import com.v2ray.ang.colitu.data.ColituMultihop
 import com.v2ray.ang.colitu.data.ColituRotation
+import com.v2ray.ang.colitu.data.ColituReferral
 import com.v2ray.ang.colitu.data.ColituRotationStatus
 import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
@@ -65,9 +77,11 @@ import com.v2ray.ang.colitu.design.ColituSpinner
 import com.v2ray.ang.colitu.design.ColituText
 import com.v2ray.ang.colitu.design.ColituTv
 import com.v2ray.ang.colitu.design.PowerState
+import com.v2ray.ang.colitu.design.pressable
 import com.v2ray.ang.colitu.design.reveal
 import com.v2ray.ang.colitu.l10n.ColituLoc
 import com.v2ray.ang.colitu.l10n.ColituServerNames
+import com.v2ray.ang.colitu.repository.ColituReferralRepository
 import kotlinx.coroutines.delay
 import java.time.Duration
 
@@ -85,9 +99,12 @@ fun HomeTab(
     onOpenPrivacy: () -> Unit = {},
     onOpenSplit: () -> Unit = {},
     onOpenAdvanced: () -> Unit = {},
+    onOpenReferral: () -> Unit = {},
 ) {
     val loc = ColituLoc
     val advanced = c.advancedMode
+    // The invite card appears only on installs that have connected at least once.
+    LaunchedEffect(c.connected) { if (c.connected) ColituInviteCard.markEligible() }
     if (c.loading && c.servers.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { ColituSpinner() }
         return
@@ -211,10 +228,86 @@ fun HomeTab(
         LocationCard(c, onChangeLocation, Modifier.reveal(120))
         Spacer(Modifier.height(12.dp))
         PlanRow(c, onOpenPlan, Modifier.reveal(160))
+        InviteCard(c, onOpenReferral)
         if (!advanced) {
             Spacer(Modifier.height(10.dp))
             AdvancedModeButton(c, Modifier.fillMaxWidth())
         }
+    }
+}
+
+/**
+ * Compact invite card under the plan row: Telegram, WhatsApp and the system
+ * share sheet in one tap. Shown after the first successful connection, hidden
+ * for 14 days once closed, and never when the invite call failed, invites are
+ * off, the link is not https colitu.com, or the device is paused.
+ */
+@Composable
+private fun InviteCard(c: ColituController, onOpenReferral: () -> Unit) {
+    val loc = ColituLoc
+    val context = LocalContext.current
+    var dismissed by remember { mutableStateOf(false) }
+    val show = ColituInviteCard.visible() && !dismissed && c.devicePause == null && c.user != null
+    var referral by remember { mutableStateOf<ColituReferral?>(null) }
+    LaunchedEffect(show) {
+        if (show && referral == null) {
+            safeCall { ColituReferralRepository.cachedOrFetch() }.onSuccess { referral = it }
+        }
+    }
+    val data = referral?.takeIf { it.linkUsable } ?: return
+    if (!show) return
+    Spacer(Modifier.height(12.dp))
+    ColituPanel(
+        Modifier.reveal(200),
+        padding = PaddingValues(start = 14.dp, top = 10.dp, end = 6.dp, bottom = 12.dp),
+        radius = ColituRadius.md,
+        onClick = onOpenReferral,
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ColituRoundIcon(ColituIcons.Gift, size = 36.dp, accent = true)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    CText(loc["referral.title"], ColituText.label, maxLines = 1)
+                    Spacer(Modifier.height(2.dp))
+                    CText(loc.format("referral.cardBody", "n" to data.inviteeDays), ColituText.small, maxLines = 2)
+                }
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).pressable({
+                        ColituInviteCard.dismiss()
+                        dismissed = true
+                    }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ColituIcon(ColituIcons.XMark, ColituColors.dim, 16.dp, description = loc["referral.close"])
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth().padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InviteChip(loc["referral.telegram"], Modifier.weight(1f)) { shareViaTelegram(context, data) }
+                InviteChip(loc["referral.whatsapp"], Modifier.weight(1f)) { shareViaWhatsApp(context, data) }
+                InviteChip(loc["referral.share"], Modifier.weight(1f)) { shareReferralSystem(context, data) }
+            }
+        }
+    }
+}
+
+/** Small pill for the invite card; the regular button's padding is too wide for three in a row. */
+@Composable
+private fun InviteChip(label: String, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier
+            .semantics { contentDescription = label }
+            .pressable(onClick)
+            .height(38.dp)
+            .clip(shape)
+            .background(ColituColors.surface2)
+            .border(1.dp, ColituColors.lineStrong, shape)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        CText(label, ColituText.label, size = 13.5.sp, maxLines = 1, align = TextAlign.Center)
     }
 }
 

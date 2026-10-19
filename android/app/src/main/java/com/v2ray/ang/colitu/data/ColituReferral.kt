@@ -57,6 +57,43 @@ object ColituInvite {
     fun clear() = keepPending(null)
 }
 
+/**
+ * State of the invite card on the home screen: it appears only after this
+ * install has connected once (the flag is never reset) and stays hidden for
+ * [DISMISS_MS] after the user closes it.
+ */
+object ColituInviteCard {
+    private const val KEY_ELIGIBLE = "invite_card_eligible"
+    private const val KEY_DISMISSED_AT = "invite_card_dismissed_at"
+    const val DISMISS_MS = 14L * 24 * 60 * 60 * 1000
+
+    private val store by lazy { MMKV.mmkvWithID("COLITU_SETTINGS", MMKV.MULTI_PROCESS_MODE) }
+
+    /** True once a connection has succeeded on this install. Compose state. */
+    var eligible: Boolean by mutableStateOf(runCatching { store.decodeBool(KEY_ELIGIBLE, false) }.getOrDefault(false))
+        private set
+
+    /** Epoch ms of the last dismissal, 0 when never. Compose state. */
+    var dismissedAt: Long by mutableStateOf(runCatching { store.decodeLong(KEY_DISMISSED_AT, 0L) }.getOrDefault(0L))
+        private set
+
+    fun markEligible() {
+        if (eligible) return
+        eligible = true
+        runCatching { store.encode(KEY_ELIGIBLE, true) }
+    }
+
+    fun dismiss(now: Long = System.currentTimeMillis()) {
+        dismissedAt = now
+        runCatching { store.encode(KEY_DISMISSED_AT, now) }
+    }
+
+    fun dismissedNow(now: Long = System.currentTimeMillis()): Boolean =
+        dismissedAt > 0 && now - dismissedAt < DISMISS_MS
+
+    fun visible(now: Long = System.currentTimeMillis()): Boolean = eligible && !dismissedNow(now)
+}
+
 /** One line of the invite history; never carries a name or e-mail. */
 data class ColituReferralEvent(
     /** "pending", "rewarded" or "rejected". */
@@ -83,6 +120,13 @@ data class ColituReferral(
 ) {
     /** Rewards still available this month. */
     val left: Int get() = (monthlyCap - rewardedThisMonth).coerceAtLeast(0)
+
+    /** The link is a https colitu.com one; anything else is never shown on the home card. */
+    val linkUsable: Boolean get() {
+        val uri = runCatching { Uri.parse(link) }.getOrNull() ?: return false
+        val host = uri.host.orEmpty().lowercase()
+        return uri.scheme.equals("https", ignoreCase = true) && (host == "colitu.com" || host == "www.colitu.com")
+    }
 
     companion object {
         /** From the response root ({"data":{...}}) or the data object itself; null without a link. */
