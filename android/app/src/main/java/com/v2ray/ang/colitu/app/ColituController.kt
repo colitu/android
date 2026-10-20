@@ -1287,6 +1287,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // there is nothing to sync and its config comes from its own endpoint.
         val isRoute = server.isMultihop
         val synced = isRoute || store.decodeString(KEY_SYNCED_SERVER) == server.id
+        if (serviceUp) {
+            // Switch: the interface stays up (held) so no app falls back to the
+            // plain network while the next transport starts. Before the preference
+            // sync below: with the old tunnel still up that call goes through it,
+            // and after a mid-session stall (both paths dead, the reconnect starts
+            // on another server) it hung until its timeout and failed the recovery.
+            stopService(force = true, hold = true)
+            // Probes started while the old tunnel was still closing all failed
+            // at once on a real phone (EOF within 300 ms); let it settle first.
+            delay(TEARDOWN_SETTLE_MS)
+        }
         if (!isRoute && !synced) {
             // Without the new preference the panel would hand out the previous
             // node's profile while the app shows this one, so a failed switch
@@ -1297,14 +1308,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 return ServerOutcome.Fatal(it.message)
             }
             store.encode(KEY_SYNCED_SERVER, server.id)
-        }
-        if (serviceUp) {
-            // Switch: the interface stays up (held) so no app falls back to the
-            // plain network while the next transport starts.
-            stopService(force = true, hold = true)
-            // Probes started while the old tunnel was still closing all failed
-            // at once on a real phone (EOF within 300 ms); let it settle first.
-            delay(TEARDOWN_SETTLE_MS)
         }
 
         // Fetched beside the primary's profile; never waited for longer than
