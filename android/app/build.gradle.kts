@@ -72,6 +72,10 @@ android {
         // Only the Google Play build ("playstore") follows Play's payments policy:
         // no upgrade buttons, price promos or links to buy on the website.
         buildConfigField("boolean", "COLITU_PLAY_POLICY", "false")
+        // Only the F-Droid build ("fdroid") asks before anything is reported: usage
+        // statistics start off and support's connection-report requests are not answered
+        // silently (F-Droid's Tracking anti-feature covers reporting that is on by default).
+        buildConfigField("boolean", "COLITU_OPT_IN_REPORTING", "false")
         // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
         buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())
         // Adaptive Connect 3.0 (hinted start order + recovery set): off unless -PcolituAdaptiveConnect3=true. See ColituFeatures.
@@ -124,6 +128,7 @@ android {
         create("fdroid") {
             dimension = "distribution"
             buildConfigField("String", "DISTRIBUTION", "\"F-Droid\"")
+            buildConfigField("boolean", "COLITU_OPT_IN_REPORTING", "true")
         }
         create("playstore") {
             dimension = "distribution"

@@ -436,8 +436,10 @@ fun AccountTab(
             Spacer(Modifier.height(8.dp))
             ColituActionRow(ColituIcons.XCircleOutline, loc["play.deleteAccount"], loc["play.deleteAccountHint"], onClick = { openUrl(context, ACCOUNT_SETTINGS_URL) },
                 trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) })
+        }
+        if (!com.v2ray.ang.colitu.update.ColituUpdater.enabled) {
             Spacer(Modifier.height(8.dp))
-            // Play updates this build; there is nothing to check here.
+            // Play and F-Droid update this build; there is nothing to check here.
             ColituActionRow(ColituIcons.Info, "Colitu VPN", loc.format("settings.version", "version" to "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"))
         } else {
         Spacer(Modifier.height(8.dp))

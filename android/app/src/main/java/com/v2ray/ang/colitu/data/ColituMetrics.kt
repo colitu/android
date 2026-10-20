@@ -135,7 +135,8 @@ class ColituMetricsData {
 enum class ColituMetricsOutcome { Reset, Keep }
 
 /**
- * Local store and sender of the usage statistics (default on). With the
+ * Local store and sender of the usage statistics (default on; off in the
+ * F-Droid build, see COLITU_OPT_IN_REPORTING). With the
  * setting off nothing is collected or sent and the stored numbers are gone.
  * Sent at most every [SEND_INTERVAL_MS] while signed in and there is data;
  * never blocks the UI (the controller calls it from a coroutine).
@@ -144,6 +145,7 @@ object ColituMetrics {
     const val SEND_INTERVAL_MS = 6L * 60 * 60 * 1000
 
     private const val KEY_ENABLED = "metrics_enabled"
+    private val DEFAULT_ENABLED = !com.v2ray.ang.BuildConfig.COLITU_OPT_IN_REPORTING
     private const val KEY_DATA = "metrics_data"
     private const val KEY_LAST_ATTEMPT = "metrics_last_attempt"
     private const val KEY_FIRST_DONE = "metrics_first_connect_done"
@@ -153,7 +155,7 @@ object ColituMetrics {
     private var data: ColituMetricsData? = null
 
     var enabled: Boolean
-        get() = runCatching { store.decodeBool(KEY_ENABLED, true) }.getOrDefault(true)
+        get() = runCatching { store.decodeBool(KEY_ENABLED, DEFAULT_ENABLED) }.getOrDefault(DEFAULT_ENABLED)
         set(value) {
             runCatching { store.encode(KEY_ENABLED, value) }
             if (!value) synchronized(lock) {
