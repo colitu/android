@@ -805,6 +805,16 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private val stalledThisConnect = mutableSetOf<String>()
 
+    /**
+     * This round's outside probe found no TCP transport of the server answering while the phone is
+     * online: a server outage. Its failed transports get no stall mark (once the outage ended, the
+     * marks put the worst transport first, for 6 h once it carried traffic).
+     */
+    private var serverOutageThisRound = false
+
+    /** This round's outside probe per transport (delay ms, -1: no answer); empty when not probed. */
+    private var roundProbe: Map<String, Long> = emptyMap()
+
     /** Transports the server offered on the last fresh profile. */
     private var offeredTransports: Set<String> = emptySet()
 
@@ -1507,6 +1517,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private suspend fun orderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
         val now = System.currentTimeMillis()
+        serverOutageThisRound = false
+        roundProbe = emptyMap()
         val hinted = hintedBlocked(now)
         // Hinted transports rank like stalled ones: last, and never the remembered shortcut.
         val remembered = stalledTransports(server.id) + memory.stalled(networkKey, server.id, now) + hinted
@@ -1535,7 +1547,19 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         if (!probe) return ColituTransportOrder.byRank(configs, stalled)
         phase = ConnectPhase.Probing
-        return rank(configs, stalled)
+        val order = rank(configs, stalled)
+        serverOutageThisRound = ColituTransportOrder.serverOutage(roundProbe) && deviceOnline()
+        if (!serverOutageThisRound) return order
+        // The transports whose port did not answer cannot connect either (about 7 s each): the round
+        // gets back to Hysteria2 sooner.
+        val reachable = ColituTransportOrder.withoutSilent(order, { it.protocolType }, roundProbe)
+        val skipped = order.filter { it !in reachable }.mapNotNull { it.protocolType }
+        LogUtil.w(
+            AppConfig.TAG,
+            "Colitu: no TCP transport of this server answers outside the tunnel while the phone is online: a server outage, " +
+                "failed transports of this round are not marked${if (skipped.isNotEmpty()) "; skipped $skipped" else ""}",
+        )
+        return reachable
     }
 
     /**
@@ -1712,8 +1736,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // A cached profile may just be stale: only a fresh one's silence is remembered (and reported).
             if (!fromCache) {
                 observe(actual, protocol, reachable = false, latencyMs = null)
-                memory.markStalled(networkKey, actual.id, protocol, System.currentTimeMillis(), confirmed = false)
-                saveMemory()
+                // A server outage is not this transport's fault.
+                if (!serverOutageThisRound) {
+                    memory.markStalled(networkKey, actual.id, protocol, System.currentTimeMillis(), confirmed = false)
+                    saveMemory()
+                }
             }
         }
     }
@@ -1917,17 +1944,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
             lastAutoSwitchAt = now
             val wallNow = System.currentTimeMillis()
             val proven = memory.workedOnNetwork(networkKey, protocol, wallNow)
-            LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect${if (proven) ", proven here: short penalty" else ""}), switching transport")
-            store.encode(
-                ColituTransportOrder.midSessionStallKey(server.id, protocol),
-                wallNow + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS),
-            )
-            if (protocol != "hysteria2") {
-                // Tentative: confirmed only when the reconnect finds another transport that works.
-                memory.markStalled(networkKey, server.id, protocol, System.currentTimeMillis(), confirmed = false)
-                saveMemory()
+            val bothPathsDead = spare != null
+            if (ColituTransportOrder.markTransportAfterStall(online = true, bothPathsDead)) {
+                LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect${if (proven) ", proven here: short penalty" else ""}), switching transport")
+                store.encode(
+                    ColituTransportOrder.midSessionStallKey(server.id, protocol),
+                    wallNow + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS),
+                )
+                if (protocol != "hysteria2") {
+                    // Tentative: confirmed only when the reconnect finds another transport that works.
+                    memory.markStalled(networkKey, server.id, protocol, System.currentTimeMillis(), confirmed = false)
+                    saveMemory()
+                }
+            } else {
+                // Primary and spare (another transport) died together: the server or the path to it.
+                // Marking the transport put the worst one first once the outage ended.
+                LogUtil.w(AppConfig.TAG, "Colitu: $protocol and the warm spare carried nothing together (${(now - started) / 1000} s after connect); the transport is not marked, reconnecting")
             }
-            leaveServerIfBothDead(server, bothPathsDead = spare != null)
+            leaveServerIfBothDead(server, bothPathsDead)
             stalledThisConnect += protocol
             observe(server, protocol, reachable = false, latencyMs = null)
             flushObservations()
@@ -2168,6 +2202,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // connection up for the whole probe window.
             val deadline = android.os.SystemClock.elapsedRealtime() + PROBE_TIMEOUT_MS
             var winner = -1
+            val probed = mutableMapOf<String, Long>()
             for (i in byPreference.indices) {
                 val left = deadline - android.os.SystemClock.elapsedRealtime()
                 val delayMs = if (left <= 0) {
@@ -2175,6 +2210,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 } else {
                     withTimeoutOrNull(left) { jobs[i].await() } ?: -1L
                 }
+                byPreference[i].protocolType?.let { probed[it] = delayMs }
+                roundProbe = probed.toMap()
                 if (delayMs >= 0) {
                     winner = i
                     break
@@ -2807,6 +2844,35 @@ internal object ColituTransportOrder {
      */
     /** Automatic mode leaves a server whose primary and spare both died while the device is online. */
     fun leaveServerWhenBothDead(automatic: Boolean, online: Boolean, bothPathsDead: Boolean): Boolean = automatic && online && bothPathsDead
+
+    /**
+     * After the watcher's verdict the transport gets a stall mark only when the phone is online and it
+     * died alone: primary and spare dead together is the server's or the path's fault. Same rule as
+     * Windows/Linux (MarkTransportAfterRestart).
+     */
+    fun markTransportAfterStall(online: Boolean, bothPathsDead: Boolean): Boolean = online && !bothPathsDead
+
+    /** UDP transports: no answer to the outside probe proves nothing about the server (Windows/Linux do not measure them). */
+    private val UDP_TRANSPORTS = setOf("hysteria2")
+
+    /**
+     * Every TCP transport of the server was probed and none answered (outside the tunnel): the server
+     * itself is out, not one transport. Hysteria2 does not count.
+     */
+    fun serverOutage(probed: Map<String, Long>): Boolean {
+        val tcp = probed.filterKeys { it !in UDP_TRANSPORTS }
+        return tcp.isNotEmpty() && tcp.values.all { it < 0 }
+    }
+
+    /**
+     * In a server outage round: the TCP transports whose port did not answer are left out, they cannot
+     * connect either, so the round gets back to the UDP transport sooner. Unchanged when nothing would
+     * be left or nothing is left out.
+     */
+    fun <T> withoutSilent(items: List<T>, protocol: (T) -> String?, probed: Map<String, Long>): List<T> {
+        val kept = items.filter { item -> protocol(item).let { it == null || it in UDP_TRANSPORTS || (probed[it] ?: 0L) >= 0 } }
+        return if (kept.isNotEmpty() && kept.size < items.size) kept else items
+    }
 
     /** A streak of [misses] that has started but not yet reached [threshold] (a verdict held back keeps the normal pace). */
     fun confirmingMiss(misses: Int, threshold: Int): Boolean = misses in 1 until threshold

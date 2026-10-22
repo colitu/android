@@ -162,4 +162,38 @@ class ColituDropRecoveryTest {
         // Only the primary died (no spare): its server's other transports come first, as before.
         assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = false))
     }
+
+    // A server outage (2026-10-22 Windows test PC: every port of the server blocked for 40 s) marked
+    // each transport it tried; once the outage ended the round landed on the worst one, which then got
+    // the only good mark and kept the others last for 6 h.
+    @Test
+    fun transportIsMarkedAfterAStallOnlyWhenItDiedAlone() {
+        assertTrue(ColituTransportOrder.markTransportAfterStall(online = true, bothPathsDead = false))
+        assertEquals(false, ColituTransportOrder.markTransportAfterStall(online = true, bothPathsDead = true))
+        assertEquals(false, ColituTransportOrder.markTransportAfterStall(online = false, bothPathsDead = false))
+        assertEquals(false, ColituTransportOrder.markTransportAfterStall(online = false, bothPathsDead = true))
+    }
+
+    @Test
+    fun serverOutageIsEveryTcpTransportSilent() {
+        assertTrue(ColituTransportOrder.serverOutage(mapOf("vless-reality" to -1L, "trojan" to -1L, "shadowsocks" to -1L)))
+        // Hysteria2's silence proves nothing either way.
+        assertTrue(ColituTransportOrder.serverOutage(mapOf("hysteria2" to -1L, "vless-reality" to -1L, "trojan" to -1L)))
+        assertEquals(false, ColituTransportOrder.serverOutage(mapOf("vless-reality" to -1L, "trojan" to 62L)))
+        // Nothing probed (one transport, the remembered or hinted start without a probe), or only Hysteria2: no verdict.
+        assertEquals(false, ColituTransportOrder.serverOutage(emptyMap()))
+        assertEquals(false, ColituTransportOrder.serverOutage(mapOf("hysteria2" to -1L)))
+    }
+
+    @Test
+    fun serverOutageSkipsSilentTransportsButNeverEmptiesTheRound() {
+        val probed = mapOf("hysteria2" to -1L, "vless-reality" to -1L, "trojan" to -1L)
+        assertEquals(listOf("hysteria2"), ColituTransportOrder.withoutSilent(listOf("hysteria2", "vless-reality", "trojan"), { it }, probed))
+        // Only silent TCP transports offered: the round still tries them.
+        assertEquals(listOf("vless-reality", "trojan"), ColituTransportOrder.withoutSilent(listOf("vless-reality", "trojan"), { it }, probed))
+        assertEquals(
+            listOf("hysteria2", "shadowsocks"),
+            ColituTransportOrder.withoutSilent(listOf("hysteria2", "shadowsocks"), { it }, mapOf("shadowsocks" to 61L)),
+        )
+    }
 }
