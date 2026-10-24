@@ -65,6 +65,9 @@ fun ColituQrCode(text: String, size: Dp, modifier: Modifier = Modifier) {
     }
 }
 
+/** QR modules of [text] (for drawing on a bitmap, e.g. the passport Story card). */
+fun qrMatrix(text: String): BitMatrix? = encode(text)
+
 private fun encode(text: String): BitMatrix? = runCatching {
     QRCodeWriter().encode(
         text,

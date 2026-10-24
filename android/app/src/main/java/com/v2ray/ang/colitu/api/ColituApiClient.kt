@@ -156,6 +156,18 @@ object ColituApiClient {
         executeWithRetry(Request.Builder().url(url).delete().build(), url, attempt = 0, allowRefresh = true)
     }
 
+    /**
+     * POST without the Authorization header (anonymous endpoints such as the
+     * passport counters). Returns the HTTP status, -1 when the network failed.
+     */
+    suspend fun postAnonymous(path: String, body: JsonObject): Int = withContext(Dispatchers.IO) {
+        try {
+            call(Request.Builder().url(buildUrl(path)).post(body.toString().toRequestBody(JSON_TYPE)).build(), refreshClient).use { it.code }
+        } catch (_: IOException) {
+            -1
+        }
+    }
+
     /** Kept for call sites that predate the general 401 handling; same as [post]. */
     suspend fun postRenewing(path: String, body: JsonObject): ApiResult<JsonObject> = post(path, body)
 

@@ -100,6 +100,7 @@ fun HomeTab(
     onOpenSplit: () -> Unit = {},
     onOpenAdvanced: () -> Unit = {},
     onOpenReferral: () -> Unit = {},
+    onOpenPassport: () -> Unit = {},
 ) {
     val loc = ColituLoc
     val advanced = c.advancedMode
@@ -228,6 +229,8 @@ fun HomeTab(
         LocationCard(c, onChangeLocation, Modifier.reveal(120))
         Spacer(Modifier.height(12.dp))
         PlanRow(c, onOpenPlan, Modifier.reveal(160))
+        Spacer(Modifier.height(12.dp))
+        PassportCard(onOpenPassport, c.planActive, Modifier.reveal(180))
         InviteCard(c, onOpenReferral)
         if (!advanced) {
             Spacer(Modifier.height(10.dp))

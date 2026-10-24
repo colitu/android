@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Passport art and sounds are looked up by name (getIdentifier). -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/stamp_*,@drawable/passport_cover_*,@drawable/seal_*,@drawable/badge_*,@drawable/icon_*,@raw/passport_*" />

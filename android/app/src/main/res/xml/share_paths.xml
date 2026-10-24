@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files the app shares with other apps: the passport Story card. -->
+<paths>
+    <cache-path
+        name="passport"
+        path="passport/" />
+</paths>

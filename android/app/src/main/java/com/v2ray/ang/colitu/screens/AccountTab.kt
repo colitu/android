@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -137,8 +138,14 @@ fun AccountTab(
         ColituPanel(padding = PaddingValues(14.dp), radius = ColituRadius.md) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Passport frame: gold with a Gold stamp, Diamond for the Diamond Collector.
+                    val frame = com.v2ray.ang.colitu.data.PassportGoals.avatarFrame()
                     Box(
-                        Modifier.size(48.dp).clip(CircleShape).background(ColituGradients.accent),
+                        Modifier
+                            .size(48.dp)
+                            .then(if (frame != null) Modifier.border(2.5.dp, levelColor(frame), CircleShape).padding(4.dp) else Modifier)
+                            .clip(CircleShape)
+                            .background(ColituGradients.accent),
                         contentAlignment = Alignment.Center,
                     ) {
                         CText(

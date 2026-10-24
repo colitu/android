@@ -433,7 +433,7 @@ fun LinkScannerDialog(onDismiss: () -> Unit, onApproved: () -> Unit) {
 
 /** CameraX preview with a zxing QR decoder on the luminance plane. */
 @Composable
-private fun QrCameraPreview(modifier: Modifier, onText: (String) -> Unit) {
+internal fun QrCameraPreview(modifier: Modifier, onText: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }

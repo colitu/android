@@ -99,9 +99,21 @@ class CoreVpnService : VpnService(), ServiceControl {
         Thread(runnable, "colitu-vpn-start")
     }
 
+    /** Colitu Passport: one minute of a running tunnel, counted on the device only. */
+    private val passportTick = object : Runnable {
+        override fun run() {
+            if (isRunning && !holding) {
+                val events = com.v2ray.ang.colitu.data.ColituPassport.tick(com.v2ray.ang.colitu.data.ColituRuBypass.profileCountry)
+                if (events.isNotEmpty()) com.v2ray.ang.colitu.app.ColituPassportNotifier.post(this@CoreVpnService, events)
+            }
+            mainHandler.postDelayed(this, 60_000L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service created")
+        mainHandler.postDelayed(passportTick, 60_000L)
         val policy = StrictMode.ThreadPolicy.Builder().permitAll().build()
         StrictMode.setThreadPolicy(policy)
         CoreServiceManager.serviceControl = SoftReference(this)
@@ -119,6 +131,7 @@ class CoreVpnService : VpnService(), ServiceControl {
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
         holding = false
         mainHandler.removeCallbacks(holdTimeout)
+        mainHandler.removeCallbacks(passportTick)
         synchronized(lock) {
             generation++
             closeInterfaceLocked()

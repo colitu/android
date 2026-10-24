@@ -177,6 +177,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     var splitOpen by rememberSaveable { mutableStateOf(false) }
     var rotationOpen by rememberSaveable { mutableStateOf(false) }
     var referralOpen by rememberSaveable { mutableStateOf(false) }
+    var passportOpen by rememberSaveable { mutableStateOf(false) }
     val loc = ColituLoc
     val context = LocalContext.current
 
@@ -188,6 +189,32 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
         }
     }
     LaunchedEffect(tab) { c.supportOpen = tab == ColituTab.Support }
+    // Passport: the VPN service earns stamps and pieces; the app keeps the
+    // city for the stamp, the tester flag (no daily cap) and opens the passport
+    // from its notification.
+    LaunchedEffect(c.connected, c.connectedServerId) {
+        if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituPassport.rememberCity(it.countryCode, it.city) }
+    }
+    LaunchedEffect(c.cslAvailable) { com.v2ray.ang.colitu.data.ColituPassport.tester = c.cslAvailable }
+    // Companion stamp for whoever invited someone; anonymous passport counters once a day when turned on.
+    LaunchedEffect(c.user) {
+        if (c.user == null) return@LaunchedEffect
+        if (!com.v2ray.ang.colitu.data.PassportSocial.companion) {
+            com.v2ray.ang.colitu.repository.ColituReferralRepository.cachedOrFetch()
+                .onSuccess { if (it.invited > 0) com.v2ray.ang.colitu.data.PassportSocial.markCompanion() }
+        }
+        com.v2ray.ang.colitu.data.PassportSocial.metricsPayload()?.let { body ->
+            val code = com.v2ray.ang.colitu.api.ColituApiClient.postAnonymous("/passport/metrics", body)
+            if (code in 200..299) com.v2ray.ang.colitu.data.PassportSocial.metricsSent()
+        }
+    }
+    LaunchedEffect(com.v2ray.ang.colitu.data.ColituPassport.openRequested) {
+        if (com.v2ray.ang.colitu.data.ColituPassport.openRequested) {
+            com.v2ray.ang.colitu.data.ColituPassport.openRequested = false
+            tab = ColituTab.Home
+            passportOpen = true
+        }
+    }
     BackHandler(enabled = tab != ColituTab.Home) { tab = ColituTab.Home }
 
     fun toggle() {
@@ -214,7 +241,11 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
             modifier = modifier,
         ) { current ->
             when (current) {
-                ColituTab.Home -> HomeTab(
+                ColituTab.Home -> if (passportOpen) PassportScreen(
+                    c,
+                    onBack = { passportOpen = false },
+                    onConnect = { toggle() },
+                ) else HomeTab(
                     c,
                     onToggle = { toggle() },
                     onChangeLocation = { tab = ColituTab.Locations },
@@ -225,6 +256,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     },
                     onOpenSplit = { splitOpen = true },
                     onOpenReferral = { referralOpen = true },
+                    onOpenPassport = { passportOpen = true },
                     // "Advanced settings on" (Simple mode): the settings, in Advanced mode.
                     onOpenAdvanced = {
                         c.setAdvancedMode(true)
@@ -276,7 +308,10 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
                     .padding(start = 20.dp, end = 20.dp, bottom = maxOf(bottomInset, 14.dp) + 80.dp),
             )
             Box(Modifier.align(Alignment.BottomCenter).padding(bottom = maxOf(bottomInset, 14.dp))) {
-                ColituNavBar(items, tab.ordinal, { tab = ColituTab.entries[it] })
+                ColituNavBar(items, tab.ordinal, {
+                    passportOpen = false
+                    tab = ColituTab.entries[it]
+                })
             }
         }
     }
@@ -297,6 +332,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     }
 
     ColituSurveyHost(c)
+    if (!ColituTv.isTv) PassportRevealHost(c)
 
     if (c.ruNoticeVisible) {
         RuDirectNoticeDialog(
