@@ -84,6 +84,11 @@ fun PassportRevealHost(c: ColituController) {
     val event = item.event ?: return
     // Once per reveal: a dismiss and the auto-close may both fire.
     val done: () -> Unit = { if (PassportSync.current?.id == item.id) PassportSync.revealDone() }
+    // Taken away by an admin before it played: acknowledged without a reveal.
+    if (!com.v2ray.ang.colitu.data.PassportJson.stillHolds(event, ColituPassport.server)) {
+        LaunchedEffect(item.id) { done() }
+        return
+    }
     androidx.compose.runtime.key(item.id) {
         when (event) {
             is StampEvent.Piece -> PieceReveal(event, done)

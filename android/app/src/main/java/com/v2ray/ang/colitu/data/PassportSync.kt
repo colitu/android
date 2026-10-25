@@ -40,6 +40,10 @@ object PassportSync {
     private val queue = PassportRevealQueue()
     @Volatile private var lastRefresh = 0L
 
+    /** Bumped once per fetched batch in which an admin took something away; the shell shows a short notice. */
+    var updatedNotice by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
     /** The reveal to play now (oldest unseen server event). Compose state. */
     var current: PassportServerEvent? by mutableStateOf(null)
         private set
@@ -49,6 +53,20 @@ object PassportSync {
         scope.launch {
             importOnce()
             refresh(force = false)
+        }
+    }
+
+    /**
+     * Every minute while the app is visible (the controller's poll loop).
+     * While connected the server keeps earning rewards, so the state and its
+     * unseen events are fetched again every [PassportJson.FOREGROUND_REFRESH_MS];
+     * in between, what the VPN process cached is shown.
+     */
+    fun foregroundTick(connected: Boolean) {
+        if (PassportJson.foregroundRefreshDue(System.currentTimeMillis(), lastRefresh, connected)) {
+            scope.launch { refresh(force = true) }
+        } else {
+            ColituPassport.reloadIfChanged()
         }
     }
 
@@ -79,6 +97,7 @@ object PassportSync {
         val result = runCatching { ColituApiClient.get(UNSEEN_PATH) }.getOrNull() as? ApiResult.Success ?: return
         val events = PassportJson.parseEvents(result.data)
         val ack = withContext(Dispatchers.Main) {
+            if (queue.hasNewRevoke(events)) updatedNotice++
             val through = queue.offer(events)
             current = queue.current
             through
@@ -104,6 +123,7 @@ object PassportSync {
         if (!ColituTokenManager.isLoggedIn()) return null
         ColituPassport.cache.save(answer.toString())
         withContext(Dispatchers.Main) { ColituPassport.apply(state) }
+
         return state
     }
 

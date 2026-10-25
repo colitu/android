@@ -501,14 +501,8 @@ private fun coverRequirement(theme: CoverTheme): String {
     return loc.format("passport.req.set", "set" to set.title)
 }
 
-private fun iconUnlocked(icon: com.v2ray.ang.colitu.app.AppIcon): Boolean = when (icon) {
-    com.v2ray.ang.colitu.app.AppIcon.Aurora -> PassportGoals.completed(PassportCollection.Nordic)
-    com.v2ray.ang.colitu.app.AppIcon.Gold -> PassportGoals.completed(PassportCollection.GoldRush)
-    com.v2ray.ang.colitu.app.AppIcon.Diamond -> PassportGoals.achieved(PassportAchievement.Diamond)
-    com.v2ray.ang.colitu.app.AppIcon.Sunset -> PassportGoals.completed(PassportCollection.Pacific)
-    com.v2ray.ang.colitu.app.AppIcon.Stamp -> PassportGoals.achieved(PassportAchievement.Origin)
-    else -> true
-}
+private fun iconUnlocked(icon: com.v2ray.ang.colitu.app.AppIcon): Boolean =
+    com.v2ray.ang.colitu.data.PassportJson.iconAllowed(icon.key, ColituPassport.server)
 
 private fun iconRequirement(icon: com.v2ray.ang.colitu.app.AppIcon): String = when (icon) {
     com.v2ray.ang.colitu.app.AppIcon.Aurora -> ColituLoc.format("passport.req.set", "set" to PassportCollection.Nordic.title)

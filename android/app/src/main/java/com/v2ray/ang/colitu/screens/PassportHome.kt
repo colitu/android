@@ -247,7 +247,7 @@ private fun PassportHero(premium: Boolean, onEdit: () -> Unit) {
 }
 
 /** The nearest reward and how close it is, as a ring. */
-private enum class GoalKind { Today, Level, Done }
+private enum class GoalKind { Today, Level, Done, Waiting }
 
 private data class NextGoal(
     val text: String,
@@ -261,16 +261,18 @@ private data class NextGoal(
 
 private fun nextGoal(): NextGoal {
     val loc = ColituLoc
-    val (minutes, pieces) = ColituPassport.today
-    if (!ColituPassport.tester && pieces < ColituPassport.PIECE_MINUTES.size) {
-        val next = ColituPassport.PIECE_MINUTES[pieces]
-        if (minutes < next) {
-            return NextGoal(loc.format("passport.goal.today", "n" to next - minutes), minutes / next.toFloat(), ColituIcons.Star, GoalKind.Today, left = next - minutes)
-        }
+    val waiting = NextGoal(loc["passport.goal.loading"], 0f, ColituIcons.Star, GoalKind.Waiting)
+    val code = when (val pick = com.v2ray.ang.colitu.data.PassportJson.goal(ColituPassport.server)) {
+        com.v2ray.ang.colitu.data.PassportGoalPick.Loading -> return waiting
+        com.v2ray.ang.colitu.data.PassportGoalPick.First -> return NextGoal(loc["passport.goal.first"], 0f, ColituIcons.Star, GoalKind.Waiting)
+        com.v2ray.ang.colitu.data.PassportGoalPick.Collected -> return NextGoal(loc["passport.goal.done"], 1f, ColituIcons.Check)
+        is com.v2ray.ang.colitu.data.PassportGoalPick.Today -> return NextGoal(
+            loc.format("passport.goal.today", "n" to pick.left), pick.minutes / pick.at.toFloat(), ColituIcons.Star, GoalKind.Today, left = pick.left,
+        )
+        is com.v2ray.ang.colitu.data.PassportGoalPick.Level -> pick.code
     }
-    val (code, best) = ColituPassport.progress.entries.filter { !it.value.mastered }.minByOrNull { it.value.toNext }?.toPair()
-        ?: return NextGoal(loc["passport.goal.done"], 1f, ColituIcons.Check)
-    val level = best.level ?: return NextGoal(loc["passport.goal.done"], 1f, ColituIcons.Check)
+    val best = ColituPassport.progressOf(code)
+    val level = best.level ?: return waiting
     val target = if (level == StampLevel.Diamond) levelName(level) else levelName(StampLevel.entries[level.ordinal + 1])
     return NextGoal(
         loc.format("passport.goal.level", "country" to loc.countryName(code), "level" to target, "n" to best.toNext),
@@ -351,7 +353,7 @@ private fun NextGoalDetail(c: ColituController, onGo: (com.v2ray.ang.colitu.data
         Spacer(Modifier.height(10.dp))
         val country = goal.code?.let { loc.countryName(it) }
         val body = when (goal.kind) {
-            GoalKind.Today -> loc["passport.nx.today"]
+            GoalKind.Today, GoalKind.Waiting -> loc["passport.nx.today"]
             GoalKind.Level -> loc.format("passport.nx.level", "country" to country, "level" to goal.target, "n" to goal.left)
             GoalKind.Done -> loc["passport.nx.done"]
         }

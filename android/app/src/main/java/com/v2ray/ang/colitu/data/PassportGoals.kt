@@ -71,7 +71,8 @@ object PassportGoals {
         nickname = s?.nickname.orEmpty()
         title = s?.titleId
         cover = s?.coverId?.let { k -> CoverTheme.entries.firstOrNull { it.key == k } }
-        favorite = runCatching { store.decodeString("favorite") }.getOrNull()
+        // A favourite stamp that is gone (taken away) is not shown.
+        favorite = runCatching { store.decodeString("favorite") }.getOrNull()?.takeIf { it in ColituPassport.progress }
     }
 
     /** Shown at once, saved to the account; a refused change goes back to the server's value. */
@@ -139,8 +140,7 @@ object PassportGoals {
 
     /** Covers this user may pick (the server's list; Classic always). */
     fun covers(premium: Boolean): List<CoverTheme> {
-        val keys = server?.covers
-        if (keys.isNullOrEmpty()) return buildList {
+        val keys = server?.covers ?: return buildList {
             add(CoverTheme.Classic)
             if (premium) add(CoverTheme.Premium)
         }

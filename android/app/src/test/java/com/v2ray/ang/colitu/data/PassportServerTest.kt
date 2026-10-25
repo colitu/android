@@ -230,4 +230,146 @@ class PassportServerTest {
         // The device imported its v1 passport: that stays across accounts.
         assertTrue(cache.imported)
     }
+
+    // ── Admin grants and take-aways ─────────────────────────────────────
+
+    @Test
+    fun revokeKindsHaveNoRevealAndAdminGrantsPlayNormally() {
+        val list = PassportJson.parseEvents(
+            obj(
+                """{"data":[
+                {"id":30,"kind":"stamp_revoked","payload":{"country":"SE"}},
+                {"id":31,"kind":"achievement_revoked","payload":{"id":"night"}},
+                {"id":32,"kind":"collection_revoked","payload":{"id":"nordic"}},
+                {"id":33,"kind":"chapter_closed","payload":{"chapter":2}},
+                {"id":34,"kind":"companion_revoked","payload":{}},
+                {"id":35,"kind":"passport_reset","payload":{}},
+                {"id":36,"kind":"stamp_unlocked","payload":{"country":"FI","source":"admin"}},
+                {"id":37,"kind":"future_kind","payload":{}}
+            ]}""",
+            ),
+        )
+        assertTrue(list.take(6).all { it.revoke && it.event == null })
+        assertEquals(StampEvent.Unlocked("FI"), list[6].event)
+        assertFalse(list[6].revoke)
+        assertTrue(list[7].event == null && !list[7].revoke)
+    }
+
+    @Test
+    fun revokesAreAcknowledgedWithOneNoticePerBatch() {
+        val q = PassportRevealQueue()
+        val batch = listOf(ev(40, null).copy(revoke = true), ev(41, null).copy(revoke = true), ev(42, null))
+        assertTrue(q.hasNewRevoke(batch))
+        // Nothing to show: acknowledged at once, silently.
+        assertEquals(42L, q.offer(batch))
+        assertTrue(q.isEmpty)
+        // The same batch fetched again: no second notice, no second ack.
+        assertFalse(q.hasNewRevoke(batch))
+        assertNull(q.offer(batch))
+        // Mixed with a grant: the take-away is acknowledged with the reveal after it.
+        val mixed = listOf(ev(43, null).copy(revoke = true), ev(44, StampEvent.Unlocked("FI")))
+        assertTrue(q.hasNewRevoke(mixed))
+        assertNull(q.offer(mixed))
+        assertEquals(44L, q.current!!.id)
+        assertEquals(44L, q.done())
+    }
+
+    private fun state(json: String) = PassportJson.parseState(obj(json))!!
+
+    @Test
+    fun theServerStateReplacesTheCacheCompletely() {
+        val cache = PassportCache(MapKv())
+        cache.save(stateJson)
+        cache.save("""{"data":{"collector_no":"992562","stamps":[],"achievements":[],"collections":[],"covers":["classic"],"companion":false}}""")
+        val s = cache.load()!!
+        assertTrue(s.stamps.isEmpty() && s.achievements.isEmpty() && s.collections.isEmpty() && !s.companion)
+        assertEquals(listOf("classic"), s.covers)
+        assertFalse(PassportJson.iconAllowed("aurora", s))
+        assertFalse(PassportJson.iconAllowed("diamond", s))
+        assertTrue(PassportJson.iconAllowed("midnight", s))
+        assertFalse(PassportJson.iconAllowed("gold", null))
+        assertTrue(PassportJson.iconAllowed("default", null))
+    }
+
+    @Test
+    fun queuedRevealsForTakenItemsAreSkipped() {
+        val full = PassportJson.parseState(obj(stateJson))!!
+        val empty = state("""{"collector_no":"1","stamps":[]}""")
+        assertTrue(PassportJson.stillHolds(StampEvent.Piece("SE", 1), full))
+        assertFalse(PassportJson.stillHolds(StampEvent.Piece("SE", 1), empty))
+        assertTrue(PassportJson.stillHolds(StampEvent.Achieved("first"), full))
+        assertFalse(PassportJson.stillHolds(StampEvent.Achieved("first"), empty))
+        assertTrue(PassportJson.stillHolds(StampEvent.Collected("gold_rush"), full))
+        assertTrue(PassportJson.stillHolds(StampEvent.Special("companion"), full))
+        assertFalse(PassportJson.stillHolds(StampEvent.Special("companion"), empty))
+        assertFalse(PassportJson.stillHolds(StampEvent.Chapter("2"), full))
+        assertTrue(PassportJson.stillHolds(StampEvent.Expedition("share"), empty))
+        assertFalse(PassportJson.stillHolds(StampEvent.Unlocked("SE"), null))
+    }
+
+    // ── "Next" line ─────────────────────────────────────────────────────
+
+    private val oneStamp = """"stamps":[{"country":"SE","unlocked_at":"2026-10-21T10:00:00Z","pieces":3}]"""
+
+    @Test
+    fun neverCollectedWithoutALoadedDay() {
+        assertEquals(PassportGoalPick.Loading, PassportJson.goal(null))
+        assertEquals(PassportGoalPick.First, PassportJson.goal(state("""{"collector_no":"1","stamps":[]}""")))
+        // State without "today": neutral, not "collected".
+        assertEquals(PassportGoalPick.Loading, PassportJson.goal(state("""{"collector_no":"1",$oneStamp}""")))
+    }
+
+    @Test
+    fun todayPieceThenLevelThenCollected() {
+        val open = state("""{"collector_no":"1",$oneStamp,"today":{"day":"2026-10-25","minutes":4,"pieces":0,"next_piece_at_minute":10}}""")
+        assertEquals(PassportGoalPick.Today(6, 10, 4), PassportJson.goal(open))
+        // Two pieces today: the closest level, not "collected", while a stamp can still grow.
+        val twoPieces = state("""{"collector_no":"1",$oneStamp,"today":{"day":"2026-10-25","minutes":70,"pieces":2,"next_piece_at_minute":null}}""")
+        assertEquals(PassportGoalPick.Level("SE"), PassportJson.goal(twoPieces))
+        val mastered = """"stamps":[{"country":"SE","unlocked_at":"2026-10-21T10:00:00Z","pieces":48}]"""
+        assertEquals(
+            PassportGoalPick.Collected,
+            PassportJson.goal(state("""{"collector_no":"1",$mastered,"today":{"day":"2026-10-25","minutes":70,"pieces":2}}""")),
+        )
+        // One piece but the next one not reached yet and nothing to level: neutral.
+        assertEquals(
+            PassportGoalPick.Loading,
+            PassportJson.goal(state("""{"collector_no":"1",$mastered,"today":{"day":"2026-10-25","minutes":61,"pieces":1,"next_piece_at_minute":60}}""")),
+        )
+        // Testers have no daily cap: two pieces still show the next one.
+        val tester = state("""{"collector_no":"1","tester":true,$oneStamp,"today":{"day":"2026-10-25","minutes":25,"pieces":2,"next_piece_at_minute":30}}""")
+        assertEquals(PassportGoalPick.Today(5, 30, 25), PassportJson.goal(tester))
+    }
+
+    // ── Visible app, connected (device test 2026-10-25) ─────────────────
+
+    /**
+     * The app stayed on Home after connecting at 08:12; FI was unlocked by
+     * the server at 08:16 and its events never reached the UI because the
+     * app only read the passport on foreground, sign-in, connect and with the
+     * passport screen open. Now the visible app reads it again every two
+     * minutes while connected.
+     */
+    @Test
+    fun aVisibleConnectedAppReadsThePassportAgain() {
+        val connectRefresh = 1_000_000L
+        assertFalse(PassportJson.foregroundRefreshDue(connectRefresh + 60_000, connectRefresh, connected = true))
+        assertTrue(PassportJson.foregroundRefreshDue(connectRefresh + 120_000, connectRefresh, connected = true))
+        assertTrue(PassportJson.foregroundRefreshDue(connectRefresh + 4 * 60_000, connectRefresh, connected = true))
+        // Not connected: nothing new can be earned.
+        assertFalse(PassportJson.foregroundRefreshDue(connectRefresh + 10 * 60_000, connectRefresh, connected = false))
+        // Clock set back.
+        assertTrue(PassportJson.foregroundRefreshDue(connectRefresh - 1, connectRefresh, connected = true))
+        // The events found then play in order: stamp, visa, pieces.
+        val q = PassportRevealQueue()
+        q.offer(
+            listOf(
+                ev(105, StampEvent.Piece("FI", 1)),
+                ev(69, StampEvent.Unlocked("FI")),
+                ev(70, StampEvent.Expedition("set_stamp")),
+            ),
+        )
+        assertEquals(listOf(69L, 70L, 105L), generateSequence { q.current?.id?.also { q.done() } }.toList())
+        assertEquals(105L, q.acked)
+    }
 }

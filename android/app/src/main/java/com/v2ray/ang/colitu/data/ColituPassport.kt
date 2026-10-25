@@ -146,7 +146,20 @@ object ColituPassport {
 
     /** Re-reads the cached server state (also written by the VPN process). Cheap. */
     fun reload() {
-        apply(cache.load())
+        val raw = cache.raw()
+        shownRaw = raw
+        apply(PassportJson.parseState(raw))
+    }
+
+    /** The cached text last shown; [reloadIfChanged] skips the parse while it is the same. */
+    @Volatile private var shownRaw: String? = null
+
+    /** Shows what the VPN process cached since, if anything (never clears a shown state). */
+    fun reloadIfChanged() {
+        val raw = cache.raw() ?: return
+        if (raw == shownRaw) return
+        shownRaw = raw
+        PassportJson.parseState(raw)?.let { apply(it) }
     }
 
     /** Shows [state] (null: signed out, nothing to show). */
@@ -156,9 +169,19 @@ object ColituPassport {
             p.copy(city = runCatching { store.decodeString("city_$code") }.getOrNull())
         }
         today = if (state != null) state.todayMinutes to state.todayPieces else 0 to 0
+        if (state != null) fallBackIcon(state)
         PassportGoals.refresh()
         PassportWeekly.refresh()
         PassportSocial.refresh()
+    }
+
+    /** A reward launcher icon no longer allowed (taken away by an admin) goes back to the default one. */
+    private fun fallBackIcon(state: PassportState) {
+        runCatching {
+            val context = com.v2ray.ang.AngApplication.application
+            val chosen = com.v2ray.ang.colitu.app.ColituAppIcon.chosen(context)
+            if (!PassportJson.iconAllowed(chosen.key, state)) com.v2ray.ang.colitu.app.ColituAppIcon.request(com.v2ray.ang.colitu.app.AppIcon.Default)
+        }
     }
 
     /** The app remembers the city shown under a stamp (the server only knows the country). */

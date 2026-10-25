@@ -198,6 +198,10 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     LaunchedEffect(c.connected) {
         if (c.connected) com.v2ray.ang.colitu.data.PassportSync.refreshLater(5_000L)
     }
+    // An admin took something away: one short neutral notice per batch.
+    LaunchedEffect(com.v2ray.ang.colitu.data.PassportSync.updatedNotice) {
+        if (com.v2ray.ang.colitu.data.PassportSync.updatedNotice > 0) c.showToast(loc["passport.updated"], error = false)
+    }
     LaunchedEffect(c.user != null) {
         if (c.user != null) com.v2ray.ang.colitu.data.PassportSync.onForeground()
     }

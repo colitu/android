@@ -44,8 +44,27 @@ data class PassportState(
     val updatedAt: Long,
 )
 
-/** One server event: its id (for the ack) and the reveal it plays, null for kinds this version does not know. */
-data class PassportServerEvent(val id: Long, val event: StampEvent?)
+/**
+ * One server event: its id (for the ack) and the reveal it plays. [event] is
+ * null for kinds without a reveal: an admin taking something away
+ * ([revoke], acknowledged with one short notice per batch) or a kind this
+ * version does not know (acknowledged silently).
+ */
+data class PassportServerEvent(val id: Long, val event: StampEvent?, val revoke: Boolean = false)
+
+/** What the passport's "next" line shows. */
+sealed interface PassportGoalPick {
+    /** No server state yet, or no "today" in it: a neutral line, never "collected". */
+    data object Loading : PassportGoalPick
+    /** No stamp yet. */
+    data object First : PassportGoalPick
+    /** [left] minutes to today's next piece (at minute [at]). */
+    data class Today(val left: Int, val at: Int, val minutes: Int) : PassportGoalPick
+    /** The stamp closest to its next level. */
+    data class Level(val code: String) : PassportGoalPick
+    /** Today's pieces are collected and no stamp is left to level up. */
+    data object Collected : PassportGoalPick
+}
 
 /** What a v1 (on-device) passport held, sent once per device to POST /client/passport/import. */
 data class PassportV1Snapshot(
@@ -111,6 +130,70 @@ object PassportJson {
         )
     }.getOrNull()
 
+    /** Event kinds an admin uses to take something away; no animation. */
+    val REVOKE_KINDS = setOf("stamp_revoked", "achievement_revoked", "collection_revoked", "chapter_closed", "companion_revoked", "passport_reset")
+
+    /**
+     * Today's piece first (while one is still open), else the stamp closest
+     * to its next level. "Collected" only with a loaded day: two pieces
+     * (non-testers) or no next piece announced.
+     */
+    fun goal(state: PassportState?): PassportGoalPick {
+        if (state == null) return PassportGoalPick.Loading
+        if (state.stamps.isEmpty()) return PassportGoalPick.First
+        if (state.todayDay.isBlank()) return PassportGoalPick.Loading
+        val next = state.nextPieceAtMinute
+        val collected = (!state.tester && state.todayPieces >= DAILY_PIECES) || next == null
+        if (!collected && next != null && state.todayMinutes < next) {
+            return PassportGoalPick.Today(next - state.todayMinutes, next, state.todayMinutes)
+        }
+        val best = state.stamps.entries.filter { !it.value.mastered }.minByOrNull { it.value.toNext }
+        return when {
+            best != null -> PassportGoalPick.Level(best.key)
+            collected -> PassportGoalPick.Collected
+            else -> PassportGoalPick.Loading
+        }
+    }
+
+    const val DAILY_PIECES = 2
+
+    /** While connected and visible, the app reads the passport again this often. */
+    const val FOREGROUND_REFRESH_MS = 120_000L
+
+    /**
+     * Whether the app (visible, polled every minute) should fetch the
+     * passport again: only while connected (no traffic, no new rewards), when
+     * the last fetch is [FOREGROUND_REFRESH_MS] old or the clock went back.
+     */
+    fun foregroundRefreshDue(now: Long, last: Long, connected: Boolean): Boolean =
+        connected && (now - last >= FOREGROUND_REFRESH_MS || last > now)
+
+    /**
+     * Whether a queued reveal still matches [state]: an admin may have taken
+     * the stamp, title or set away before it played. Weekly visas stay.
+     */
+    fun stillHolds(event: StampEvent, state: PassportState?): Boolean {
+        val s = state ?: return false
+        return when (event) {
+            is StampEvent.Unlocked, is StampEvent.Piece, is StampEvent.LevelUp, is StampEvent.Mastered -> event.code in s.stamps
+            is StampEvent.Achieved -> event.code in s.achievements
+            is StampEvent.Collected -> event.code in s.collections
+            is StampEvent.Special -> s.companion
+            is StampEvent.Chapter -> event.code != "2" || s.chapter2Open
+            is StampEvent.Expedition -> true
+        }
+    }
+
+    /** Launcher icons that are passport rewards, and whether [state] still allows [key]. */
+    fun iconAllowed(key: String, state: PassportState?): Boolean = when (key) {
+        "aurora" -> state?.collections?.containsKey("nordic") == true
+        "gold" -> state?.collections?.containsKey("gold_rush") == true
+        "diamond" -> state?.achievements?.containsKey("diamond") == true
+        "sunset" -> state?.collections?.containsKey("pacific") == true
+        "stamp" -> state?.achievements?.containsKey("origin") == true
+        else -> true
+    }
+
     fun parseState(raw: String?): PassportState? =
         raw?.takeIf { it.isNotBlank() }?.let { s -> runCatching { JsonParser.parseString(s).asJsonObject }.getOrNull() }?.let(::parseState)
 
@@ -120,7 +203,8 @@ object PassportJson {
         list.mapNotNull { e ->
             val o = e.asObj() ?: return@mapNotNull null
             val id = o.longOrNull("id") ?: return@mapNotNull null
-            PassportServerEvent(id, event(o.str("kind"), o.obj("payload") ?: JsonObject()))
+            val kind = o.str("kind")
+            PassportServerEvent(id, event(kind, o.obj("payload") ?: JsonObject()), kind in REVOKE_KINDS)
         }.distinctBy { it.id }.sortedBy { it.id }
     }.getOrDefault(emptyList())
 
@@ -246,6 +330,10 @@ class PassportRevealQueue {
     val current: PassportServerEvent? get() = items.firstOrNull { it.event != null }
 
     val isEmpty: Boolean get() = current == null
+
+    /** Whether [events] hold a take-away not seen before (checked before [offer]); one notice per batch. */
+    fun hasNewRevoke(events: List<PassportServerEvent>): Boolean =
+        events.any { it.revoke && it.id > lastQueued && it.id > acked }
 
     /** Adds the new events of a fetch; returns the id to ack right away when the fetch held nothing to show. */
     fun offer(events: List<PassportServerEvent>): Long? {

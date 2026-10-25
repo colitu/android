@@ -444,6 +444,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 checkDiagnosticsRequest()
                 sendMetrics()
                 ColituNoticeCenter.refresh() // throttled to once per 15 minutes
+                com.v2ray.ang.colitu.data.PassportSync.foregroundTick(connected)
             }
         }
     }

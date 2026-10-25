@@ -282,19 +282,18 @@ fun PassportCard(onOpen: () -> Unit, premium: Boolean, modifier: Modifier = Modi
  */
 private fun passportGoal(): String {
     val loc = ColituLoc
-    if (ColituPassport.count == 0) return loc["passport.goal.first"]
-    val (minutes, pieces) = ColituPassport.today
-    if (!ColituPassport.tester && pieces < ColituPassport.PIECE_MINUTES.size) {
-        val next = ColituPassport.PIECE_MINUTES[pieces]
-        if (minutes < next) return loc.format("passport.goal.today", "n" to next - minutes)
+    return when (val pick = com.v2ray.ang.colitu.data.PassportJson.goal(ColituPassport.server)) {
+        com.v2ray.ang.colitu.data.PassportGoalPick.Loading -> loc["passport.goal.loading"]
+        com.v2ray.ang.colitu.data.PassportGoalPick.First -> loc["passport.goal.first"]
+        com.v2ray.ang.colitu.data.PassportGoalPick.Collected -> loc["passport.goal.done"]
+        is com.v2ray.ang.colitu.data.PassportGoalPick.Today -> loc.format("passport.goal.today", "n" to pick.left)
+        is com.v2ray.ang.colitu.data.PassportGoalPick.Level -> {
+            val best = ColituPassport.progressOf(pick.code)
+            val level = best.level ?: return loc["passport.goal.loading"]
+            val target = if (level == StampLevel.Diamond) levelName(level) else levelName(StampLevel.entries[level.ordinal + 1])
+            loc.format("passport.goal.level", "country" to loc.countryName(pick.code), "level" to target, "n" to best.toNext)
+        }
     }
-    val (code, best) = ColituPassport.progress.entries
-        .filter { !it.value.mastered }
-        .minByOrNull { it.value.toNext }
-        ?.toPair() ?: return loc["passport.goal.done"]
-    val level = best.level ?: return loc["passport.goal.done"]
-    val target = if (level == StampLevel.Diamond) levelName(level) else levelName(StampLevel.entries[level.ordinal + 1])
-    return loc.format("passport.goal.level", "country" to loc.countryName(code), "level" to target, "n" to best.toNext)
 }
 
 internal fun premiumCoverMatrix(): FloatArray = PREMIUM_COVER
