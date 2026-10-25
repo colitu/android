@@ -1953,11 +1953,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     ColituTransportOrder.midSessionStallKey(server.id, protocol),
                     wallNow + ColituTransportOrder.midSessionPenaltyMs(proven, MID_SESSION_STALL_PENALTY_MS),
                 )
-                if (protocol != "hysteria2") {
-                    // Tentative: confirmed only when the reconnect finds another transport that works.
-                    memory.markStalled(networkKey, server.id, protocol, System.currentTimeMillis(), confirmed = false)
-                    saveMemory()
-                }
+                // Tentative: confirmed only when the reconnect finds another transport that works.
+                // Hysteria2 too: on networks that drop UDP it otherwise led every new server again.
+                memory.markStalled(networkKey, server.id, protocol, System.currentTimeMillis(), confirmed = false)
+                saveMemory()
             } else {
                 // Primary and spare (another transport) died together: the server or the path to it.
                 // Marking the transport put the worst one first once the outage ended.

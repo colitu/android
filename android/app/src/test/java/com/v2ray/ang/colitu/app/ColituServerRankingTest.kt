@@ -209,6 +209,17 @@ class ColituServerRankingTest {
     }
 
     @Test
+    fun tentativeHysteriaStallBecomesANetworkStallOnceAnotherTransportWorks() {
+        val memory = ColituConnectMemory.empty()
+        memory.markStalled(net, "de", "hysteria2", now, confirmed = false)
+        assertEquals(setOf("hysteria2"), memory.stalled(net, "fi", now + minute))
+        memory.confirm(net, "de", setOf("hysteria2"), now + minute)
+        memory.recordSuccess(net, "de", "vless-xhttp", now + minute)
+        // The next server of this network does not lead with Hysteria2 again.
+        assertEquals(setOf("hysteria2"), memory.stalled(net, "fi", now + 5 * hour))
+    }
+
+    @Test
     fun penaltyLasts30MinutesAndDropsTheLastGoodServer() {
         val memory = ColituConnectMemory.empty()
         memory.recordSuccess(net, "de", "vless-reality", now)
