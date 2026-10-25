@@ -343,7 +343,7 @@ internal fun IdentitySheet(premium: Boolean, onDismiss: () -> Unit) {
                     Spacer(Modifier.height(22.dp))
 
                     EditorSection(loc["passport.id.nick"]) {
-                        ColituField(nick, { nick = it.take(20) }, null, hint = loc["passport.id.nickHint"], imeAction = ImeAction.Done, onSubmit = {
+                        ColituField(nick, { nick = it.take(PassportGoals.NICK_MAX) }, null, hint = loc["passport.id.nickHint"], imeAction = ImeAction.Done, onSubmit = {
                             PassportGoals.updateNickname(nick)
                         })
                     }

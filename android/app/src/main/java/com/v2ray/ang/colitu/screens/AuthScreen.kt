@@ -159,8 +159,6 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
             loading = false
             // The account exists now (signed in, or waiting for its e-mail code): the code is spent.
             if (isRegister && (result.isSuccess || result.exceptionOrNull()?.message == ColituAuthRepository.EMAIL_NOT_VERIFIED)) {
-                // Signed up with a friend's code: both get the passport's Companion stamp.
-                if (ColituInvite.normalize(inviteCode) != null) com.v2ray.ang.colitu.data.PassportSocial.markCompanion()
                 ColituInvite.clear()
             }
             result.fold(

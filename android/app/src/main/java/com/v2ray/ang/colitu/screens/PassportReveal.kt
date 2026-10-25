@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,6 +57,7 @@ import com.v2ray.ang.colitu.data.StampEvent
 import com.v2ray.ang.colitu.data.PassportAchievement
 import com.v2ray.ang.colitu.data.PassportCollection
 import com.v2ray.ang.colitu.data.PassportGoals
+import com.v2ray.ang.colitu.data.PassportSync
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -72,33 +72,28 @@ import com.v2ray.ang.colitu.l10n.ColituLoc
 import kotlinx.coroutines.delay
 
 /**
- * Plays the passport rewards the VPN service queued ([ColituPassport.takePending]),
- * one after another: the cinematic reveal for a new stamp or level, the
- * flying piece for a puzzle piece. Polls the queue while the app is open.
+ * Plays the passport rewards the server created (unseen events, fetched by
+ * [PassportSync]) one after another, oldest first: the cinematic reveal for a
+ * new stamp or level, the flying piece for a puzzle piece. Each finished
+ * reveal is acknowledged, so it plays once on every device.
  */
 @Composable
 fun PassportRevealHost(c: ColituController) {
-    val queue = remember { mutableStateListOf<StampEvent>() }
-    LaunchedEffect(Unit) {
-        while (true) {
-            ColituPassport.reload()
-            if (queue.isEmpty()) queue += ColituPassport.takePending() + PassportGoals.checkNew()
-            delay(2_000)
+    LaunchedEffect(Unit) { ColituPassport.reload() }
+    val item = PassportSync.current ?: return
+    val event = item.event ?: return
+    // Once per reveal: a dismiss and the auto-close may both fire.
+    val done: () -> Unit = { if (PassportSync.current?.id == item.id) PassportSync.revealDone() }
+    androidx.compose.runtime.key(item.id) {
+        when (event) {
+            is StampEvent.Piece -> PieceReveal(event, done)
+            is StampEvent.Collected -> CollectionReveal(event, done)
+            is StampEvent.Achieved -> AchievementReveal(event, done)
+            is StampEvent.Chapter -> ChapterReveal(event, done)
+            is StampEvent.Expedition -> ExpeditionReveal(event, done)
+            is StampEvent.Special -> SpecialReveal(event, done)
+            else -> CinematicReveal(event, c.planActive, done)
         }
-    }
-    val event = queue.firstOrNull() ?: return
-    val done: () -> Unit = {
-        if (queue.isNotEmpty()) queue.removeAt(0)
-        ColituPassport.reload()
-    }
-    when (event) {
-        is StampEvent.Piece -> PieceReveal(event, done)
-        is StampEvent.Collected -> CollectionReveal(event, done)
-        is StampEvent.Achieved -> AchievementReveal(event, done)
-        is StampEvent.Chapter -> ChapterReveal(event, done)
-        is StampEvent.Expedition -> ExpeditionReveal(event, done)
-        is StampEvent.Special -> SpecialReveal(event, done)
-        else -> CinematicReveal(event, c.planActive, done)
     }
 }
 

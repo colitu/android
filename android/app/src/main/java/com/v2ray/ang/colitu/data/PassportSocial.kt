@@ -6,7 +6,6 @@ import androidx.compose.runtime.setValue
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import java.time.LocalDate
 
 /** A friend's passport as read from their QR (no account data, only what their share card shows). */
 data class PassportFriend(
@@ -24,9 +23,8 @@ data class PassportFriend(
 }
 
 /**
- * Friends, the Companion stamp and the passport's own settings. Everything
- * is kept on this device; the optional anonymous counters (see
- * [metricsPayload]) carry no identifier at all.
+ * Friends and the passport's own settings, kept on this device; the
+ * Companion stamp comes from the server state.
  */
 object PassportSocial {
     private val store get() = ColituPassport.store
@@ -40,13 +38,10 @@ object PassportSocial {
         private set
     var haptics by mutableStateOf(runCatching { store.decodeBool("haptics", true) }.getOrDefault(true))
         private set
-    var metrics by mutableStateOf(runCatching { store.decodeBool("metrics", false) }.getOrDefault(false))
-        private set
 
     fun updateRanking(on: Boolean) = flag("friends_ranking", on).also { showRanking = on }
     fun updateSound(on: Boolean) = flag("sound", on).also { sound = on }
     fun updateHaptics(on: Boolean) = flag("haptics", on).also { haptics = on }
-    fun updateMetrics(on: Boolean) = flag("metrics", on).also { metrics = on }
 
     private fun flag(key: String, on: Boolean) {
         runCatching { store.encode(key, on) }
@@ -106,53 +101,8 @@ object PassportSocial {
 
     const val COMPANION = "companion"
 
-    val companion: Boolean get() = runCatching { store.decodeLong("special_$COMPANION", 0L) > 0 }.getOrDefault(false)
-
-    fun companionAt(): Long = runCatching { store.decodeLong("special_$COMPANION", 0L) }.getOrDefault(0L)
-
-    /**
-     * The Companion stamp: whoever signed up with an invite code and whoever
-     * invited someone. Queued like any reward so the app plays its reveal.
-     */
-    fun markCompanion(now: Long = System.currentTimeMillis()) {
-        runCatching {
-            if (store.decodeLong("special_$COMPANION", 0L) > 0) return
-            store.encode("special_$COMPANION", now)
-            val old = store.decodeString("pending").orEmpty()
-            store.encode("pending", if (old.isEmpty()) "S|$COMPANION" else "$old;S|$COMPANION")
-        }
-    }
-
-    // ── Anonymous counters ───────────────────────────────────────────────
-
-    /**
-     * Today's counters for POST /api/v1/passport/metrics, once a day and only
-     * when the user turned them on. Null when off or already sent today.
-     * Totals only: no account, device or connection data.
-     */
-    fun metricsPayload(): JsonObject? {
-        if (!metrics) return null
-        val day = LocalDate.now().toString()
-        if (runCatching { store.decodeString("metrics_day") }.getOrNull() == day) return null
-        val progress = ColituPassport.progress.values
-        val levels = JsonArray().apply {
-            StampLevel.entries.forEach { level -> add(progress.count { it.level == level }) }
-        }
-        return JsonObject().apply {
-            addProperty("v", 1)
-            addProperty("stamps", progress.size)
-            addProperty("chapter", if (PassportGoals.chapter3Open) 3 else if (ColituPassport.chapter2Open) 2 else 1)
-            add("levels", levels)
-            addProperty("expeditions", PassportWeekly.total)
-            addProperty("pieces_today", ColituPassport.today.second.coerceIn(0, 2))
-            addProperty("opened_today", true)
-            addProperty("platform", "android")
-        }
-    }
-
-    fun metricsSent() {
-        runCatching { store.encode("metrics_day", LocalDate.now().toString()) }
-    }
+    /** Granted by the server (an invite that became active, or a sign-up with an invite). */
+    val companion: Boolean get() = ColituPassport.server?.companion ?: false
 
     /** Whether the first-visit intro has been shown. */
     var introSeen: Boolean

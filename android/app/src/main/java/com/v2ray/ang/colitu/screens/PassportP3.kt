@@ -170,8 +170,9 @@ internal fun WeeklyCard() {
             }
             Spacer(Modifier.height(12.dp))
             PassportWeekly.goals().forEach { goal ->
-                val have = PassportWeekly.progress(goal).coerceAtMost(goal.target)
-                val done = have >= goal.target
+                val target = PassportWeekly.target(goal)
+                val have = PassportWeekly.progress(goal).coerceAtMost(target)
+                val done = PassportWeekly.done(goal) || have >= target
                 Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(if (done) Color(0x339F8CFF) else ColituColors.surface2),
@@ -182,11 +183,11 @@ internal fun WeeklyCard() {
                         CText(loc["passport.x.${goal.id}"], ColituText.small, color = if (done) ColituColors.text else ColituColors.muted)
                         Spacer(Modifier.height(5.dp))
                         Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)).background(ColituColors.glass10)) {
-                            Box(Modifier.fillMaxWidth(have / goal.target.toFloat()).fillMaxHeight().clip(RoundedCornerShape(50)).background(ColituGradients.accent))
+                            Box(Modifier.fillMaxWidth(have / target.toFloat()).fillMaxHeight().clip(RoundedCornerShape(50)).background(ColituGradients.accent))
                         }
                     }
                     Spacer(Modifier.width(10.dp))
-                    CText("$have/${goal.target}", ColituText.small, color = if (done) ColituColors.lilac else ColituColors.dim)
+                    CText("$have/$target", ColituText.small, color = if (done) ColituColors.lilac else ColituColors.dim)
                 }
             }
             Spacer(Modifier.height(6.dp))

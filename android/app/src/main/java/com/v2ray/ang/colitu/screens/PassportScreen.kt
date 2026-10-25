@@ -27,7 +27,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,7 +77,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -523,8 +521,7 @@ internal fun StampSheet(
                         StampArt(
                             stamp,
                             progress,
-                            // Test build: a long press earns one piece (with its animation).
-                            Modifier.width(240.dp).pointerInput(stamp.code) { detectTapGestures(onLongPress = { ColituPassport.debugPiece(stamp.code) }) },
+                            Modifier.width(240.dp),
                             lockSize = 48.dp,
                             puzzle = true,
                             live = true,
@@ -666,7 +663,8 @@ internal fun sharePassport(context: Context, stamp: ColituStamp?, premium: Boole
     }
     text(identityLine(), 1820f, 34f, 0xFFC4B5FD.toInt(), medium)
     text(loc["passport.s.cta"], 1872f, 34f, 0xFFA9ADC2.toInt(), medium)
-    com.v2ray.ang.colitu.data.PassportWeekly.bump(com.v2ray.ang.colitu.data.ExpeditionGoal.Share)
+    // Counted by the server for the weekly share goal (cosmetic only).
+    com.v2ray.ang.colitu.data.PassportSync.reportShare()
 
     runCatching {
         val dir = File(context.cacheDir, "passport").apply { mkdirs() }

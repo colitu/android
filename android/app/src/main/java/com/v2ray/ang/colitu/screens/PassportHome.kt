@@ -85,6 +85,8 @@ import com.v2ray.ang.colitu.design.ColituSwitch
 import com.v2ray.ang.colitu.design.ColituText
 import com.v2ray.ang.colitu.design.pressable
 import com.v2ray.ang.colitu.l10n.ColituLoc
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 
 /** The four places a passport tile or button opens. */
 private enum class PassportPanel { Next, Weekly, Sets, Badges, How }
@@ -93,8 +95,9 @@ private enum class PassportPanel { Next, Weekly, Sets, Badges, How }
  * Passport page, kept calm: the cover and the count, one "next up" goal,
  * three small tiles (expeditions, collections, achievements) that open their
  * own sheets, then the stamps of the chosen chapter. Rules and settings live
- * behind the info button. The VPN service earns stamps and pieces
- * ([ColituPassport.tick]); the shell re-reads them.
+ * behind the info button. The server counts the minutes and keeps the
+ * passport on the account; this screen refreshes it on open and every
+ * minute while connected.
  */
 @Composable
 fun PassportScreen(c: ColituController, onBack: () -> Unit, onConnect: () -> Unit) {
@@ -106,6 +109,13 @@ fun PassportScreen(c: ColituController, onBack: () -> Unit, onConnect: () -> Uni
     var duelOpen by rememberSaveable { mutableStateOf(false) }
     var introOpen by rememberSaveable { mutableStateOf(!com.v2ray.ang.colitu.data.PassportSocial.introSeen) }
     BackHandler { onBack() }
+    LaunchedEffect(c.connected) {
+        com.v2ray.ang.colitu.data.PassportSync.refresh()
+        while (c.connected) {
+            delay(60_000)
+            com.v2ray.ang.colitu.data.PassportSync.refresh()
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Image(painterResource(R.drawable.passport_bg), null, Modifier.matchParentSize().alpha(0.9f), contentScale = ContentScale.Crop)
@@ -213,8 +223,7 @@ private fun PassportHero(premium: Boolean, onEdit: () -> Unit) {
     val coverHeight = if (LocalConfiguration.current.screenHeightDp < 700) 170.dp else 210.dp
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            // Test build: a long press fills a demo passport, a second one empties it.
-            Modifier.pointerInput(Unit) { detectTapGestures(onTap = { onEdit() }, onLongPress = { ColituPassport.debugCycle() }) },
+            Modifier.pointerInput(Unit) { detectTapGestures(onTap = { onEdit() }) },
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.size(coverHeight * 1.25f)) {
@@ -547,14 +556,6 @@ private fun HowItWorks() {
             CText(loc["passport.set.haptics"], ColituText.label, Modifier.weight(1f))
             ColituSwitch(social.haptics) { social.updateHaptics(it) }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                CText(loc["passport.set.metrics"], ColituText.label)
-                CText(loc["passport.set.metricsBody"], ColituText.small, size = 11.5.sp)
-            }
-            Spacer(Modifier.width(10.dp))
-            ColituSwitch(social.metrics) { social.updateMetrics(it) }
-        }
         // Test build only.
         Row(verticalAlignment = Alignment.CenterVertically) {
             CText("Demo: animasyonlar hep açık", ColituText.label, Modifier.weight(1f))
@@ -625,8 +626,7 @@ private fun SpecialStamps() {
     CText(loc["passport.special"], ColituText.kicker, color = ColituColors.dim, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        // Test build: a long press grants the Companion stamp (with its reveal).
-        CompanionStamp(social.companion, Modifier.size(96.dp).pointerInput(Unit) { detectTapGestures(onLongPress = { social.markCompanion() }) })
+        CompanionStamp(social.companion, Modifier.size(96.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.widthIn(max = 200.dp)) {
             CText("Companion", ColituText.label, color = if (social.companion) ColituColors.text else ColituColors.muted)

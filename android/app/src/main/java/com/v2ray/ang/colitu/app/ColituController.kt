@@ -433,6 +433,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         startRotationPoll()
         pollJob = viewModelScope.launch {
             if (initialized) load(showLoading = false)
+            com.v2ray.ang.colitu.data.PassportSync.onForeground()
             checkSupport()
             checkDiagnosticsRequest()
             sendMetrics()
@@ -2581,6 +2582,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         outlook = null
         ColituNoticeCenter.reset()
         ColituDiagnosticsCenter.reset()
+        com.v2ray.ang.colitu.data.PassportSync.clearAccount()
     }
 
     // ── Service messages ───────────────────────────────────────────────────

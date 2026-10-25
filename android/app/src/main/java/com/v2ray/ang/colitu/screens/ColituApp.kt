@@ -189,24 +189,17 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
         }
     }
     LaunchedEffect(tab) { c.supportOpen = tab == ColituTab.Support }
-    // Passport: the VPN service earns stamps and pieces; the app keeps the
-    // city for the stamp, the tester flag (no daily cap) and opens the passport
-    // from its notification.
+    // Passport (saved to the account): the app keeps the city for the stamp,
+    // reads the server state after sign-in and after a connect, and opens the
+    // passport from its notification.
     LaunchedEffect(c.connected, c.connectedServerId) {
         if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituPassport.rememberCity(it.countryCode, it.city) }
     }
-    LaunchedEffect(c.cslAvailable) { com.v2ray.ang.colitu.data.ColituPassport.tester = c.cslAvailable }
-    // Companion stamp for whoever invited someone; anonymous passport counters once a day when turned on.
-    LaunchedEffect(c.user) {
-        if (c.user == null) return@LaunchedEffect
-        if (!com.v2ray.ang.colitu.data.PassportSocial.companion) {
-            com.v2ray.ang.colitu.repository.ColituReferralRepository.cachedOrFetch()
-                .onSuccess { if (it.invited > 0) com.v2ray.ang.colitu.data.PassportSocial.markCompanion() }
-        }
-        com.v2ray.ang.colitu.data.PassportSocial.metricsPayload()?.let { body ->
-            val code = com.v2ray.ang.colitu.api.ColituApiClient.postAnonymous("/passport/metrics", body)
-            if (code in 200..299) com.v2ray.ang.colitu.data.PassportSocial.metricsSent()
-        }
+    LaunchedEffect(c.connected) {
+        if (c.connected) com.v2ray.ang.colitu.data.PassportSync.refreshLater(5_000L)
+    }
+    LaunchedEffect(c.user != null) {
+        if (c.user != null) com.v2ray.ang.colitu.data.PassportSync.onForeground()
     }
     LaunchedEffect(com.v2ray.ang.colitu.data.ColituPassport.openRequested) {
         if (com.v2ray.ang.colitu.data.ColituPassport.openRequested) {

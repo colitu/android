@@ -219,6 +219,7 @@ object CoreServiceManager {
         NotificationManager.startSpeedNotification(currentConfig)
         startColituTraffic(service)
         ColituNoticeCenter.startTunnelWatcher() // announcements every ~3 h while the tunnel is up
+        com.v2ray.ang.colitu.app.ColituPassportNotifier.startTunnelWatcher() // passport rewards every 5 min
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
     }
 

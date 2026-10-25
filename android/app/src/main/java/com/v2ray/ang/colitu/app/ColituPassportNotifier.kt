@@ -11,27 +11,74 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.R
+import com.v2ray.ang.colitu.api.ColituApiClient
+import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ColituPassport
+import com.v2ray.ang.colitu.data.PassportJson
+import com.v2ray.ang.colitu.data.PassportSync
 import com.v2ray.ang.colitu.data.StampEvent
 import com.v2ray.ang.colitu.l10n.ColituLoc
 import com.v2ray.ang.colitu.ui.ColituMainActivity
+import com.v2ray.ang.core.CoreServiceManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
- * Local notification when the VPN service earns a passport reward (at most
- * two pieces a day, plus new stamps). Off with [ColituPassport.notify]; never
- * asks for the notification permission.
+ * Local notification for new passport rewards. While the tunnel is up the
+ * VPN process polls the account's passport every five minutes (no token
+ * refresh, see [ColituApiClient.getPassive]), caches the state for the app
+ * and notifies about events it has not notified yet; the app plays and
+ * acknowledges them later. Off with [ColituPassport.notify]; never asks for
+ * the notification permission.
  */
 object ColituPassportNotifier {
     const val CHANNEL_ID = "colitu_passport"
     private const val NOTIFICATION_ID = 0x50A55
+    private const val POLL_MS = 5 * 60_000L
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var watcher: Job? = null
+
+    /** Called by the VPN process when the tunnel is up; the loop ends by itself when it goes down. */
+    @Synchronized
+    fun startTunnelWatcher() {
+        if (watcher?.isActive == true) return
+        watcher = scope.launch {
+            delay(POLL_MS)
+            while (isActive && CoreServiceManager.isRunning()) {
+                runCatching { checkInBackground() }
+                delay(POLL_MS)
+            }
+        }
+    }
+
+    private suspend fun checkInBackground() {
+        if (!ColituTokenManager.isLoggedIn()) return
+        val answer = (ColituApiClient.getPassive(PassportSync.PATH) as? ColituApiClient.ApiResult.Success)?.data ?: return
+        val state = PassportJson.parseState(answer) ?: return
+        val cache = ColituPassport.cache
+        cache.save(answer.toString())
+        if (state.unseenEvents <= 0) return
+        val list = (ColituApiClient.getPassive(PassportSync.UNSEEN_PATH) as? ColituApiClient.ApiResult.Success)?.data ?: return
+        val fresh = PassportJson.parseEvents(list).filter { it.id > cache.notifiedThrough }
+        if (fresh.isEmpty()) return
+        cache.notifiedThrough = fresh.maxOf { it.id }
+        post(AngApplication.application, fresh.mapNotNull { it.event })
+    }
 
     fun post(context: Context, events: List<StampEvent>) {
         if (!ColituPassport.notify) return
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
-        // The biggest news of this minute: a new level beats a new stamp beats a piece.
+        // The biggest news: a new level beats a new stamp beats a piece.
         val event = events.firstOrNull { it is StampEvent.Mastered || it is StampEvent.LevelUp }
             ?: events.firstOrNull { it is StampEvent.Unlocked }
             ?: events.firstOrNull() ?: return
@@ -46,7 +93,7 @@ object ColituPassportNotifier {
                 is StampEvent.LevelUp -> loc.format("passport.levelUp", "country" to country, "level" to loc["passport.level.${event.level.key}"]) to
                     loc["passport.n.levelBody"]
                 is StampEvent.Mastered -> loc.format("passport.mastered", "country" to country) to loc["passport.n.levelBody"]
-                // Sets and achievements are found by the app itself.
+                // Sets, achievements and the rest are revealed when the app opens.
                 is StampEvent.Achieved, is StampEvent.Collected, is StampEvent.Chapter, is StampEvent.Expedition, is StampEvent.Special -> return@runCatching
             }
             ensureChannel(context)

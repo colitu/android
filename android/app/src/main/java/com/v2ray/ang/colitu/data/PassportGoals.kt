@@ -3,7 +3,6 @@ package com.v2ray.ang.colitu.data
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import kotlin.random.Random
 
 /**
  * Achievements: each gives a title the user can show on the passport. Secret
@@ -43,10 +42,13 @@ enum class CoverTheme(val key: String) { Classic("classic"), Premium("premium"),
 
 /**
  * Achievements, collections and the passport identity (nickname, collector
- * number, favourite stamp, title, cover). All on the device, like the stamps.
+ * number, title, cover), read from the server state. Changes go to the
+ * account with PUT /client/passport/profile; the favourite stamp is a device
+ * setting.
  */
 object PassportGoals {
     private val store get() = ColituPassport.store
+    private val server get() = ColituPassport.server
 
     const val GOLD_RUSH_COUNT = 3
     const val DIAMOND_COUNT = 3
@@ -60,37 +62,41 @@ object PassportGoals {
     var cover by mutableStateOf<CoverTheme?>(null)
         private set
 
-    /** Six digits made on this device, not tied to the account. */
-    val collectorNo: String
-        get() = runCatching {
-            store.decodeString("collector_no") ?: Random.nextInt(100_000, 1_000_000).toString().also { store.encode("collector_no", it) }
-        }.getOrDefault("000000")
+    /** The account's collector number (six digits, from the server). */
+    val collectorNo: String get() = server?.collectorNo?.takeIf { it.isNotBlank() } ?: "000000"
 
-    /** Re-reads the identity; [ColituPassport.reload] calls it. */
+    /** Re-reads the identity; [ColituPassport.apply] calls it. */
     fun refresh() {
-        runCatching {
-            nickname = store.decodeString("nick").orEmpty()
-            favorite = store.decodeString("favorite")
-            title = store.decodeString("title")
-            cover = store.decodeString("cover")?.let { k -> CoverTheme.entries.firstOrNull { it.key == k } }
-        }
+        val s = server
+        nickname = s?.nickname.orEmpty()
+        title = s?.titleId
+        cover = s?.coverId?.let { k -> CoverTheme.entries.firstOrNull { it.key == k } }
+        favorite = runCatching { store.decodeString("favorite") }.getOrNull()
     }
 
-    fun updateNickname(value: String) = save("nick", value.trim().take(20).ifEmpty { null })
-    fun updateFavorite(code: String?) = save("favorite", code)
-    fun updateTitle(id: String?) = save("title", id).also { PassportWeekly.bump(ExpeditionGoal.Customize) }
-    fun updateCover(theme: CoverTheme?) = save("cover", theme?.key).also { PassportWeekly.bump(ExpeditionGoal.Customize) }
-
-    private fun save(key: String, value: String?) {
-        runCatching { if (value == null) store.removeValueForKey(key) else store.encode(key, value) }
-        refresh()
+    /** Shown at once, saved to the account; a refused change goes back to the server's value. */
+    fun updateNickname(value: String) {
+        val clean = value.trim().take(NICK_MAX)
+        nickname = clean
+        PassportSync.updateProfile(nickname = clean)
     }
 
-    /** Every country with a record: this chapter, the sets and whatever the service saw. */
-    private fun allCodes(): List<String> =
-        (ColituPassport.stamps.map { it.code } + PassportCollection.entries.flatMap { it.codes } +
-            runCatching { store.decodeString("codes").orEmpty().split(',') }.getOrDefault(emptyList()))
-            .filter { it.length == 2 }.distinct()
+    fun updateFavorite(code: String?) {
+        runCatching { if (code == null) store.removeValueForKey("favorite") else store.encode("favorite", code) }
+        favorite = code
+    }
+
+    fun updateTitle(id: String?) {
+        title = id
+        PassportSync.updateProfile(titleId = id.orEmpty())
+    }
+
+    fun updateCover(theme: CoverTheme?) {
+        cover = theme
+        PassportSync.updateProfile(coverId = theme?.key.orEmpty())
+    }
+
+    const val NICK_MAX = 24
 
     /** Stamps of [chapter] at [level] or higher (Chapter 03 — Legacy). */
     fun legacy(level: StampLevel, chapter: List<ColituStamp>): Int =
@@ -107,20 +113,9 @@ object PassportGoals {
     }
 
     private fun countAtLeast(level: StampLevel): Int =
-        allCodes().count { (ColituPassport.progressOf(it).level?.ordinal ?: -1) >= level.ordinal }
+        ColituPassport.progress.values.count { (it.level?.ordinal ?: -1) >= level.ordinal }
 
-    fun achieved(a: PassportAchievement): Boolean = when (a) {
-        PassportAchievement.First -> allCodes().any { ColituPassport.unlockedAnywhere(it) }
-        PassportAchievement.Origin -> ColituPassport.stamps.all { ColituPassport.unlockedAnywhere(it.code) }
-        PassportAchievement.NordicMaster -> PassportCollection.Nordic.codes.all {
-            (ColituPassport.progressOf(it).level?.ordinal ?: -1) >= StampLevel.Gold.ordinal
-        }
-        PassportAchievement.Diamond -> countAtLeast(StampLevel.Diamond) >= DIAMOND_COUNT
-        PassportAchievement.Pathfinder -> PassportWeekly.total >= PassportWeekly.PATHFINDER_AT
-        PassportAchievement.LegacyGold -> legacy(StampLevel.Gold, ColituPassport.stamps) >= ColituPassport.stamps.size
-        PassportAchievement.LegacyDiamond -> legacy(StampLevel.Diamond, ColituPassport.stamps) >= ColituPassport.stamps.size
-        else -> runCatching { store.decodeLong("a_${a.id}", 0L) > 0 }.getOrDefault(false)
-    }
+    fun achieved(a: PassportAchievement): Boolean = server?.achievements?.containsKey(a.id) == true
 
     /** Stamps of the set already collected, and how many it needs. */
     fun progress(c: PassportCollection): Pair<Int, Int> =
@@ -130,55 +125,33 @@ object PassportGoals {
             c.codes.count { ColituPassport.unlockedAnywhere(it) } to c.codes.size
         }
 
-    fun completed(c: PassportCollection): Boolean = progress(c).let { it.first >= it.second }
+    fun completed(c: PassportCollection): Boolean = server?.collections?.containsKey(c.id) == true
 
-    /** When the set or achievement was first seen complete (0 when not yet). */
-    fun earnedAt(key: String): Long = runCatching { store.decodeLong("seen_$key", 0L) }.getOrDefault(0L)
+    /** When the set ("c_<id>") or achievement ("a_<id>") was earned (0 when not, or unknown). */
+    fun earnedAt(key: String): Long {
+        val s = server ?: return 0L
+        return when {
+            key.startsWith("c_") -> s.collections[key.removePrefix("c_")] ?: 0L
+            key.startsWith("a_") -> s.achievements[key.removePrefix("a_")] ?: 0L
+            else -> 0L
+        }
+    }
 
-    /** Covers this user may pick. */
-    fun covers(premium: Boolean): List<CoverTheme> = buildList {
-        add(CoverTheme.Classic)
-        if (premium) add(CoverTheme.Premium)
-        PassportCollection.entries.forEach { c -> c.cover?.let { if (completed(c)) add(it) } }
+    /** Covers this user may pick (the server's list; Classic always). */
+    fun covers(premium: Boolean): List<CoverTheme> {
+        val keys = server?.covers
+        if (keys.isNullOrEmpty()) return buildList {
+            add(CoverTheme.Classic)
+            if (premium) add(CoverTheme.Premium)
+        }
+        return (listOf(CoverTheme.Classic) + keys.mapNotNull { k -> CoverTheme.entries.firstOrNull { it.key == k } }).distinct()
     }
 
     /** The cover shown: the chosen one while still allowed, else Premium or Classic. */
     fun activeCover(premium: Boolean): CoverTheme {
         val allowed = covers(premium)
-        return cover?.takeIf { it in allowed } ?: if (premium) CoverTheme.Premium else CoverTheme.Classic
+        return cover?.takeIf { it in allowed } ?: if (CoverTheme.Premium in allowed) CoverTheme.Premium else CoverTheme.Classic
     }
 
     fun titleOf(id: String?): String? = PassportAchievement.entries.firstOrNull { it.id == id }?.takeIf { achieved(it) }?.title
-
-    /**
-     * Sets and achievements reached since the last call, each once (the app
-     * plays their reveal). Sets first, then achievements.
-     */
-    fun checkNew(now: Long = System.currentTimeMillis()): List<StampEvent> = runCatching {
-        buildList {
-            // Chapter 02 opens: then the stamps of its countries recorded so far, one by one.
-            if (ColituPassport.chapter2Open && earnedAt("ch_2") == 0L) {
-                store.encode("seen_ch_2", now)
-                add(StampEvent.Chapter("2"))
-                ColituPassport.chapter2.filter { ColituPassport.unlockedAnywhere(it.code) }.forEach { add(StampEvent.Unlocked(it.code)) }
-            }
-            if (chapter3Open && earnedAt("ch_3") == 0L) {
-                store.encode("seen_ch_3", now)
-                add(StampEvent.Chapter("3"))
-            }
-            PassportWeekly.takeNewlyDone().forEach { add(StampEvent.Expedition(it.id)) }
-            PassportCollection.entries.forEach { c ->
-                if (completed(c) && earnedAt("c_${c.id}") == 0L) {
-                    store.encode("seen_c_${c.id}", now)
-                    add(StampEvent.Collected(c.id))
-                }
-            }
-            PassportAchievement.entries.forEach { a ->
-                if (achieved(a) && earnedAt("a_${a.id}") == 0L) {
-                    store.encode("seen_a_${a.id}", now)
-                    add(StampEvent.Achieved(a.id))
-                }
-            }
-        }
-    }.getOrDefault(emptyList())
 }
