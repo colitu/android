@@ -465,7 +465,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
     }
 
     /** Answers a support agent's connection-report request silently (throttled to once a minute). */
-    suspend fun checkDiagnosticsRequest() = ColituDiagnosticsCenter.check { fullSupportReport() }
+    suspend fun checkDiagnosticsRequest() = ColituDiagnosticsCenter.check(
+        onSent = { showToast(ColituLoc["support.reportSent"], error = false) },
+    ) { fullSupportReport() }
 
     /** The full connection report with the app's current state, sites masked. */
     suspend fun fullSupportReport(): String = ColituSupportRepository.fullReport(

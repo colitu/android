@@ -7,16 +7,18 @@ import com.v2ray.ang.colitu.repository.ColituSupportRepository
 /**
  * Connection-report requests from support: the app asks the panel (at most
  * once a minute, from the foreground poll) and answers a pending request
- * silently with the redacted report, with no dialog and no toast. The timing
- * lives in [ColituDiagnosticsGate]. The F-Droid build (COLITU_OPT_IN_REPORTING)
+ * silently with the redacted report, with no dialog. Once it is sent the
+ * caller shows one short in-app notice ([onSent], never for a request that
+ * was only answered elsewhere). The timing lives in [ColituDiagnosticsGate].
+ * The F-Droid build (COLITU_OPT_IN_REPORTING)
  * never answers silently: there the report goes only when the user sends it
  * from the Support tab.
  */
 object ColituDiagnosticsCenter {
     private val gate = ColituDiagnosticsGate()
 
-    /** [buildReport] makes the full (redacted) text. Never throws. */
-    suspend fun check(buildReport: suspend () -> String) {
+    /** [buildReport] makes the full (redacted) text; [onSent] runs once after a successful send. Never throws. */
+    suspend fun check(onSent: () -> Unit = {}, buildReport: suspend () -> String) {
         if (com.v2ray.ang.BuildConfig.COLITU_OPT_IN_REPORTING) return
         if (!ColituTokenManager.isLoggedIn()) return
         if (!gate.tryStartCheck()) return
@@ -26,7 +28,10 @@ object ColituDiagnosticsCenter {
         val result = runCatching { ColituSupportRepository.sendRequestedReport(request.id, buildReport()) }
             .getOrDefault(ColituSupportRepository.RequestReportResult.Failed)
         when (result) {
-            ColituSupportRepository.RequestReportResult.Sent,
+            ColituSupportRepository.RequestReportResult.Sent -> {
+                gate.markAnswered(request.id)
+                runCatching(onSent)
+            }
             ColituSupportRepository.RequestReportResult.NoLongerPending -> gate.markAnswered(request.id)
             ColituSupportRepository.RequestReportResult.Failed -> gate.markFailed(request.id)
         }

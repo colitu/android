@@ -587,6 +587,7 @@ object ColituLoc {
         "support.status.closed" to arrayOf("ЗАКРЫТО", "KAPANDI", "CLOSED"),
         "support.closed" to arrayOf("Обращение закрыто. Создайте новое, если нужна помощь.", "Bu talep kapatıldı. Yardım gerekirse yeni bir talep açın.", "This request is closed. Start a new one if you need help."),
         "support.newReply" to arrayOf("Новый ответ поддержки", "Destekten yeni yanıt", "New reply from support"),
+        "support.reportSent" to arrayOf("Служба поддержки получила отчёт о соединении. Отчёт обезличен: в нём нет названий сайтов и IP-адресов.", "Destek ekibi bağlantı raporunu aldı. Rapor maskelenmiştir; site adları ve IP adresleri içermez.", "Support received your connection report. It is masked and contains no site names or IP addresses."),
         "support.sent" to arrayOf("Обращение отправлено. Мы ответим здесь и по почте.", "Talebiniz gönderildi. Buradan ve e-postayla yanıt vereceğiz.", "Request sent. We’ll answer here and by email."),
         "support.err.subject" to arrayOf("Укажите тему и сообщение.", "Konu ve mesajı yazın.", "Add a subject and a message."),
         "support.err.file" to arrayOf("Файл больше 10 МБ или такой тип не поддерживается.", "Dosya 10 MB’tan büyük veya bu tür desteklenmiyor.", "The file is over 10 MB or the type isn’t supported."),
