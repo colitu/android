@@ -2934,7 +2934,7 @@ fun planStatusOf(user: ColituUser?, subscription: ColituSubscription?): String {
         "active" -> "active"
         "trialing", "trial_active" -> "trialing"
         "expired" -> "expired"
-        // The free plan's 10 GB are used up until the next month.
+        // The free plan's monthly allowance is used up until the next month.
         "quota_exceeded" -> "quota"
         else -> "inactive"
     }
@@ -2968,7 +2968,7 @@ fun planNameOf(user: ColituUser?, subscription: ColituSubscription?): String {
     }
 }
 
-/** The free plan (10 GB a month); its entitlement renews every month. */
+/** The free plan (1 GB a month); its entitlement renews every month. */
 fun isFreePlan(user: ColituUser?): Boolean = user?.plan.equals("Free", ignoreCase = true)
 
 fun planDetailOf(expires: Instant): String {
