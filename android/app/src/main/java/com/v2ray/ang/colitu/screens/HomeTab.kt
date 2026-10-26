@@ -173,10 +173,10 @@ fun HomeTab(
                 maxLines = 2,
             )
         }
-        if (advanced && on && c.transport != null) {
+        if (advanced) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
+                ProtocolChip(c, on)
             }
         }
         if (advanced && c.ruDirectActive) {
@@ -607,9 +607,9 @@ private fun TvHome(
                 align = TextAlign.Center,
                 maxLines = 2,
             )
-            if (c.advancedMode && on && c.transport != null) {
+            if (c.advancedMode) {
                 Spacer(Modifier.height(8.dp))
-                ColituBadge("${loc["home.protocol"]} · ${c.transportName}", BadgeTone.Neutral)
+                ProtocolChip(c, on)
             }
             if (c.advancedMode && c.ruDirectActive) {
                 Spacer(Modifier.height(8.dp))

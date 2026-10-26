@@ -76,8 +76,18 @@ data class ColituNetworkRecord(val clientNetwork: String, val token: String?, va
 data class ColituObservation(val protocol: String, val reachable: Boolean, val latencyMs: Long?)
 
 object ColituNetworkHintsPolicy {
-    /** Hinted transports that go last: those this phone did not see carry traffic here in the last 24 h. */
-    fun demoted(blocked: Set<String>, workedHere: (String) -> Boolean): Set<String> = blocked.filterNot(workedHere).toSet()
+    /** Transports that run over UDP (QUIC): the ones networks throttle as a family. */
+    val UDP_TRANSPORTS = setOf("hysteria2")
+
+    /**
+     * Transports that go last on this network: hinted ones this phone did
+     * not see carry traffic here in the last 24 h, and every UDP transport
+     * once UDP kept stalling here mid-session ([udpDemoted], see
+     * ColituConnectMemory.recordUdpStall): there "worked here" only means it
+     * connected, not that it lasted.
+     */
+    fun demoted(blocked: Set<String>, udpDemoted: Boolean = false, workedHere: (String) -> Boolean): Set<String> =
+        blocked.filterNot(workedHere).toSet() + if (udpDemoted) UDP_TRANSPORTS else emptySet()
 
     /**
      * Start order from the hint when the phone has no memory of this network

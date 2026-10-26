@@ -112,11 +112,16 @@ object ColituWarmSpare {
         // On another server, what carried traffic on this network lately wins
         // over the family rule, the primary's own transport first: an
         // unproven family (often frozen by the same DPI) is no spare at all.
+        // A UDP primary takes a proven TCP spare first: a network that
+        // throttles long-lived UDP flows stalls Hysteria2 on every server
+        // alike, and only a TCP spare lets the core move over by itself.
         if (!sameServer) {
             val proven = usable.filter { it in worked }
             if (proven.isNotEmpty()) {
-                val pick = primary?.takeIf { it in proven }
-                    ?: proven.sortedWith(compareBy<String> { it == "shadowsocks" }.thenBy { XrayMobileAdapter.transportRank[it] ?: 9 }).first()
+                val byRank = proven.sortedWith(compareBy<String> { it == "shadowsocks" }.thenBy { XrayMobileAdapter.transportRank[it] ?: 9 })
+                val pick = (if (primary == UDP) byRank.firstOrNull { it != UDP && it != "shadowsocks" } else null)
+                    ?: primary?.takeIf { it in proven }
+                    ?: byRank.first()
                 return pick to "proven"
             }
         }

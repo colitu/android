@@ -164,7 +164,8 @@ object ColituServerRanking {
 /**
  * What worked and what failed, per network key, each with its own expiry:
  * last good server (24 h), last good transport per server (24 h), stalled
- * transport per server and per network (6 h), penalized server (30 min).
+ * transport per server and per network (6 h), penalized server (30 min),
+ * UDP stalls in the last 30 min and UDP put last on a network (6 h).
  * Memory of another network is never applied; it stays stored under its own
  * key until it expires. Pure, so the expiry is unit tested.
  */
@@ -248,6 +249,29 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
         }
     }
 
+    /**
+     * A UDP transport (Hysteria2) stopped carrying traffic mid-session on
+     * this network ([count] paths at once: a UDP spare that died with a UDP
+     * primary counts too). Networks that throttle long-lived UDP flows let
+     * it connect and pass the check every time, so a success never clears
+     * this: [UDP_STALLS_TO_DEMOTE] within [UDP_STALL_WINDOW_MS] put UDP after
+     * the TCP transports here for [UDP_DEMOTED_TTL_MS]. True when this one
+     * did (for the log).
+     */
+    fun recordUdpStall(network: String, now: Long, count: Int = 1): Boolean {
+        val recent = valueOf(udpStallsKey(network), now).orEmpty().split(',')
+            .mapNotNull { it.toLongOrNull() }
+            .filter { now - it in 0 until UDP_STALL_WINDOW_MS }
+        val times = (recent + List(count.coerceAtLeast(1)) { now }).takeLast(UDP_STALLS_TO_DEMOTE)
+        put(udpStallsKey(network), times.joinToString(","), now)
+        if (times.size < UDP_STALLS_TO_DEMOTE || udpDemoted(network, now)) return false
+        put(udpDemotedKey(network), "1", now)
+        return true
+    }
+
+    /** UDP transports go after the TCP ones on this network (see [recordUdpStall]). */
+    fun udpDemoted(network: String, now: Long): Boolean = valueOf(udpDemotedKey(network), now) != null
+
     /** Every transport of [serverId] failed on this network. */
     fun penalize(network: String, serverId: String, now: Long) {
         put("$PENALTY|$network|$serverId", "1", now)
@@ -293,6 +317,9 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
         const val STALLED_TTL_MS = 6 * 3_600_000L
         const val PENALTY_TTL_MS = 30 * 60_000L
         const val TENTATIVE_STALL_TTL_MS = 10 * 60_000L
+        const val UDP_STALL_WINDOW_MS = 30 * 60_000L
+        const val UDP_STALLS_TO_DEMOTE = 2
+        const val UDP_DEMOTED_TTL_MS = 6 * 3_600_000L
         const val MAX_ENTRIES = 200
 
         private const val GOOD_SERVER = "gs"
@@ -301,6 +328,8 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
         private const val STALLED = "st"
         private const val TENTATIVE = "sq"
         private const val PENALTY = "pn"
+        private const val UDP_STALLS = "us"
+        private const val UDP_DEMOTED = "ud"
         /** Server slot of a stall that counts for every server of the network. */
         private const val ANY = "*"
 
@@ -309,6 +338,8 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
         private fun goodTransportKey(network: String, serverId: String) = "$GOOD_TRANSPORT|$network|$serverId"
         private fun stalledPrefix(network: String, serverId: String) = "$STALLED|$network|$serverId|"
         private fun tentativePrefix(network: String, serverId: String) = "$TENTATIVE|$network|$serverId|"
+        private fun udpStallsKey(network: String) = "$UDP_STALLS|$network"
+        private fun udpDemotedKey(network: String) = "$UDP_DEMOTED|$network"
 
         private fun ttlOf(key: String): Long = when (key.substringBefore('|')) {
             GOOD_SERVER -> GOOD_SERVER_TTL_MS
@@ -316,6 +347,8 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
             STALLED -> STALLED_TTL_MS
             TENTATIVE -> TENTATIVE_STALL_TTL_MS
             PENALTY -> PENALTY_TTL_MS
+            UDP_STALLS -> UDP_STALL_WINDOW_MS
+            UDP_DEMOTED -> UDP_DEMOTED_TTL_MS
             else -> 0L
         }
 

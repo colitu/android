@@ -237,6 +237,8 @@ object ColituLoc {
         "transport.trojan" to arrayOf("Классический", "Klasik", "Classic"),
         "transport.shadowsocks" to arrayOf("Лёгкий", "Hafif", "Light"),
         "transport.other" to arrayOf("Резервный", "Yedek", "Backup"),
+        "transport.auto" to arrayOf("Автоматически", "Otomatik", "Automatic"),
+        "home.protocol.hint" to arrayOf("Нажмите, чтобы выбрать способ подключения", "Bağlantı yöntemini seçmek için dokunun", "Tap to choose the connection method"),
         "locations.all" to arrayOf("Все", "Tümü", "All"),
         "locations.ai" to arrayOf("Нейросети", "Yapay zeka", "AI"),
         "locations.streaming" to arrayOf("Кино и сериалы", "Dizi & film", "Movies & TV"),

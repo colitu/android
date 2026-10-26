@@ -269,14 +269,23 @@ object ColituSupportRepository {
     /**
      * The app's own Colitu log lines only (the Xray core, whose warnings can
      * name the sites a user visits, is filtered out by tag), at most ~24 KB (more for the full report),
-     * with credentials and IP addresses masked.
+     * with credentials and IP addresses masked. The last [lines] are taken
+     * here, after the tag filter: `logcat -t` counts the buffer's lines
+     * before it, and while a transport stalls the core's own warnings fill
+     * the last few hundred, which left the report's log empty.
      */
     private fun recentLog(maxChars: Int = 24_000, lines: Int = 400): String? = runCatching {
-        val command = listOf("logcat", "-d", "-t", lines.toString(), "-v", "time") + LOG_TAGS.map { "$it:V" } + "*:S"
+        val command = listOf("logcat", "-d", "-v", "time") + LOG_TAGS.map { "$it:V" } + "*:S"
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
-        val text = process.inputStream.bufferedReader().use { it.readText() }
+        val tail = ArrayDeque<String>(lines)
+        process.inputStream.bufferedReader().useLines { all ->
+            all.forEach { line ->
+                if (tail.size == lines) tail.removeFirst()
+                tail.addLast(line)
+            }
+        }
         process.destroy()
-        redact(text.takeLast(maxChars)).takeIf { it.isNotBlank() }
+        redact(tail.joinToString("\n").takeLast(maxChars)).takeIf { it.isNotBlank() }
     }.getOrNull()
 
     private val shareLink = Regex("((?:vless|vmess|trojan|hysteria2|hy2|ss|tuic)://)[^@\\s/]+@", RegexOption.IGNORE_CASE)

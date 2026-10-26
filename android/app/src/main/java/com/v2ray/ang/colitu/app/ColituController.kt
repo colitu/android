@@ -50,6 +50,7 @@ import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.data.ColituServerRanking
 import com.v2ray.ang.colitu.data.ColituEngine
 import com.v2ray.ang.colitu.data.ColituSubscription
+import com.v2ray.ang.colitu.data.ColituTransportChoice
 import com.v2ray.ang.colitu.data.ColituUser
 import com.v2ray.ang.colitu.data.ColituVpnConfig
 import com.v2ray.ang.colitu.data.ColituUiMode
@@ -145,14 +146,34 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     /**
      * Transports the panel hints as blocked on this network that this phone
-     * did not see carry traffic here in the last 24 h: they go last, and the
-     * warm spare takes one only when nothing else qualifies.
+     * did not see carry traffic here in the last 24 h, and UDP once it kept
+     * stalling mid-session here: they go last, and the warm spare takes one
+     * only when nothing else qualifies.
      */
     private fun hintedBlocked(now: Long = System.currentTimeMillis()): Set<String> {
         val blocked = networkRecord?.blockedFor(clientNetwork, now).orEmpty()
-        if (blocked.isEmpty()) return emptySet()
         val network = networkKey
-        return ColituNetworkHintsPolicy.demoted(blocked) { memory.workedOnNetwork(network, it, now) }
+        val udpDemoted = memory.udpDemoted(network, now)
+        if (blocked.isEmpty() && !udpDemoted) return emptySet()
+        return ColituNetworkHintsPolicy.demoted(blocked, udpDemoted) { memory.workedOnNetwork(network, it, now) }
+    }
+
+    /**
+     * A UDP transport stopped carrying traffic mid-session on this network
+     * ([paths] at once). After repeated ones UDP goes after the TCP
+     * transports here (ColituConnectMemory.recordUdpStall), in automatic
+     * and manual mode alike; a manual pick keeps its server.
+     */
+    private fun udpStalled(protocol: String?, paths: Int = 1) {
+        if (protocol !in ColituNetworkHintsPolicy.UDP_TRANSPORTS) return
+        if (memory.recordUdpStall(networkKey, System.currentTimeMillis(), paths)) {
+            LogUtil.w(
+                AppConfig.TAG,
+                "Colitu: UDP stalled ${ColituConnectMemory.UDP_STALLS_TO_DEMOTE}x within ${ColituConnectMemory.UDP_STALL_WINDOW_MS / 60_000} min on this network; " +
+                    "$protocol goes after the TCP transports here for ${ColituConnectMemory.UDP_DEMOTED_TTL_MS / 3_600_000} h",
+            )
+        }
+        saveMemory()
     }
 
     /** Memory of one network is never applied on another (see ColituConnectMemory). */
@@ -197,6 +218,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private set
     /** Warm spare: a second path inside the core takes over when the first dies (ColituWarmSpare). */
     var warmSpare by mutableStateOf(ColituWarmSpare.enabled)
+        private set
+    /** The connection method picked on the home screen, "" = automatic (ColituTransportChoice). */
+    var preferredTransport by mutableStateOf(ColituTransportChoice.normalize(store.decodeString(KEY_PREFERRED_TRANSPORT, "")))
         private set
     /** CSL alpha ("Seamless session") and the testers' switch for alpha nodes in automatic mode. */
     var cslAlpha by mutableStateOf(com.v2ray.ang.colitu.data.ColituCslStore.enabled)
@@ -1520,6 +1544,21 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * the probe decides. The rest follow in preference order; stalled ones last.
      */
     private suspend fun orderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
+        val auto = automaticOrderForStart(server, configs, probe)
+        val picked = preferredTransport.takeIf { it.isNotEmpty() } ?: return auto
+        val order = ColituTransportChoice.putFirst(auto, { it.protocolType }, picked, skip = stalledThisConnect)
+        LogUtil.w(
+            AppConfig.TAG,
+            when {
+                order.firstOrNull()?.protocolType == picked -> "Colitu: connection method picked by the user goes first: $picked"
+                picked in stalledThisConnect -> "Colitu: connection method picked by the user ($picked) stalled in this connect; automatic order"
+                else -> "Colitu: connection method picked by the user ($picked) is not offered here; automatic order"
+            },
+        )
+        return order
+    }
+
+    private suspend fun automaticOrderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
         val now = System.currentTimeMillis()
         serverOutageThisRound = false
         roundProbe = emptyMap()
@@ -1849,7 +1888,16 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // about 10 s after it is first seen instead of 20-30 s (5 s pace, probes in turn).
             val confirming = ColituTransportOrder.confirmingMiss(failures, if (spareDead) KNOWN_DEAD_SPARE_FAILURES else STALL_PROBE_FAILURES) ||
                 (!primaryRecorded && ColituTransportOrder.confirmingMiss(primaryMisses, STALL_PROBE_FAILURES))
-            delay(ColituTransportOrder.watchDelayMs(confirming, fast, STALL_CONFIRM_INTERVAL_MS, STALL_PROBE_INTERVAL_MS, TCP_WATCH_SLOW_MS))
+            val pause = ColituTransportOrder.watchDelayMs(confirming, fast, STALL_CONFIRM_INTERVAL_MS, STALL_PROBE_INTERVAL_MS, TCP_WATCH_SLOW_MS)
+            val sleptFrom = android.os.SystemClock.elapsedRealtime()
+            delay(pause)
+            // This watcher runs in the app's process: while the system keeps it frozen
+            // in the background (or the CPU sleeps) a stall is only seen once it runs
+            // again. The warm spare inside the core does not wait for it.
+            val late = android.os.SystemClock.elapsedRealtime() - sleptFrom - pause
+            if (late >= WATCH_LATE_LOG_MS) {
+                LogUtil.w(AppConfig.TAG, "Colitu: stall watch was paused ${late / 1000} s (app process frozen or asleep)${if (failures > 0) " during a miss streak" else ""}")
+            }
             if (!connected || transport != protocol || connectedServerId != server.id) return
             val networks = underlyingNetworks()
             // Offline, airplane mode, Doze or a network change in progress:
@@ -1880,6 +1928,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         deadSpares += spare.first.id to spare.second
                         memory.markStalled(networkKey, spare.first.id, spare.second, System.currentTimeMillis(), confirmed = false)
                         saveMemory()
+                        udpStalled(spare.second)
                         replacementSpare = replacementSpareFor(server, spare)
                         if (replacementSpare == null) LogUtil.w(AppConfig.TAG, "Colitu: spare ${spare.second} is dead and nothing can replace it; keeping it")
                     }
@@ -1904,6 +1953,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 if (failures == 0) firstMissAt = android.os.SystemClock.elapsedRealtime()
                 if (++failures >= KNOWN_DEAD_SPARE_FAILURES && deviceOnline()) {
                     LogUtil.w(AppConfig.TAG, "Colitu: $protocol died while the spare is known dead, reconnecting")
+                    udpStalled(protocol)
                     leaveServerIfBothDead(server, bothPathsDead = true)
                     stalledThisConnect += protocol
                     observe(server, protocol, reachable = false, latencyMs = null)
@@ -1948,7 +1998,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
             lastAutoSwitchAt = now
             val wallNow = System.currentTimeMillis()
             val proven = memory.workedOnNetwork(networkKey, protocol, wallNow)
-            val bothPathsDead = spare != null
+            // A UDP primary and a UDP spare (another server) dying together is the
+            // network throttling UDP, not the server: the transport is marked, the
+            // server kept, and the reconnect moves to TCP.
+            val udpPair = ColituTransportOrder.udpPair(protocol, spare?.second)
+            val bothPathsDead = spare != null && !udpPair
+            if (!bothPathsDead) udpStalled(protocol, paths = if (udpPair) 2 else 1)
             if (ColituTransportOrder.markTransportAfterStall(online = true, bothPathsDead)) {
                 LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect${if (proven) ", proven here: short penalty" else ""}), switching transport")
                 store.encode(
@@ -2075,6 +2130,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memory.markStalled(networkKey, server.id, protocol, now, confirmed = protocol != "hysteria2")
         memory.recordSuccess(networkKey, spare.first.id, spare.second, now, goodServer = acAuto && !spare.first.isMultihop)
         saveMemory()
+        udpStalled(protocol)
         observe(server, protocol, reachable = false, latencyMs = null)
         flushObservations()
     }
@@ -2399,6 +2455,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memoryVersion++
     }
 
+    /** The protocol chip on the home screen: a pick other than the method in use rebuilds a live connection. */
+    fun pickTransport(protocol: String?) {
+        val method = ColituTransportChoice.normalize(protocol)
+        if (method == preferredTransport) return
+        preferredTransport = method
+        store.encode(KEY_PREFERRED_TRANSPORT, method)
+        LogUtil.w(AppConfig.TAG, "Colitu: connection method picked by the user: ${method.ifEmpty { "automatic" }}")
+        val inUse = connected && (method.isEmpty() || method == transport)
+        if (!inUse && (connected || status == VpnStatus.Connecting)) startConnectFlow()
+    }
+
     fun setWarmSpareEnabled(value: Boolean) {
         if (warmSpare == value) return
         warmSpare = value
@@ -2706,6 +2773,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val KEY_LAST_TRANSPORT = "last_transport"
         /** v1 (global, no expiry); removed on the first load of [KEY_CONNECT_MEMORY]. */
         private const val KEY_STALLED_TRANSPORT = "stalled_transport"
+        private const val KEY_PREFERRED_TRANSPORT = "preferred_transport"
         /** v1: + server id, the transport that last carried real traffic there (any network). */
         private const val KEY_GOOD_PREFIX = "good_transport_"
         /** ColituConnectMemory: last good server/transport, stalls and penalties per network. */
@@ -2768,6 +2836,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val TCP_WATCH_FAST_MS = 90_000L
         private const val TCP_WATCH_SLOW_MS = 30_000L
         private const val AUTO_SWITCH_MIN_GAP_MS = 60_000L
+        /** A watcher tick this much later than planned is logged (frozen process, CPU asleep). */
+        private const val WATCH_LATE_LOG_MS = 20_000L
         private const val MID_SESSION_STALL_PENALTY_MS = 10 * 60_000L
     }
 }
@@ -2855,6 +2925,10 @@ internal object ColituTransportOrder {
      * Windows/Linux (MarkTransportAfterRestart).
      */
     fun markTransportAfterStall(online: Boolean, bothPathsDead: Boolean): Boolean = online && !bothPathsDead
+
+    /** Primary and spare both run over UDP: dying together they say the network throttles UDP, not that a server is down. */
+    fun udpPair(primary: String?, spare: String?): Boolean =
+        primary in ColituNetworkHintsPolicy.UDP_TRANSPORTS && spare in ColituNetworkHintsPolicy.UDP_TRANSPORTS
 
     /** UDP transports: no answer to the outside probe proves nothing about the server (Windows/Linux do not measure them). */
     private val UDP_TRANSPORTS = setOf("hysteria2")
