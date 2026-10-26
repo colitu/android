@@ -100,7 +100,8 @@ object CoreConfigManager {
      */
     private fun getV2rayCustomConfig(configContext: CoreConfigContext): ConfigResult {
         val context = configContext.context
-        val raw = MmkvManager.decodeServerRaw(configContext.guid)
+        // Colitu: DNS sessions end soon after their last query (ColituDnsSessions).
+        val raw = MmkvManager.decodeServerRaw(configContext.guid)?.let { com.v2ray.ang.colitu.data.ColituDnsSessions.apply(it) }
             ?: return ConfigResult(status = false, guid = configContext.guid, errorMessage = "Custom config is empty")
         val result = ConfigResult(true, configContext.guid, raw)
         if (!needTun()) {
