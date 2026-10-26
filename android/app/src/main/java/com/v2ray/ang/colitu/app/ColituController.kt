@@ -176,6 +176,17 @@ class ColituController(application: Application) : AndroidViewModel(application)
         saveMemory()
     }
 
+    /**
+     * While UDP is put last on this network, a TCP transport stalled too, or
+     * only UDP carried traffic in a connect: the network freezes TCP as well,
+     * so UDP gets its place back (it at least lasted minutes).
+     */
+    private fun tcpFailedToo(why: String) {
+        if (!memory.liftUdpDemotion(networkKey, System.currentTimeMillis())) return
+        LogUtil.w(AppConfig.TAG, "Colitu: $why while UDP was put last on this network; UDP goes back to its place")
+        saveMemory()
+    }
+
     /** Memory of one network is never applied on another (see ColituConnectMemory). */
     val networkKey: String get() = ColituServerRanking.networkKey(networkLink, clientNetwork)
 
@@ -1661,7 +1672,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val spent = android.os.SystemClock.elapsedRealtime() - transportBegin
             val budget = (TRANSPORT_BUDGET_MS - spent).coerceIn(MIN_VERIFY_MS, VERIFY_TIMEOUT_MS)
             val checkBegin = android.os.SystemClock.elapsedRealtime()
-            val (primaryMs, spareMs) = verifyPair(budget, withSpare = spareConfig != null)
+            // The method the user picked is not swapped out for a spare that answers first:
+            // it gets its whole check (XHTTP's first request is slower than Hysteria2's).
+            val picked = preferredTransport.isNotEmpty() && config.protocolType == preferredTransport
+            val (primaryMs, spareMs) = verifyPair(budget, withSpare = spareConfig != null, primaryGraceMs = if (picked) budget else PARALLEL_GRACE_MS)
             val winner = ColituWarmSpare.parallelWinner(primaryMs, spareMs)
             LogUtil.w(
                 AppConfig.TAG,
@@ -1742,10 +1756,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * Checks the primary and (with [withSpare]) the spare at the same time,
      * each through its own check inbound. The primary passing ends the
      * round; when the spare passes first, the primary still gets
-     * [PARALLEL_GRACE_MS] (a slightly slower primary keeps its role).
+     * [primaryGraceMs] (a slightly slower primary keeps its role).
      * Delays in ms, -1 failed, null not known (no spare, or not needed).
      */
-    private suspend fun verifyPair(timeoutMs: Long, withSpare: Boolean): Pair<Long, Long?> = coroutineScope {
+    private suspend fun verifyPair(timeoutMs: Long, withSpare: Boolean, primaryGraceMs: Long = PARALLEL_GRACE_MS): Pair<Long, Long?> = coroutineScope {
         val primary = async { verifyTunnel(timeoutMs, VerifyPath.Primary) }
         if (!withSpare) return@coroutineScope primary.await() to null
         val spare = async { verifyTunnel(timeoutMs, VerifyPath.Spare) }
@@ -1767,7 +1781,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             if (spareMs < 0) {
                 primary.await() to spareMs
             } else {
-                (withTimeoutOrNull(PARALLEL_GRACE_MS) { primary.await() } ?: -1L).also { primary.cancel() } to spareMs
+                (withTimeoutOrNull(primaryGraceMs) { primary.await() } ?: -1L).also { primary.cancel() } to spareMs
             }
         }
     }
@@ -1833,6 +1847,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memory.recordSuccess(networkKey, actual.id, config.protocolType, System.currentTimeMillis(), goodServer = acAuto && !actual.isMultihop)
         // The device was online and this transport worked: what failed before it in this round really stalled.
         memory.confirm(networkKey, actual.id, stalledThisConnect - config.protocolType.orEmpty(), System.currentTimeMillis())
+        val failedTcp = stalledThisConnect.filterNot { it in ColituNetworkHintsPolicy.UDP_TRANSPORTS }
+        if (config.protocolType in ColituNetworkHintsPolicy.UDP_TRANSPORTS && failedTcp.isNotEmpty()) {
+            tcpFailedToo("only ${config.protocolType} carried traffic after $failedTcp failed")
+        }
         attachedSpare = spareConfig?.let { spare -> (servers.firstOrNull { it.id == spare.serverId } ?: actual) to spare.protocolType.orEmpty() }
         connectedConfig = config
         connectedCandidates = candidates.ifEmpty { listOf(config) }
@@ -2004,6 +2022,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val udpPair = ColituTransportOrder.udpPair(protocol, spare?.second)
             val bothPathsDead = spare != null && !udpPair
             if (!bothPathsDead) udpStalled(protocol, paths = if (udpPair) 2 else 1)
+            if (protocol !in ColituNetworkHintsPolicy.UDP_TRANSPORTS) tcpFailedToo("$protocol stalled mid-session")
             if (ColituTransportOrder.markTransportAfterStall(online = true, bothPathsDead)) {
                 LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled mid-session ($STALL_PROBE_FAILURES probes failed, ${(now - started) / 1000} s after connect${if (proven) ", proven here: short penalty" else ""}), switching transport")
                 store.encode(
@@ -2131,6 +2150,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memory.recordSuccess(networkKey, spare.first.id, spare.second, now, goodServer = acAuto && !spare.first.isMultihop)
         saveMemory()
         udpStalled(protocol)
+        if (protocol !in ColituNetworkHintsPolicy.UDP_TRANSPORTS) tcpFailedToo("$protocol died under the spare")
         observe(server, protocol, reachable = false, latencyMs = null)
         flushObservations()
     }

@@ -42,6 +42,19 @@ class ColituUdpStallTest {
         assertTrue(ColituConnectMemory.fromJson(memory.toJson(), now + 5 * minute).udpDemoted(net, now + 5 * minute))
     }
 
+    // Device test 2026-10-26 (home Wi-Fi): TCP froze ~50 s in as well, so a demoted UDP left the
+    // phone reconnecting on TCP every minute. TCP failing too gives UDP its place back.
+    @Test
+    fun tcpFailingTooLiftsTheDemotion() {
+        val memory = ColituConnectMemory.empty()
+        memory.recordUdpStall(net, now, count = 2)
+        assertTrue(memory.liftUdpDemotion(net, now + minute))
+        assertFalse(memory.udpDemoted(net, now + minute))
+        // The count starts again: one more stall is not enough.
+        assertFalse(memory.recordUdpStall(net, now + 2 * minute))
+        assertFalse(memory.liftUdpDemotion(net, now + 3 * minute))
+    }
+
     @Test
     fun stallsFarApartDoNotDemote() {
         val memory = ColituConnectMemory.empty()

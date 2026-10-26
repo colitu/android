@@ -272,6 +272,18 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
     /** UDP transports go after the TCP ones on this network (see [recordUdpStall]). */
     fun udpDemoted(network: String, now: Long): Boolean = valueOf(udpDemotedKey(network), now) != null
 
+    /**
+     * The TCP transports fail on this network too (DPI freezing them, or
+     * only UDP carried traffic in a connect): UDP goes back to its place and
+     * the count starts again. True when UDP was demoted (for the log).
+     */
+    fun liftUdpDemotion(network: String, now: Long): Boolean {
+        val was = udpDemoted(network, now)
+        entries.remove(udpDemotedKey(network))
+        entries.remove(udpStallsKey(network))
+        return was
+    }
+
     /** Every transport of [serverId] failed on this network. */
     fun penalize(network: String, serverId: String, now: Long) {
         put("$PENALTY|$network|$serverId", "1", now)
