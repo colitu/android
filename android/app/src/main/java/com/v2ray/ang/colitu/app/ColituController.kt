@@ -844,6 +844,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private val stalledThisConnect = mutableSetOf<String>()
 
+    /** Of [stalledThisConnect], those that failed on a fresh profile outside a server outage. */
+    private val freshFailedThisConnect = mutableSetOf<String>()
+
     /**
      * This round's outside probe found no TCP transport of the server answering while the phone is
      * online: a server outage. Its failed transports get no stall mark (once the outage ended, the
@@ -1049,9 +1052,16 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (!continuing) {
             deadSpares.clear()
             stalledThisConnect.clear()
+            freshFailedThisConnect.clear()
             reconnecting = false
             reconnectAttempt = 0
             resumeOnNetwork = false
+        } else {
+            // A recovery the watcher started: when it fails, the automatic
+            // reconnects follow (fail() → scheduleReconnect) instead of the
+            // tunnel staying down until the user taps again.
+            reconnecting = true
+            reconnectAttempt = 0
         }
         connectJob?.cancel()
         verifyJob?.cancel()
@@ -1120,7 +1130,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val wait = RECONNECT_DELAYS_MS.getOrNull(reconnectAttempt) ?: return false
         reconnectAttempt++
         verifyJob?.cancel()
-        stalledThisConnect.clear()
+        // What stalled in this connect stays last (it is cleared once a connect succeeds).
         reconnecting = true
         userStopped = false
         cancelledStart = false
@@ -1239,8 +1249,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         LogUtil.w(AppConfig.TAG, "Colitu: every transport failed on the server, trying another one (${failed.size})")
                         phase = ConnectPhase.SwitchingServer
                         showToast(ColituLoc["home.phase.switchingServer"], error = false)
-                        // Transports are judged per server; what stalls on every server is in the memory.
-                        stalledThisConnect.clear()
+                        // What stalled on the last server stays last here too (not left out): cleared,
+                        // a UDP stall led the next server with Hysteria2 again.
                     }
                 }
             }
@@ -1268,9 +1278,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private suspend fun connectViaRecoverySet(context: Application, failed: List<String>, begin: Long): Boolean {
         if (!ColituFeatures.recoverySet()) return false
-        val plan = ColituServerRepository.recoveryPlan(failed) ?: return false
+        // A server penalized on this network (both paths just died there) goes last, not first again.
+        val plan = ColituServerRepository.recoveryPlan(failed, memory.penalized(networkKey, System.currentTimeMillis())) ?: return false
         LogUtil.w(AppConfig.TAG, "Colitu: API unreachable and no usable cache: recovery set, ${plan.entries.size} servers (until ${plan.until})")
-        val deadline = android.os.SystemClock.elapsedRealtime() + CONNECT_BUDGET_MS
+        // The connect's own budget, not a fresh one on top of it (recoveries took 150-168 s);
+        // at least one server's worth when the regular attempts used it up.
+        val deadline = ColituTransportOrder.recoveryDeadline(begin, android.os.SystemClock.elapsedRealtime(), CONNECT_BUDGET_MS, SERVER_BUDGET_MS)
         val entries = plan.entries
         fun serverOf(id: String, configs: List<ColituVpnConfig>) =
             servers.firstOrNull { it.id == id } ?: ColituServer(id, id, configs.firstOrNull()?.serverCountry, null, false, true)
@@ -1281,13 +1294,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val offered = restrictFor(server, configs)
             if (offered.isEmpty()) continue
             offeredTransports = offered.mapNotNull { it.protocolType }.toSet()
-            stalledThisConnect.clear()
             if (serviceUp) {
                 stopService(force = true, hold = true)
                 delay(TEARDOWN_SETTLE_MS)
             }
             val next = entries.getOrNull(index + 1)?.let { (nextId, nextConfigs) ->
-                serverOf(nextId, nextConfigs) to restrictFor(server, nextConfigs)
+                val nextServer = serverOf(nextId, nextConfigs)
+                nextServer to restrictFor(nextServer, nextConfigs)
             }?.takeIf { it.second.isNotEmpty() }
             LogUtil.w(AppConfig.TAG, "Colitu: recovery: trying ${id.take(8)}/${configs.firstOrNull()?.serverCountry ?: "?"}")
             val spare = planSpare(server, recovery = true, recoveryNext = next)
@@ -1354,6 +1367,19 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val switched = safeCall { ColituServerRepository.selectServer(server.id) }
             switched.exceptionOrNull()?.let {
                 if (it.message == "auth_expired") endSession(ColituLoc["auth.expired"])
+                // The API did not answer at all: this server's own cached profile still carries the
+                // connect (no fetch follows, so the panel's old preference cannot hand out another node).
+                if (it.message in API_NETWORK_FAILURES) {
+                    val stored = ColituServerRepository.cachedConfigCandidates(server.id)?.let { c -> restrictFor(server, c) }?.takeIf { c -> c.isNotEmpty() }
+                    if (stored != null) {
+                        LogUtil.w(AppConfig.TAG, "Colitu: server preference not synced (${it.message}); trying the cached profile of ${server.id.take(8)}")
+                        when (tryStart(context, server, orderForStart(server, stored, probe = false), begin, fromCache = true, deadline, planSpare(server), stored)) {
+                            StartOutcome.Connected -> return ServerOutcome.Connected
+                            StartOutcome.Offline -> return ServerOutcome.Fatal("network_error")
+                            is StartOutcome.Failed -> Unit
+                        }
+                    }
+                }
                 return ServerOutcome.Fatal(it.message)
             }
             store.encode(KEY_SYNCED_SERVER, server.id)
@@ -1399,6 +1425,16 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
         val fetched = candidates.getOrElse {
             if (it.message == "auth_expired") endSession(ColituLoc["auth.expired"])
+            // The API did not answer: the cached transports after the first one are tried before giving up.
+            val rest = cached?.let { c -> orderForStart(server, c, probe = false).drop(1) }.orEmpty()
+            if (it.message in API_NETWORK_FAILURES && rest.isNotEmpty()) {
+                LogUtil.w(AppConfig.TAG, "Colitu: profile fetch failed (${it.message}); trying the other cached transports ${rest.mapNotNull { c -> c.protocolType }}")
+                when (val outcome = tryStart(context, server, rest, begin, fromCache = true, deadline, spare, cached!!)) {
+                    StartOutcome.Connected -> return ServerOutcome.Connected
+                    StartOutcome.Offline -> return ServerOutcome.Fatal("network_error")
+                    is StartOutcome.Failed -> cameUp = cameUp || outcome.cameUp
+                }
+            }
             // The route was removed or renamed: learn the current list.
             if (it.message == "MULTIHOP_ROUTE_NOT_FOUND") viewModelScope.launch { load(showLoading = false) }
             return ServerOutcome.Fatal(it.message)
@@ -1581,7 +1617,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (stalled != remembered + stalledThisConnect) {
             val network = networkKey
             val worked = offered.filterTo(mutableSetOf()) { memory.workedOnNetwork(network, it, now) }
-            val order = ColituTransportOrder.lockedOrder(configs, remembered, stalledThisConnect, worked)
+            // UDP put last on this network stays last: Hysteria2 always "worked" (it connects every time),
+            // so the locked order led with it again.
+            val order = ColituTransportOrder.udpLast(
+                ColituTransportOrder.lockedOrder(configs, remembered, stalledThisConnect, worked),
+                memory.udpDemoted(network, now),
+            )
             LogUtil.w(
                 AppConfig.TAG,
                 "Colitu: stall marks cover (almost) every transport ($remembered): a network problem, ignored for this round; order ${order.mapNotNull { it.protocolType }}",
@@ -1795,6 +1836,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 observe(actual, protocol, reachable = false, latencyMs = null)
                 // A server outage is not this transport's fault.
                 if (!serverOutageThisRound) {
+                    freshFailedThisConnect += protocol
                     memory.markStalled(networkKey, actual.id, protocol, System.currentTimeMillis(), confirmed = false)
                     saveMemory()
                 }
@@ -1847,10 +1889,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memory.recordSuccess(networkKey, actual.id, config.protocolType, System.currentTimeMillis(), goodServer = acAuto && !actual.isMultihop)
         // The device was online and this transport worked: what failed before it in this round really stalled.
         memory.confirm(networkKey, actual.id, stalledThisConnect - config.protocolType.orEmpty(), System.currentTimeMillis())
-        val failedTcp = stalledThisConnect.filterNot { it in ColituNetworkHintsPolicy.UDP_TRANSPORTS }
+        // Only fresh profiles outside a server outage say TCP fails here: a stale cached one does not.
+        val failedTcp = freshFailedThisConnect.filterNot { it in ColituNetworkHintsPolicy.UDP_TRANSPORTS }
         if (config.protocolType in ColituNetworkHintsPolicy.UDP_TRANSPORTS && failedTcp.isNotEmpty()) {
             tcpFailedToo("only ${config.protocolType} carried traffic after $failedTcp failed")
         }
+        // This connect is over: hours later its stalls must not reorder (or "confirm") the next one.
+        stalledThisConnect.clear()
+        freshFailedThisConnect.clear()
         attachedSpare = spareConfig?.let { spare -> (servers.firstOrNull { it.id == spare.serverId } ?: actual) to spare.protocolType.orEmpty() }
         connectedConfig = config
         connectedCandidates = candidates.ifEmpty { listOf(config) }
@@ -2038,7 +2084,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 // Marking the transport put the worst one first once the outage ended.
                 LogUtil.w(AppConfig.TAG, "Colitu: $protocol and the warm spare carried nothing together (${(now - started) / 1000} s after connect); the transport is not marked, reconnecting")
             }
-            leaveServerIfBothDead(server, bothPathsDead)
+            // A spare on another server dying at the same time points at the phone's network
+            // (or a frozen app), not at this server: it is kept.
+            leaveServerIfBothDead(server, bothPathsDead, spareOnOtherServer = spare != null && spare.first.id != server.id)
             stalledThisConnect += protocol
             observe(server, protocol, reachable = false, latencyMs = null)
             flushObservations()
@@ -2054,8 +2102,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * server is penalized (30 min, this network), so the reconnect starts on the next ranked server
      * instead of this server's other transports. A picked server is kept. Same rule as Windows/Linux.
      */
-    private suspend fun leaveServerIfBothDead(server: ColituServer, bothPathsDead: Boolean) {
-        if (!ColituTransportOrder.leaveServerWhenBothDead(connectsAutomatically && !server.isMultihop, deviceOnline(), bothPathsDead)) return
+    private suspend fun leaveServerIfBothDead(server: ColituServer, bothPathsDead: Boolean, spareOnOtherServer: Boolean = false) {
+        if (bothPathsDead && spareOnOtherServer) {
+            LogUtil.w(AppConfig.TAG, "Colitu: both paths died, the spare on another server too: the network, not ${server.id.take(8)}; server kept")
+        }
+        if (!ColituTransportOrder.leaveServerWhenBothDead(connectsAutomatically && !server.isMultihop, deviceOnline(), bothPathsDead, spareOnOtherServer)) return
         memory.penalize(networkKey, server.id, System.currentTimeMillis())
         saveMemory()
         LogUtil.w(AppConfig.TAG, "Colitu: both paths died on ${server.id.take(8)}; penalized for 30 minutes, the reconnect starts on the next server")
@@ -2826,6 +2877,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         /** Automatic reconnects after an unexpected drop, then the error. */
         private val RECONNECT_DELAYS_MS = longArrayOf(2_000L, 5_000L, 15_000L)
         /** Failures worth another automatic reconnect (not the account, plan or device pause). */
+        /** API errors where no base answered at all (not an answer of the panel): a cached profile may still connect. */
+        private val API_NETWORK_FAILURES = setOf("network_error", "timeout")
         private val RECONNECT_RETRY_CODES = setOf(
             "UNREACHABLE", "VERIFY_FAILED", "TUNNEL_TIMEOUT", "ENGINE_FAILED", "TUN_FAILED",
             "NETWORK_ERROR", "TIMEOUT", "IO_ERROR", "SERVER_UNAVAILABLE", "SERVICE_UNAVAILABLE", "CONFIG_NOT_READY",
@@ -2936,8 +2989,19 @@ internal object ColituTransportOrder {
      * i.e. primary and spare both) may lead to a reconnect; a dead primary
      * whose spare still carries the traffic never does.
      */
-    /** Automatic mode leaves a server whose primary and spare both died while the device is online. */
-    fun leaveServerWhenBothDead(automatic: Boolean, online: Boolean, bothPathsDead: Boolean): Boolean = automatic && online && bothPathsDead
+    /**
+     * Deadline of the recovery set's run: what is left of the connect's budget from [begin],
+     * at least [minBudgetMs] from [now] (the set is the last resort, never skipped).
+     */
+    fun recoveryDeadline(begin: Long, now: Long, connectBudgetMs: Long, minBudgetMs: Long): Long =
+        maxOf(begin + connectBudgetMs, now + minBudgetMs)
+
+    /**
+     * Automatic mode leaves a server whose primary and spare both died while the device is online,
+     * unless the spare ran on another server: two servers dying at once is the phone's network.
+     */
+    fun leaveServerWhenBothDead(automatic: Boolean, online: Boolean, bothPathsDead: Boolean, spareOnOtherServer: Boolean = false): Boolean =
+        automatic && online && bothPathsDead && !spareOnOtherServer
 
     /**
      * After the watcher's verdict the transport gets a stall mark only when the phone is online and it
@@ -3008,6 +3072,10 @@ internal object ColituTransportOrder {
                 .thenBy { it.protocolType in remembered }
                 .thenBy { rankOf(it.protocolType, emptySet()) },
         )
+
+    /** [order] with the UDP transports moved behind the rest (in their order) while UDP is [demoted] on the network. */
+    fun udpLast(order: List<ColituVpnConfig>, demoted: Boolean): List<ColituVpnConfig> =
+        if (demoted) order.sortedBy { it.protocolType in ColituNetworkHintsPolicy.UDP_TRANSPORTS } else order
 
     fun effectiveStalled(offered: Collection<String>, remembered: Set<String>, thisConnect: Set<String>): Set<String> {
         val all = remembered + thisConnect

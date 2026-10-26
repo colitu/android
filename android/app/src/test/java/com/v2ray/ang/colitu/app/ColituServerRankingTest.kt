@@ -209,14 +209,17 @@ class ColituServerRankingTest {
     }
 
     @Test
-    fun tentativeHysteriaStallBecomesANetworkStallOnceAnotherTransportWorks() {
+    fun tentativeHysteriaStallBecomesAServerStallOnceAnotherTransportWorks() {
         val memory = ColituConnectMemory.empty()
         memory.markStalled(net, "de", "hysteria2", now, confirmed = false)
+        // Right after the stall (10 min) the next server does not lead with Hysteria2 again.
         assertEquals(setOf("hysteria2"), memory.stalled(net, "fi", now + minute))
         memory.confirm(net, "de", setOf("hysteria2"), now + minute)
         memory.recordSuccess(net, "de", "vless-xhttp", now + minute)
-        // The next server of this network does not lead with Hysteria2 again.
-        assertEquals(setOf("hysteria2"), memory.stalled(net, "fi", now + 5 * hour))
+        // Confirmed it stays on its server for 6 h; UDP as a whole goes last only after
+        // repeated stalls (recordUdpStall), not after one (audit 2026-10-26).
+        assertEquals(setOf("hysteria2"), memory.stalled(net, "de", now + 5 * hour))
+        assertTrue(memory.stalled(net, "fi", now + 5 * hour).isEmpty())
     }
 
     @Test

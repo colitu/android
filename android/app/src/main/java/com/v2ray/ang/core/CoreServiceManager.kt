@@ -248,6 +248,8 @@ object CoreServiceManager {
 
     /** [keepReceiver]: a hold, the service still has to hear the next stop or hold. */
     fun stopCoreLoop(keepReceiver: Boolean = false): Boolean {
+        // Cleared before the service check: left behind, every API call tried the dead SOCKS port first.
+        colituStore.removeValueForKey(AppConfig.PREF_COLITU_CONNECTED_AT)
         val service = getService() ?: return false
         cslSession.incrementAndGet()
         com.v2ray.ang.colitu.data.ColituCslRuntime.stop()
@@ -263,7 +265,6 @@ object CoreServiceManager {
         }
 
         stopColituTraffic()
-        colituStore.removeValueForKey(AppConfig.PREF_COLITU_CONNECTED_AT)
         val reason = if (keepReceiver) STOP_HOLD else colituStopReason
         colituStopReason = ""
         MessageUtil.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, reason)

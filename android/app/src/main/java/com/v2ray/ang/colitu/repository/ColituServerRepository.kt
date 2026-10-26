@@ -259,7 +259,11 @@ object ColituServerRepository {
      * rendered like a cached config but valid until `recovery_until`. A set
      * past that time is deleted; null when there is nothing to try.
      */
-    fun recoveryPlan(failedServers: Collection<String>, now: java.time.Instant = com.v2ray.ang.colitu.api.ColituClock.now()): RecoveryPlan? {
+    fun recoveryPlan(
+        failedServers: Collection<String>,
+        penalized: Collection<String> = emptyList(),
+        now: java.time.Instant = com.v2ray.ang.colitu.api.ColituClock.now(),
+    ): RecoveryPlan? {
         if (!com.v2ray.ang.colitu.data.ColituFeatures.recoverySet()) return null
         val raw = ColituSecureStore.get(KEY_RECOVERY_SET) ?: return null
         val set = ColituRecoverySet.parse(raw)
@@ -271,7 +275,7 @@ object ColituServerRepository {
             ColituSecureStore.remove(KEY_RECOVERY_SET)
             return null
         }
-        val entries = ColituRecoverySet.serversToTry(set, failedServers).mapNotNull { envelope ->
+        val entries = ColituRecoverySet.serversToTry(set, failedServers, penalized).mapNotNull { envelope ->
             val id = ColituRecoverySet.serverId(envelope) ?: return@mapNotNull null
             val configs = runCatching { XrayMobileAdapter.renderCandidates(envelope, now, set.recoveryUntil) }.getOrNull()
                 ?.filter { !it.rawConfig.isNullOrBlank() }

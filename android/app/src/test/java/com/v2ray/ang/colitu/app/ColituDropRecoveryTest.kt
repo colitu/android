@@ -163,6 +163,14 @@ class ColituDropRecoveryTest {
         assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = false))
     }
 
+    @Test
+    fun aSpareOnAnotherServerDyingTooKeepsTheServer() {
+        // 10-26 log: hysteria2 on IL and a vless-reality spare on another server died together;
+        // IL was penalized and the reconnect hopped servers although the phone's path was at fault.
+        assertEquals(false, ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = true, spareOnOtherServer = true))
+        assertTrue(ColituTransportOrder.leaveServerWhenBothDead(automatic = true, online = true, bothPathsDead = true, spareOnOtherServer = false))
+    }
+
     // A server outage (2026-10-22 Windows test PC: every port of the server blocked for 40 s) marked
     // each transport it tried; once the outage ended the round landed on the worst one, which then got
     // the only good mark and kept the others last for 6 h.

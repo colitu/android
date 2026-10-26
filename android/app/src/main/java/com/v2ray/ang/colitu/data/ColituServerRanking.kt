@@ -231,20 +231,24 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
      * about the transports. [confirm] makes it a 6 h one once another
      * transport carried traffic on this network.
      */
-    fun markStalled(network: String, serverId: String, transport: String, now: Long, confirmed: Boolean = true) {
+    fun markStalled(network: String, serverId: String, transport: String, now: Long, confirmed: Boolean = true, networkWide: Boolean = true) {
         val prefix = if (confirmed) ::stalledPrefix else ::tentativePrefix
         put(prefix(network, serverId) + transport, "1", now)
-        put(prefix(network, ANY) + transport, "1", now)
+        if (networkWide) put(prefix(network, ANY) + transport, "1", now)
         if (valueOf(goodTransportKey(network, serverId), now) == transport) entries.remove(goodTransportKey(network, serverId))
     }
 
-    /** Another transport worked on this network: the tentative stalls of [transports] on [serverId] become 6 h ones. */
+    /**
+     * Another transport worked on this network: the tentative stalls of [transports] on [serverId] become 6 h ones.
+     * A UDP transport's becomes one for this server only: one Hysteria2 stall (a Wi-Fi hiccup) put it
+     * last on every server of the network for 6 h; UDP as a whole goes last only through [recordUdpStall].
+     */
     fun confirm(network: String, serverId: String, transports: Collection<String>, now: Long) {
         transports.forEach { transport ->
             if (alive(tentativePrefix(network, serverId) + transport, now) || alive(tentativePrefix(network, ANY) + transport, now)) {
                 entries.remove(tentativePrefix(network, serverId) + transport)
                 entries.remove(tentativePrefix(network, ANY) + transport)
-                markStalled(network, serverId, transport, now, confirmed = true)
+                markStalled(network, serverId, transport, now, confirmed = true, networkWide = transport !in ColituNetworkHintsPolicy.UDP_TRANSPORTS)
             }
         }
     }
@@ -279,9 +283,11 @@ class ColituConnectMemory private constructor(private val entries: MutableMap<St
      */
     fun liftUdpDemotion(network: String, now: Long): Boolean {
         val was = udpDemoted(network, now)
+        // Without a demotion the count stays: one failed TCP attempt must not keep it from ever reaching the threshold.
+        if (!was) return false
         entries.remove(udpDemotedKey(network))
         entries.remove(udpStallsKey(network))
-        return was
+        return true
     }
 
     /** Every transport of [serverId] failed on this network. */

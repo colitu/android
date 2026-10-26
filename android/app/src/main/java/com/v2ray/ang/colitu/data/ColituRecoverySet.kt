@@ -81,9 +81,12 @@ object ColituRecoverySet {
     /** ColituApiClient reports "every base failed before an answer" as code -1; 4xx/5xx answers are not network-level. */
     fun isNetworkLevel(code: Int): Boolean = code == -1
 
-    /** The envelopes to try, in the set's order, without servers that already failed in this connect. */
-    fun serversToTry(set: ColituRecoverySetData, failedServers: Collection<String>): List<JsonObject> =
-        set.configs.filter { serverId(it) !in failedServers }
+    /**
+     * The envelopes to try, in the set's order, without servers that already failed in this connect.
+     * Servers penalized on this network (e.g. both paths just died there) go last, still in the set's order.
+     */
+    fun serversToTry(set: ColituRecoverySetData, failedServers: Collection<String>, penalized: Collection<String> = emptyList()): List<JsonObject> =
+        set.configs.filter { serverId(it) !in failedServers }.sortedBy { serverId(it) in penalized }
 
     /** A fetch is due without a stored set, or when its `generated_at` is older than [REFRESH_AFTER_MS]; never within [MIN_ATTEMPT_GAP_MS] of the last attempt. */
     fun refreshDue(stored: ColituRecoverySetData?, lastAttemptMs: Long, nowMs: Long): Boolean {

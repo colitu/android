@@ -91,6 +91,15 @@ class ColituRecoverySetTest {
     }
 
     @Test
+    fun penalizedServersGoLastNotFirst() {
+        // 10-26 log: both paths died on s1, it was penalized, then the recovery set tried s1 first again.
+        val set = ColituRecoverySet.parse(raw())!!
+        assertEquals(listOf("s2", "s3", "s1"), ColituRecoverySet.serversToTry(set, emptyList(), listOf("s1")).map { ColituRecoverySet.serverId(it) })
+        assertEquals(listOf("s2", "s1", "s3"), ColituRecoverySet.serversToTry(set, emptyList(), listOf("s3", "s1")).map { ColituRecoverySet.serverId(it) })
+        assertEquals(listOf("s3", "s1"), ColituRecoverySet.serversToTry(set, listOf("s2"), listOf("s1")).map { ColituRecoverySet.serverId(it) })
+    }
+
+    @Test
     fun authAnswersDeleteTheSetNetworkErrorsAndServerErrorsKeepIt() {
         assertEquals(ColituRecoverySet.FetchError.DeleteSet, ColituRecoverySet.onFetchError(401, isAuthError = true))
         assertEquals(ColituRecoverySet.FetchError.DeleteSet, ColituRecoverySet.onFetchError(401, isAuthError = false))

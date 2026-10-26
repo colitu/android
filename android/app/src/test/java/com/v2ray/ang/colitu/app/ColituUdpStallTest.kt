@@ -120,4 +120,50 @@ class ColituUdpStallTest {
         assertEquals("hysteria2", ColituTransportChoice.normalize(" Hysteria2 "))
         assertEquals("", ColituTransportChoice.normalize(null))
     }
+
+    // Audit 2026-10-26: one Hysteria2 stall (a Wi-Fi hiccup) followed by a TCP connect put
+    // Hysteria2 last on every server of the network for 6 h.
+    @Test
+    fun aConfirmedHysteria2StallStaysOnItsServer() {
+        val memory = ColituConnectMemory.empty()
+        memory.markStalled(net, "ee", "hysteria2", now, confirmed = false)
+        memory.markStalled(net, "ee", "trojan", now, confirmed = false)
+        // Tentative (10 min): every server of the network, as before.
+        assertTrue("hysteria2" in memory.stalled(net, "fi", now + minute))
+        memory.confirm(net, "ee", listOf("hysteria2", "trojan"), now + minute)
+        val later = now + ColituConnectMemory.TENTATIVE_STALL_TTL_MS + 2 * minute
+        assertTrue("hysteria2" in memory.stalled(net, "ee", later))
+        assertFalse("hysteria2" in memory.stalled(net, "fi", later))
+        // A TCP transport's confirmed stall still counts network-wide.
+        assertTrue("trojan" in memory.stalled(net, "fi", later))
+    }
+
+    @Test
+    fun oneFailedTcpAttemptDoesNotResetTheUdpCount() {
+        val memory = ColituConnectMemory.empty()
+        memory.recordUdpStall(net, now)
+        // Not demoted: nothing to lift, and the first stall still counts.
+        assertFalse(memory.liftUdpDemotion(net, now + minute))
+        assertTrue(memory.recordUdpStall(net, now + 2 * minute))
+        assertTrue(memory.udpDemoted(net, now + 2 * minute))
+    }
+
+    @Test
+    fun demotedUdpStaysLastWhenTheMarksAreIgnored() {
+        fun config(p: String) = ColituVpnConfig("ee", null, "xray-mobile-v1", p, "{}", null, false)
+        val locked = all.map(::config)
+        assertEquals(
+            listOf("vless-reality", "vless-xhttp", "trojan", "shadowsocks", "hysteria2"),
+            ColituTransportOrder.udpLast(locked, demoted = true).map { it.protocolType },
+        )
+        assertEquals(all, ColituTransportOrder.udpLast(locked, demoted = false).map { it.protocolType })
+    }
+
+    // 150-168 s recoveries: the recovery set started a fresh 45 s budget on top of the connect's own.
+    @Test
+    fun theRecoverySetSharesTheConnectBudget() {
+        assertEquals(45_000L, ColituTransportOrder.recoveryDeadline(begin = 0L, now = 10_000L, connectBudgetMs = 45_000L, minBudgetMs = 20_000L))
+        // Budget used up: one server's worth, never nothing.
+        assertEquals(70_000L, ColituTransportOrder.recoveryDeadline(begin = 0L, now = 50_000L, connectBudgetMs = 45_000L, minBudgetMs = 20_000L))
+    }
 }
