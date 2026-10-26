@@ -399,12 +399,44 @@ object XrayMobileAdapter {
         })
     }
 
+    private val XMUX_KEYS = setOf("maxConcurrency", "maxConnections", "cMaxReuseTimes", "hMaxRequestTimes", "hMaxReusableSecs", "hKeepAlivePeriod")
+    private val XMUX_VALUE = Regex("^\\d{1,6}(-\\d{1,6})?$")
+
+    // Optional XHTTP connection reuse (Xray xmux) sent by the panel. Only known keys with a
+    // plain number or a "min-max" range pass through, so a bad value cannot break the config.
+    private fun xmux(t: JsonObject): JsonObject? {
+        val source = t.get("xmux")?.takeIf { it.isJsonObject }?.asJsonObject
+            ?: xmuxTestSpec(com.v2ray.ang.BuildConfig.COLITU_XMUX_TEST)
+            ?: return null
+        val out = JsonObject()
+        for (key in XMUX_KEYS) {
+            val value = source.get(key)?.takeIf { it.isJsonPrimitive } ?: continue
+            val ok = if (value.asJsonPrimitive.isNumber) value.asLong in 0..999_999 else XMUX_VALUE.matches(value.asString)
+            if (ok) out.add(key, value)
+        }
+        return out.takeIf { it.size() > 0 }
+    }
+
+    // "maxConnections=1;maxConcurrency=16-32" from the -PcolituXmuxTest test build (empty in a shipped build).
+    internal fun xmuxTestSpec(spec: String): JsonObject? {
+        if (spec.isBlank()) return null
+        val out = JsonObject()
+        for (pair in spec.split(';')) {
+            val parts = pair.split('=', limit = 2).map { it.trim() }
+            if (parts.size != 2) continue
+            val number = parts[1].toLongOrNull()
+            if (number != null) out.addProperty(parts[0], number) else out.addProperty(parts[0], parts[1])
+        }
+        return out.takeIf { it.size() > 0 }
+    }
+
     private fun stream(t: JsonObject, s: JsonObject) = JsonObject().apply {
         addProperty("network", t.requiredString("type"))
         if (t.requiredString("type") == "xhttp") {
             add("xhttpSettings", JsonObject().apply {
                 addProperty("path", t.requiredString("path"))
                 addProperty("mode", t.get("mode")?.takeIf { it.isJsonPrimitive }?.asString ?: "auto")
+                xmux(t)?.let { mux -> add("extra", JsonObject().apply { add("xmux", mux) }) }
             })
         }
         val type = s.requiredString("type")

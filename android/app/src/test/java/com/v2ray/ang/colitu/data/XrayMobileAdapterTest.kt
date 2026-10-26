@@ -235,6 +235,42 @@ class XrayMobileAdapterTest {
         assertFalse(user.has("flow"))
     }
 
+    @Test
+    fun xhttpXmuxPassesOnlyKnownKeysWithSafeValues() {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-xhttp")
+        payload.add("transport", JsonParser.parseString(
+            """{"type":"xhttp","path":"/p","mode":"auto","xmux":{"maxConnections":1,"maxConcurrency":"16-32","hMaxReusableSecs":"x; drop","evil":5}}"""))
+        val outbound = JsonParser.parseString(requireNotNull(XrayMobileAdapter.render(source, now).rawConfig)).asJsonObject
+            .getAsJsonArray("outbounds")[0].asJsonObject
+        val xmux = outbound.getAsJsonObject("streamSettings").getAsJsonObject("xhttpSettings")
+            .getAsJsonObject("extra").getAsJsonObject("xmux")
+        assertEquals(1, xmux.get("maxConnections").asInt)
+        assertEquals("16-32", xmux.get("maxConcurrency").asString)
+        assertFalse(xmux.has("hMaxReusableSecs"))
+        assertFalse(xmux.has("evil"))
+    }
+
+    @Test
+    fun xmuxTestSpecParsesNumbersAndRanges() {
+        val spec = requireNotNull(XrayMobileAdapter.xmuxTestSpec("maxConnections=1; maxConcurrency=16-32;broken"))
+        assertEquals(1, spec.get("maxConnections").asInt)
+        assertEquals("16-32", spec.get("maxConcurrency").asString)
+        assertEquals(null, XrayMobileAdapter.xmuxTestSpec(""))
+    }
+
+    @Test
+    fun xhttpWithoutXmuxKeepsTheDefaults() {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-xhttp")
+        payload.add("transport", JsonParser.parseString("""{"type":"xhttp","path":"/p","mode":"auto"}"""))
+        val outbound = JsonParser.parseString(requireNotNull(XrayMobileAdapter.render(source, now).rawConfig)).asJsonObject
+            .getAsJsonArray("outbounds")[0].asJsonObject
+        assertFalse(outbound.getAsJsonObject("streamSettings").getAsJsonObject("xhttpSettings").has("extra"))
+    }
+
     // A missing field is reported like every other missing profile field.
     @Test(expected = IllegalStateException::class)
     fun rejectsVlessXhttpWithoutPath() {

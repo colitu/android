@@ -78,6 +78,8 @@ android {
         buildConfigField("boolean", "COLITU_OPT_IN_REPORTING", "false")
         // -PcolituRecoveryTest=true: test build for the recovery set (API blackholed, regular cache ignored). Never in a shipped build.
         buildConfigField("boolean", "COLITU_RECOVERY_TEST", (providers.gradleProperty("colituRecoveryTest").orNull == "true").toString())
+        // -PcolituXmuxTest="maxConnections=1;maxConcurrency=16-32": test build that applies this XHTTP xmux to every XHTTP profile without a panel setting. Never in a shipped build.
+        buildConfigField("String", "COLITU_XMUX_TEST", "\"" + (providers.gradleProperty("colituXmuxTest").orNull ?: "").replace("\"", "") + "\"")
         // Adaptive Connect 3.0 (hinted start order + recovery set): off unless -PcolituAdaptiveConnect3=true. See ColituFeatures.
         buildConfigField("boolean", "COLITU_ADAPTIVE_CONNECT_3", (providers.gradleProperty("colituAdaptiveConnect3").orNull == "true").toString())
     }
