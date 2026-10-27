@@ -192,10 +192,12 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     // Passport (saved to the account): the app keeps the city for the stamp,
     // reads the server state after sign-in and after a connect, and opens the
     // passport from its notification.
-    LaunchedEffect(c.connected, c.connectedServerId) {
+    LaunchedEffect(c.connected, c.connectedServerId, c.autoSelection) {
         if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituPassport.rememberCity(it.countryCode, it.city) }
-        // Recently used servers (this device only): Locations and the home shortcuts.
-        if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituQuickServers.recordConnected(it.id) }
+        // Recently used servers (this device only): Locations and the home shortcuts. Only servers
+        // the user picked; an automatic or recovery pick tapped there later would switch the app
+        // to manual mode, where Adaptive Connect no longer moves away from a failing server.
+        if (c.connected && !c.autoSelection) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituQuickServers.recordConnected(it.id) }
     }
     LaunchedEffect(c.connected) {
         if (c.connected) com.v2ray.ang.colitu.data.PassportSync.refreshLater(5_000L)
