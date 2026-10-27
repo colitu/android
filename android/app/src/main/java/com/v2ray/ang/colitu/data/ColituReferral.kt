@@ -152,8 +152,9 @@ data class ColituReferral(
             return ColituReferral(
                 code = str("code").orEmpty(),
                 link = link,
-                inviteeDays = int("invitee_days", 7),
-                rewardDays = int("reward_days", 7),
+                // Fallbacks match the panel's rules since 2026-10-27 (1 day each).
+                inviteeDays = int("invitee_days", 1),
+                rewardDays = int("reward_days", 1),
                 monthlyCap = int("monthly_cap", 6),
                 invited = int("invited"),
                 pending = int("pending"),

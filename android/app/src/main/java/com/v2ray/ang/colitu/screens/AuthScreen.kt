@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.v2ray.ang.colitu.app.safeCall
 import com.v2ray.ang.colitu.data.ColituInvite
+import com.v2ray.ang.colitu.data.ColituUpsell
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBackdrop
 import com.v2ray.ang.colitu.design.ColituButton
@@ -299,6 +300,14 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
                 message?.let {
                     Spacer(Modifier.height(16.dp))
                     ColituNotice(it)
+                    // Device limit at sign-in: Premium allows more devices. Only
+                    // where the build may link to the website (not the Play build,
+                    // which sells in the app after sign-in).
+                    if (it == loc["err.deviceLimit"] && upsellRoute == ColituUpsell.Route.Web) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            ColituLinkButton(loc["upsell.moreDevices"], { openUrl(context, PRICING_URL) }, icon = ColituIcons.ArrowUpRightSquare)
+                        }
+                    }
                 }
                 Spacer(Modifier.height(20.dp))
                 ColituButton(

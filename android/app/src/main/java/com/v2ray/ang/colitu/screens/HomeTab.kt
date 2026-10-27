@@ -56,6 +56,7 @@ import com.v2ray.ang.colitu.data.ColituMultihop
 import com.v2ray.ang.colitu.data.ColituRotation
 import com.v2ray.ang.colitu.data.ColituReferral
 import com.v2ray.ang.colitu.data.ColituRotationStatus
+import com.v2ray.ang.colitu.data.ColituUpsell
 import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBadge
@@ -128,7 +129,7 @@ fun HomeTab(
         // is made the active one (or the plan allows more).
         ShellScroll {
             Spacer(Modifier.height(8.dp))
-            PausedDevicePanel(c, pause)
+            PausedDevicePanel(c, pause, onOpenPlan)
             Spacer(Modifier.height(12.dp))
             PlanRow(c, onOpenPlan, Modifier)
         }
@@ -199,7 +200,13 @@ fun HomeTab(
         }
         c.trialEndBanner?.let { outlook ->
             Spacer(Modifier.height(12.dp))
-            TrialEndBanner(outlook, onDismiss = { c.dismissTrialBanner() })
+            val entitlement = c.user?.entitlementStatus ?: c.planStatus
+            TrialEndBanner(
+                outlook,
+                onDismiss = { c.dismissTrialBanner() },
+                onOpenPlan = onOpenPlan,
+                trial = entitlement.equals("trialing", true) || entitlement.equals("trial_active", true),
+            )
         }
         ColituNoticeSlot()
         if (advanced) {
@@ -273,7 +280,7 @@ private fun InviteCard(c: ColituController, onOpenReferral: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     CText(loc["referral.title"], ColituText.label, maxLines = 1)
                     Spacer(Modifier.height(2.dp))
-                    CText(loc.format("referral.cardBody", "n" to data.inviteeDays), ColituText.small, maxLines = 2)
+                    CText(inviteRewardText(data), ColituText.small, maxLines = 2)
                 }
                 Box(
                     Modifier.size(36.dp).clip(CircleShape).pressable({
@@ -495,20 +502,39 @@ private fun RotationLine(status: ColituRotationStatus) {
 /**
  * One-row plan summary: name, expiry (or "no expiry") and traffic, with a
  * button to the plan tab. A status badge appears only when something is
- * wrong (expired or no plan); an active plan needs no label.
+ * wrong (expired, no plan, allowance used up); an active plan needs no label.
+ *
+ * Free plan: what is left of the month's allowance and the device limit,
+ * with a Premium button ([ColituUpsell.freeState]); from 80 % used it says
+ * so, and once the allowance is used up it offers Premium and the date of
+ * the next allowance. The purchase entry follows the build ([openUpgrade]).
  */
 @Composable
 private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modifier) {
     val loc = ColituLoc
+    val context = LocalContext.current
     val status = c.planStatus
     val active = c.planActive
     val expires = c.expiresAt
-    val limit = c.user?.trafficLimitBytes?.takeIf { it > 0 }
-    val free = isFreePlan(c.user)
-    val detail = if (!active && !free) loc["plan.noneHint"] else if (free) loc["plan.freeHint"] else listOfNotNull(
-        expires?.let { planLeftOf(it) },
-        if (limit == null) loc["home.unlimited"] else null,
-    ).joinToString(" · ")
+    val user = c.user
+    val limit = user?.trafficLimitBytes?.takeIf { it > 0 }
+    val used = user?.trafficUsedBytes ?: 0L
+    val free = isFreePlan(user)
+    val freeState = ColituUpsell.freeState(free, status, used, limit)
+    val upsell = freeState != ColituUpsell.FreeState.None && canUpsell
+    val devices = user?.deviceLimit?.takeIf { it > 0 }?.let { loc.count("device", it) }
+    val detail = when {
+        free -> listOfNotNull(
+            if (limit != null) loc.format("upsell.freeLeft", "left" to loc.bytes(ColituUpsell.remainingBytes(used, limit)), "limit" to loc.bytes(limit)) else loc["plan.freeHint"],
+            devices,
+        ).joinToString(" · ")
+        !active -> loc["plan.noneHint"]
+        else -> listOfNotNull(
+            expires?.let { planLeftOf(it) },
+            if (limit == null) loc["home.unlimited"] else null,
+        ).joinToString(" · ")
+    }
+    val exhausted = freeState == ColituUpsell.FreeState.Exhausted
     ColituPanel(modifier, padding = PaddingValues(start = 14.dp, top = 12.dp, end = 12.dp, bottom = 12.dp), radius = ColituRadius.md, onClick = onOpenPlan) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -516,7 +542,7 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CText(planNameOf(c.user, c.subscription), ColituText.label, Modifier.weight(1f, fill = false), maxLines = 1)
+                        CText(planNameOf(user, c.subscription), ColituText.label, Modifier.weight(1f, fill = false), maxLines = 1)
                         if (!active) {
                             Spacer(Modifier.width(8.dp))
                             ColituBadge(loc["plan.status.$status"], BadgeTone.Danger)
@@ -524,21 +550,57 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                     }
                     if (detail.isNotEmpty()) {
                         Spacer(Modifier.height(2.dp))
-                        CText(detail, ColituText.small, maxLines = 1)
+                        CText(detail, ColituText.small, maxLines = 2)
                     }
                 }
-                Spacer(Modifier.width(8.dp))
-                ColituButton(loc["plan.manage"], onOpenPlan, kind = ColituButtonKind.Secondary, expand = false, height = 36.dp)
+                if (!(upsell && exhausted)) {
+                    Spacer(Modifier.width(8.dp))
+                    if (upsell) {
+                        ColituButton(
+                            loc["upsell.premium"],
+                            { openUpgrade(context, onOpenPlan) },
+                            kind = if (freeState == ColituUpsell.FreeState.Low) ColituButtonKind.Primary else ColituButtonKind.Secondary,
+                            expand = false,
+                            height = 36.dp,
+                        )
+                    } else {
+                        ColituButton(loc["plan.manage"], onOpenPlan, kind = ColituButtonKind.Secondary, expand = false, height = 36.dp)
+                    }
+                }
             }
             if (limit != null) {
-                val used = c.user?.trafficUsedBytes ?: 0L
                 Spacer(Modifier.height(10.dp))
                 ColituProgress((used.toFloat() / limit).coerceIn(0f, 1f))
-                Spacer(Modifier.height(5.dp))
+                if (!free) {
+                    Spacer(Modifier.height(5.dp))
+                    CText(
+                        "${loc["home.traffic"]}: ${loc.format("home.trafficOf", "used" to loc.bytes(used), "limit" to loc.bytes(limit))}",
+                        ColituText.small,
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (upsell && freeState == ColituUpsell.FreeState.Low && limit != null) {
+                Spacer(Modifier.height(8.dp))
+                CText(loc.format("upsell.lowBody", "limit" to loc.bytes(limit)), ColituText.small, color = ColituColors.warning, maxLines = 3)
+            }
+            if (upsell && exhausted) {
+                val next = user?.trafficPeriodEnd?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant() }.getOrNull() }
+                Spacer(Modifier.height(10.dp))
                 CText(
-                    "${loc["home.traffic"]}: ${loc.format("home.trafficOf", "used" to loc.bytes(used), "limit" to loc.bytes(limit))}",
+                    listOfNotNull(
+                        limit?.let { loc.format("upsell.outBody", "limit" to loc.bytes(it)) } ?: loc["err.quota"],
+                        next?.let { loc.format("upsell.nextOn", "date" to loc.date(it)) },
+                    ).joinToString(" "),
                     ColituText.small,
-                    maxLines = 1,
+                    maxLines = 4,
+                )
+                Spacer(Modifier.height(10.dp))
+                ColituButton(
+                    loc["trial.upgrade"],
+                    { openUpgrade(context, onOpenPlan) },
+                    icon = if (upsellRoute == ColituUpsell.Route.Web) ColituIcons.ArrowUpRightSquare else ColituIcons.Star,
+                    height = 48.dp,
                 )
             }
         }

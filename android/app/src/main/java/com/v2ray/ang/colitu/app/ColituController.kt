@@ -359,12 +359,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
         else -> country.ifEmpty { null }
     }
     /**
-     * The trial ends within three days and the account then moves to the
-     * free plan: the home banner (hidden for the rest of the day once closed).
+     * The trial or Premium (gifted, invite reward, a plan that does not
+     * renew) ends within three days and the account then moves to the free
+     * plan: the home banner (hidden for the rest of the day once closed).
      */
     val trialEndBanner: ColituDeviceOutlook?
         get() = outlook?.takeIf {
-            it.trialEndingSoon(user?.entitlementStatus ?: planStatus, ColituClock.now()) &&
+            val status = user?.entitlementStatus ?: planStatus
+            val now = ColituClock.now()
+            (it.trialEndingSoon(status, now) || com.v2ray.ang.colitu.data.ColituUpsell.premiumEndingSoon(status, isFreePlan(user), it, now)) &&
                 trialBannerDismissedDay != java.time.LocalDate.now().toString()
         }
 

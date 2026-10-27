@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.v2ray.ang.colitu.app.safeCall
 import com.v2ray.ang.colitu.data.ColituReferral
+import com.v2ray.ang.colitu.data.ColituUpsell
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituBackdrop
 import com.v2ray.ang.colitu.design.ColituButton
@@ -59,15 +60,32 @@ import com.v2ray.ang.colitu.l10n.ColituLoc
 import com.v2ray.ang.colitu.l10n.colituErrorMessage
 import com.v2ray.ang.colitu.repository.ColituReferralRepository
 
+/** {n} is the friend's number of days, {days} the same with its noun ("1 day", "3 дня"). */
+private fun withInviteeDays(template: String, referral: ColituReferral): String =
+    template.replace("{days}", ColituLoc.count("day", referral.inviteeDays)).replace("{n}", referral.inviteeDays.toString())
+
+/**
+ * What an invite is worth, from the panel's rules: "You and your friend each
+ * get 1 day of Premium", or both numbers when they differ.
+ */
+internal fun inviteRewardText(referral: ColituReferral): String {
+    val loc = ColituLoc
+    return if (ColituUpsell.inviteSameReward(referral.inviteeDays, referral.rewardDays)) {
+        loc.format("referral.bothGet", "days" to loc.count("day", referral.inviteeDays))
+    } else {
+        loc.format("referral.eachGet", "friend" to loc.count("day", referral.inviteeDays), "you" to loc.count("day", referral.rewardDays))
+    }
+}
+
 /** The text handed to the share sheet: the invitation, then the link on its own line. */
 internal fun referralShareText(template: String, referral: ColituReferral): String {
-    val withDays = template.replace("{n}", referral.inviteeDays.toString())
+    val withDays = withInviteeDays(template, referral)
     return if (withDays.contains("{link}")) withDays.replace("{link}", referral.link) else withDays + "\n" + referral.link
 }
 
 /** The invitation without the link (Telegram adds the link as its own field). */
 internal fun referralTextWithoutLink(template: String, referral: ColituReferral): String =
-    template.replace("{n}", referral.inviteeDays.toString()).replace("{link}", "").trimEnd(' ', ':', '\uFF1A', '\n')
+    withInviteeDays(template, referral).replace("{link}", "").trimEnd(' ', ':', '\uFF1A', '\n')
 
 internal fun telegramShareUrl(template: String, referral: ColituReferral): String =
     "https://t.me/share/url?url=" + Uri.encode(referral.link) + "&text=" + Uri.encode(referralTextWithoutLink(template, referral))
@@ -136,7 +154,7 @@ fun ReferralDialog(onClose: () -> Unit) {
                     CText(loc["referral.title"], ColituText.h2, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
-                CText(loc.format("referral.hint", "n" to (referral?.inviteeDays ?: 7)), ColituText.small, Modifier.padding(horizontal = 4.dp))
+                CText(referral?.let { inviteRewardText(it) } ?: loc["referral.rowHint"], ColituText.small, Modifier.padding(horizontal = 4.dp))
                 Spacer(Modifier.height(18.dp))
 
                 val data = referral
@@ -243,8 +261,8 @@ private fun Rules(data: ColituReferral) {
     ColituPanel(padding = PaddingValues(16.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CText(loc["referral.rules"], ColituText.label)
-            Rule(loc.format("referral.rule1", "n" to data.inviteeDays))
-            Rule(loc.format("referral.rule2", "n" to data.rewardDays))
+            Rule(loc.format("referral.rule1", "days" to loc.count("day", data.inviteeDays)))
+            Rule(loc.format("referral.rule2", "days" to loc.count("day", data.rewardDays)))
             Rule(loc.format("referral.rule3", "n" to data.monthlyCap))
             Rule(loc["referral.rule4"])
         }

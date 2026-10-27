@@ -15,6 +15,8 @@ data class ColituUser(
     val trafficUsedBytes: Long = 0,
     /** Null when the plan has no traffic quota. */
     val trafficLimitBytes: Long? = null,
+    /** End of the current traffic period (ISO-8601): the free plan's next allowance starts then. */
+    val trafficPeriodEnd: String? = null,
     /** Company seat from /me; null when the account has none. */
     val company: ColituCompany? = null,
 ) {

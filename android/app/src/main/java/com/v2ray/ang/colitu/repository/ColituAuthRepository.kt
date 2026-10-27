@@ -363,6 +363,7 @@ object ColituAuthRepository {
             expiresAt = entitlement?.tryString("expires_at"),
             trafficUsedBytes = traffic?.tryLong("used_bytes") ?: 0L,
             trafficLimitBytes = traffic?.tryLong("limit_bytes"),
+            trafficPeriodEnd = traffic?.tryString("period_end"),
             company = company,
         )
         ColituTokenManager.saveUserInfo(user.id, user.email, user.name, user.plan, user.entitlementStatus)

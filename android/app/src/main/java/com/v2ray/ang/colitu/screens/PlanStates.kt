@@ -44,6 +44,7 @@ import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.data.ColituDeviceOutlook
 import com.v2ray.ang.colitu.data.ColituDevicePause
 import com.v2ray.ang.colitu.data.ColituSplitTunnel
+import com.v2ray.ang.colitu.data.ColituUpsell
 import com.v2ray.ang.colitu.design.BadgeTone
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituActionRow
@@ -69,6 +70,25 @@ import java.time.Duration
 
 const val PRICING_URL = "https://colitu.com/pricing"
 
+/**
+ * Where "Get Premium" leads in this build: the Play Billing section of the
+ * Plan tab in the Google Play build (no external payment links there), the
+ * pricing page on colitu.com in the direct and F-Droid builds.
+ */
+val upsellRoute: ColituUpsell.Route get() = ColituUpsell.route(PLAY_POLICY, ColituStore.playBilling)
+
+/** True when this build has a purchase action to show. */
+val canUpsell: Boolean get() = upsellRoute != ColituUpsell.Route.None
+
+/** Runs the build's purchase entry ([upsellRoute]); [onOpenPlan] opens the Plan tab. */
+fun openUpgrade(context: Context, onOpenPlan: () -> Unit) {
+    when (upsellRoute) {
+        ColituUpsell.Route.PlayBilling -> onOpenPlan()
+        ColituUpsell.Route.Web -> openUrl(context, PRICING_URL)
+        ColituUpsell.Route.None -> Unit
+    }
+}
+
 /** 2FA is set up and managed on the website only. */
 const val MFA_SETUP_URL = "https://colitu.com/account/security"
 
@@ -79,7 +99,7 @@ const val MFA_SETUP_URL = "https://colitu.com/account/security"
  * the free plan's traffic (when sent) and device limit, and whether devices
  * will be paused.
  */
-fun trialEndText(outlook: ColituDeviceOutlook): String {
+fun trialEndText(outlook: ColituDeviceOutlook, trial: Boolean = true): String {
     val loc = ColituLoc
     val ends = outlook.endsAt ?: return ""
     val left = Duration.between(ColituClock.now(), ends)
@@ -91,11 +111,17 @@ fun trialEndText(outlook: ColituDeviceOutlook): String {
     }
     val detail = listOfNotNull(gb, devices).joinToString(", ")
     val second = loc.format(if (outlook.willPauseDevices) "trial.toFreePause" else "trial.toFree", "detail" to detail)
-    return "${loc.format("trial.endsIn", "left" to leftText)} $second"
+    return "${loc.format(if (trial) "trial.endsIn" else "premium.endsIn", "left" to leftText)} $second"
 }
 
 @Composable
-fun TrialEndBanner(outlook: ColituDeviceOutlook, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun TrialEndBanner(
+    outlook: ColituDeviceOutlook,
+    onDismiss: () -> Unit,
+    onOpenPlan: () -> Unit,
+    modifier: Modifier = Modifier,
+    trial: Boolean = true,
+) {
     val loc = ColituLoc
     val context = LocalContext.current
     val shape = RoundedCornerShape(ColituRadius.md)
@@ -110,13 +136,17 @@ fun TrialEndBanner(outlook: ColituDeviceOutlook, onDismiss: () -> Unit, modifier
         Row(verticalAlignment = Alignment.Top) {
             ColituIcon(ColituIcons.Info, ColituColors.warning, 18.dp)
             Spacer(Modifier.width(10.dp))
-            CText(trialEndText(outlook), ColituText.body.copy(fontSize = 14.sp), Modifier.weight(1f))
+            CText(trialEndText(outlook, trial), ColituText.body.copy(fontSize = 14.sp), Modifier.weight(1f))
             Box(Modifier.size(32.dp).clip(CircleShape).pressable(onDismiss), contentAlignment = Alignment.Center) {
                 ColituIcon(ColituIcons.XMark, ColituColors.dim, 16.dp, description = loc["trial.dismiss"])
             }
         }
-        if (!PLAY_POLICY) Row(Modifier.fillMaxWidth().padding(start = 24.dp), horizontalArrangement = Arrangement.Start) {
-            ColituLinkButton(loc["trial.upgrade"], { openUrl(context, PRICING_URL) }, icon = ColituIcons.ArrowUpRightSquare)
+        if (canUpsell) Row(Modifier.fillMaxWidth().padding(start = 24.dp), horizontalArrangement = Arrangement.Start) {
+            ColituLinkButton(
+                loc[if (trial) "trial.upgrade" else "upsell.keepPremium"],
+                { openUpgrade(context, onOpenPlan) },
+                icon = if (upsellRoute == ColituUpsell.Route.Web) ColituIcons.ArrowUpRightSquare else ColituIcons.Star,
+            )
         }
     }
 }
@@ -125,7 +155,7 @@ fun TrialEndBanner(outlook: ColituDeviceOutlook, onDismiss: () -> Unit, modifier
 
 /** Shown instead of the connect button while this device is over the plan's device limit. */
 @Composable
-fun PausedDevicePanel(c: ColituController, pause: ColituDevicePause) {
+fun PausedDevicePanel(c: ColituController, pause: ColituDevicePause, onOpenPlan: () -> Unit) {
     val loc = ColituLoc
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -179,9 +209,16 @@ fun PausedDevicePanel(c: ColituController, pause: ColituDevicePause) {
             }, loading = busy)
             Spacer(Modifier.height(6.dp))
             CText(loc["paused.useHint"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
-            if (!PLAY_POLICY) {
+            if (canUpsell) {
                 Spacer(Modifier.height(10.dp))
-                ColituButton(loc["paused.premium"], { openUrl(context, PRICING_URL) }, kind = ColituButtonKind.Secondary, icon = ColituIcons.ArrowUpRightSquare)
+                ColituButton(
+                    loc["paused.premium"],
+                    { openUpgrade(context, onOpenPlan) },
+                    kind = ColituButtonKind.Secondary,
+                    icon = if (upsellRoute == ColituUpsell.Route.Web) ColituIcons.ArrowUpRightSquare else ColituIcons.Star,
+                )
+                Spacer(Modifier.height(6.dp))
+                CText(loc["upsell.devicesHint"], ColituText.small, Modifier.fillMaxWidth(), align = TextAlign.Center)
             }
         }
     }
