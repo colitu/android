@@ -103,6 +103,8 @@ object ColituAcEvents {
         // The panel needs both ends and refuses a whole report over one invalid event: a
         // recovery that reached no protocol is told by its recovery event alone.
         val target = protocol(to) ?: return null
+        // Back on the transport it left: no switch, the recovery event tells it.
+        if (target == p) return null
         return JsonObject().apply {
             addProperty("kind", "switch")
             addProperty("protocol", p)

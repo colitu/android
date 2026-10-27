@@ -55,6 +55,9 @@ class ColituAcEventsTest {
         assertEquals("switch", s.get("kind").asString)
         assertTrue(s.get("flap").asBoolean)
         assertEquals("trojan", s.get("to_protocol").asString)
+        // Back on the transport it left: no switch event (was outcome=fail).
+        assertNull(ColituAcEvents.switch("hysteria2", "hysteria2", true, flap = false))
+        assertNull(ColituAcEvents.switch("Trojan", "trojan", false, flap = false))
 
         val d = ColituAcEvents.drop(node, "trojan", "x", 12)!!
         assertEquals("other", d.get("reason").asString)

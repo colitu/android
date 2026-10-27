@@ -999,9 +999,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // Counted when the recovery ends, so attempts and successes stay in step (a recovery the
         // process did not live to finish used to count as a failure that never happened).
         ColituMetrics.count("recoveries")
-        if (from != null) ColituMetrics.count("protocol_switches")
+        // A recovery that came back on the transport it left is no switch (it was told as a failed one);
+        // the recovery event alone tells it, with its time and detect_ms.
+        val switched = from != null && !(ok && newProtocol == from)
+        if (switched) ColituMetrics.count("protocol_switches")
         acRecord(ColituAcEvents.recovery(acRecoveryNode, acRecoveryProtocol, newProtocol.takeIf { ok }, ok, code, ms, acRecoveryDetectMs, acRecoverySpare))
-        if (from != null) acRecord(ColituAcEvents.switch(from, newProtocol.takeIf { ok }, ok && newProtocol != from, flap))
+        if (switched) acRecord(ColituAcEvents.switch(from, newProtocol.takeIf { ok }, ok, flap))
         if (!ok) return
         ColituMetrics.count("recovery_successes")
         ColituMetrics.observe("recovery_ms", ms)
@@ -1194,7 +1197,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // No server list (the API was blocked from the start): the recovery set may still carry the connect.
             if (ColituFeatures.recoverySet() && servers.isEmpty() && connectsAutomatically) {
                 safeCall { ColituServerRepository.fetchConfigCandidates() }
-                if (apiUnreachable(null) && connectViaRecoverySet(context, emptyList(), begin)) return
+                if (apiUnreachable(null) && connectViaRecoverySet(context, emptyList(), begin, connectsAutomatically)) return
             }
             fail(if (servers.isEmpty()) "NO_SERVERS" else "NO_SERVER_SELECTED")
             return
@@ -1218,7 +1221,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val unreachable = automatic && apiUnreachable(code)
             if (ColituFeatures.recoveryAtGiveUp(automatic, unreachable, recoveryTried)) {
                 recoveryTried = true
-                if (connectViaRecoverySet(context, failed, begin)) return
+                if (connectViaRecoverySet(context, failed, begin, automatic)) return
             } else if (automatic && ColituFeatures.recoverySet()) {
                 LogUtil.w(AppConfig.TAG, "Colitu: recovery set not tried (API unreachable: $unreachable, already tried: $recoveryTried)")
             }
@@ -1238,8 +1241,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         giveUp("network_error")
                         return
                     }
-                    memory.penalize(networkKey, server.id, System.currentTimeMillis())
-                    saveMemory()
+                    // A picked server is never left, so it is not penalized either.
+                    if (ColituTransportOrder.penalizeFailedServer(automatic)) {
+                        memory.penalize(networkKey, server.id, System.currentTimeMillis())
+                        saveMemory()
+                    }
                     failed += server.id
                     val left = connectDeadline - android.os.SystemClock.elapsedRealtime()
                     server = ColituServerRanking.fallbackServer(automatic, order, failed, MAX_SERVERS_PER_CONNECT, left >= MIN_TRANSPORT_MS)
@@ -1276,7 +1282,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * one but valid until the set's `recovery_until`. The next server of the
      * set is the warm spare. True once connected.
      */
-    private suspend fun connectViaRecoverySet(context: Application, failed: List<String>, begin: Long): Boolean {
+    private suspend fun connectViaRecoverySet(context: Application, failed: List<String>, begin: Long, automatic: Boolean): Boolean {
         if (!ColituFeatures.recoverySet()) return false
         // A server penalized on this network (both paths just died there) goes last, not first again.
         val plan = ColituServerRepository.recoveryPlan(failed, memory.penalized(networkKey, System.currentTimeMillis())) ?: return false
@@ -1318,8 +1324,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 }
                 is StartOutcome.Failed -> {
                     LogUtil.w(AppConfig.TAG, "Colitu: recovery: ${id.take(8)} failed")
-                    memory.penalize(networkKey, id, System.currentTimeMillis())
-                    saveMemory()
+                    if (ColituTransportOrder.penalizeFailedServer(automatic)) {
+                        memory.penalize(networkKey, id, System.currentTimeMillis())
+                        saveMemory()
+                    }
                 }
             }
         }
@@ -1913,6 +1921,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** elapsedRealtime of the last automatic mid-session transport switch. */
     private var lastAutoSwitchAt = 0L
 
+    /** Server id and transport left by the last automatic mid-session reconnect. */
+    private var lastAutoSwitchFrom: Pair<String, String>? = null
+
     /**
      * The tunnel can stop carrying traffic after the connect check passed:
      * Russian mobile networks throttle a long-lived UDP flow (Hysteria2), and
@@ -1926,7 +1937,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * on an unchanged network, [protocol] goes last on this server for
      * [MID_SESSION_STALL_PENALTY_MS] (a TCP one also stalls on this network in
      * the memory) and the same server is reconnected on the next transport,
-     * silently. At most one such switch per [AUTO_SWITCH_MIN_GAP_MS].
+     * silently. Within [AUTO_SWITCH_MIN_GAP_MS] of such a switch the transport just left goes last
+     * again; with no other transport on offer see [ColituTransportOrder.stallMove].
      */
     private suspend fun watchTransport(server: ColituServer, protocol: String) {
         var failures = 0
@@ -1960,7 +1972,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
             // again. The warm spare inside the core does not wait for it.
             val late = android.os.SystemClock.elapsedRealtime() - sleptFrom - pause
             if (late >= WATCH_LATE_LOG_MS) {
-                LogUtil.w(AppConfig.TAG, "Colitu: stall watch was paused ${late / 1000} s (app process frozen or asleep)${if (failures > 0) " during a miss streak" else ""}")
+                val restart = ColituTransportOrder.restartStreakAfterPause(late, WATCH_LATE_LOG_MS, failures + primaryMisses)
+                LogUtil.w(AppConfig.TAG, "Colitu: stall watch was paused ${late / 1000} s (app process frozen or asleep)${if (restart) " during a miss streak: checking again now, streak restarted" else ""}")
+                // The misses before the freeze and their first-miss time are stale: this round's
+                // probe starts a new streak, so detect_ms is not inflated by the freeze.
+                if (restart) {
+                    failures = 0
+                    if (!primaryRecorded) primaryMisses = 0
+                    firstMissAt = 0L
+                }
             }
             if (!connected || transport != protocol || connectedServerId != server.id) return
             val networks = underlyingNetworks()
@@ -2028,7 +2048,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 }
                 continue
             }
-            when (ColituTransportOrder.watchAction(spare != null, primaryOk, normalOk)) {
+            var action = ColituTransportOrder.watchAction(spare != null, primaryOk, normalOk)
+            // The miss that would end in a reconnect: the spare is probed alone once first.
+            if (action == ColituTransportOrder.WatchAction.BothDead && spare != null && failures + 1 >= STALL_PROBE_FAILURES) {
+                val spareOk = verifyTunnel(STALL_PROBE_TIMEOUT_MS, VerifyPath.Spare) >= 0
+                action = ColituTransportOrder.confirmBothDead(action, spareOk)
+                if (spareOk) LogUtil.w(AppConfig.TAG, "Colitu: both paths missed but the spare ${spare.second} answered alone: no reconnect")
+                if (!connected || transport != protocol || connectedServerId != server.id) return
+            }
+            when (action) {
                 ColituTransportOrder.WatchAction.Fine -> {
                     failures = 0
                     primaryMisses = 0
@@ -2054,12 +2082,41 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
             val now = android.os.SystemClock.elapsedRealtime()
             val nothingElse = offeredTransports.isNotEmpty() && offeredTransports.none { it != protocol }
-            // Inside the gap the misses keep counting, so the switch happens as
+            val inGap = lastAutoSwitchAt > 0L && now - lastAutoSwitchAt < AUTO_SWITCH_MIN_GAP_MS
+            val spareOnOtherServer = spare != null && spare.first.id != server.id
+            val automatic = connectsAutomatically && !server.isMultihop
+            val move = ColituTransportOrder.stallMove(nothingElse, automatic, inGap, spareOnOtherServer)
+            // Inside the gap the misses keep counting, so the reconnect happens as
             // soon as the gap ends instead of after three more misses.
-            if (nothingElse || (lastAutoSwitchAt > 0L && now - lastAutoSwitchAt < AUTO_SWITCH_MIN_GAP_MS)) continue
+            if (move == ColituTransportOrder.StallMove.Wait) continue
             if (!deviceOnline()) continue
             failures = 0
+            val previousSwitchAt = lastAutoSwitchAt
+            val switchedFrom = lastAutoSwitchFrom
             lastAutoSwitchAt = now
+            lastAutoSwitchFrom = server.id to protocol
+            if (move != ColituTransportOrder.StallMove.SwitchTransport) {
+                // The only transport on offer carried nothing: no other transport to move to.
+                udpStalled(protocol)
+                if (move == ColituTransportOrder.StallMove.NextServer) {
+                    memory.penalize(networkKey, server.id, System.currentTimeMillis())
+                    saveMemory()
+                    LogUtil.w(AppConfig.TAG, "Colitu: $protocol, the only transport of ${server.id.take(8)}, stalled mid-session; penalized for 30 minutes, the reconnect starts on the next server")
+                } else {
+                    LogUtil.w(AppConfig.TAG, "Colitu: $protocol, the only transport of ${server.id.take(8)}, stalled mid-session; reconnecting the same server")
+                }
+                observe(server, protocol, reachable = false, latencyMs = null)
+                flushObservations()
+                // Not a transport switch: the transport stays the same.
+                beginMetricRecovery(firstMissAt, null, detected = true, nodeId = server.id.takeIf { isNode(it) }, failedProtocol = protocol)
+                startConnectFlow(fresh = false, continuing = true)
+                return
+            }
+            // Inside the gap after a switch the transport just left goes last again: no switching straight back.
+            ColituTransportOrder.avoidAfterSwitch(inGap, switchedFrom?.second, switchedFrom?.first, server.id, protocol)?.let {
+                LogUtil.w(AppConfig.TAG, "Colitu: $protocol stalled ${(now - previousSwitchAt) / 1000} s after a switch from $it; $it stays last")
+                stalledThisConnect += it
+            }
             val wallNow = System.currentTimeMillis()
             val proven = memory.workedOnNetwork(networkKey, protocol, wallNow)
             // A UDP primary and a UDP spare (another server) dying together is the
@@ -2086,7 +2143,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
             // A spare on another server dying at the same time points at the phone's network
             // (or a frozen app), not at this server: it is kept.
-            leaveServerIfBothDead(server, bothPathsDead, spareOnOtherServer = spare != null && spare.first.id != server.id)
+            leaveServerIfBothDead(server, bothPathsDead, spareOnOtherServer)
             stalledThisConnect += protocol
             observe(server, protocol, reachable = false, latencyMs = null)
             flushObservations()
@@ -2321,35 +2378,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
             }
         }
         val url = SettingsManager.getDelayTestUrl()
-        return coroutineScope {
-            val jobs = byPreference.map { config ->
-                async(Dispatchers.IO) {
-                    runCatching { CoreNativeManager.measureOutboundDelay(config.rawConfig.orEmpty(), url) }.getOrDefault(-1L)
-                }
-            }
-            // Walk the transports in preference order and stop at the first
-            // that answers: a dead lower-ranked transport no longer holds the
-            // connection up for the whole probe window.
-            val deadline = android.os.SystemClock.elapsedRealtime() + PROBE_TIMEOUT_MS
-            var winner = -1
-            val probed = mutableMapOf<String, Long>()
-            for (i in byPreference.indices) {
-                val left = deadline - android.os.SystemClock.elapsedRealtime()
-                val delayMs = if (left <= 0) {
-                    if (jobs[i].isCompleted) jobs[i].await() else -1L
-                } else {
-                    withTimeoutOrNull(left) { jobs[i].await() } ?: -1L
-                }
-                byPreference[i].protocolType?.let { probed[it] = delayMs }
-                roundProbe = probed.toMap()
-                if (delayMs >= 0) {
-                    winner = i
-                    break
-                }
-            }
-            LogUtil.w(AppConfig.TAG, "Colitu probe: first answer ${if (winner >= 0) byPreference[winner].protocolType else "none"}")
-            if (winner <= 0) byPreference else listOf(byPreference[winner]) + byPreference.filterIndexed { i, _ -> i != winner }
+        // Walk the transports in preference order and stop at the first that answers. The probes
+        // run in their own scope: the native call cannot be cancelled, and a child scope kept the
+        // round waiting for every straggler (~55 s of silence in a recovery).
+        val probed = mutableMapOf<String, Long>()
+        val winner = ColituTransportOrder.firstInOrder(byPreference.size, PROBE_TIMEOUT_MS, probe = { i ->
+            CoreNativeManager.measureOutboundDelay(byPreference[i].rawConfig.orEmpty(), url)
+        }) { i, delayMs ->
+            byPreference[i].protocolType?.let { probed[it] = delayMs }
+            roundProbe = probed.toMap()
         }
+        LogUtil.w(AppConfig.TAG, "Colitu probe: first answer ${if (winner >= 0) byPreference[winner].protocolType else "none"}")
+        return if (winner <= 0) byPreference else listOf(byPreference[winner]) + byPreference.filterIndexed { i, _ -> i != winner }
     }
 
     /** Which path a tunnel check takes. */
@@ -3050,6 +3090,73 @@ internal object ColituTransportOrder {
         !normalOk -> WatchAction.BothDead
         spareAttached && !primaryOk -> WatchAction.SpareCarries
         else -> WatchAction.Fine
+    }
+
+    /**
+     * Before a both-dead verdict leads to a reconnect the spare is probed alone once: when it
+     * answers ([spareOk]), the balancer only had not moved over yet and the spare carries.
+     * Null: no spare probe was made.
+     */
+    fun confirmBothDead(action: WatchAction, spareOk: Boolean?): WatchAction =
+        if (action == WatchAction.BothDead && spareOk == true) WatchAction.SpareCarries else action
+
+    /** What a confirmed stall leads to. */
+    enum class StallMove { Wait, SwitchTransport, NextServer, ReconnectSame }
+
+    /**
+     * A confirmed stall never keeps a dead tunnel. With other transports on offer the next one is
+     * started (inside [inGap] too: the gap only keeps the transport just left from coming back,
+     * see [avoidAfterSwitch]). With [nothingElse] on offer, automatic mode moves to the next server
+     * (unless the spare on another server died too: the network, not the server) and a picked
+     * server is reconnected once the gap since the last switch has passed.
+     */
+    fun stallMove(nothingElse: Boolean, automatic: Boolean, inGap: Boolean, spareOnOtherServer: Boolean = false): StallMove = when {
+        !nothingElse -> StallMove.SwitchTransport
+        automatic && !spareOnOtherServer -> StallMove.NextServer
+        inGap -> StallMove.Wait
+        else -> StallMove.ReconnectSame
+    }
+
+    /**
+     * Inside the gap after an automatic switch from [lastFrom] on [lastServer], the transport that
+     * was left goes last again so the reconnect does not switch straight back to it.
+     */
+    fun avoidAfterSwitch(inGap: Boolean, lastFrom: String?, lastServer: String?, server: String, protocol: String): String? =
+        lastFrom?.takeIf { inGap && lastServer == server && it != protocol }
+
+    /**
+     * The watcher woke [lateMs] after its planned time (frozen app process, CPU asleep) in a miss
+     * streak: the old misses and their first-miss time are stale, the streak starts again now.
+     */
+    fun restartStreakAfterPause(lateMs: Long, thresholdMs: Long, misses: Int): Boolean = lateMs >= thresholdMs && misses > 0
+
+    /** A failed server is penalized on the network only in automatic mode: a picked server is never left. */
+    fun penalizeFailedServer(automatic: Boolean): Boolean = automatic
+
+    /**
+     * Runs [count] probes at once in their own scope and walks them in order: the index of the
+     * first that answers (>= 0) within [timeoutMs], or -1. [onResult] gets every walked result.
+     * Returns as soon as it is decided; a probe still blocked in a native call is not awaited.
+     */
+    suspend fun firstInOrder(count: Int, timeoutMs: Long, probe: (Int) -> Long, onResult: (Int, Long) -> Unit = { _, _ -> }): Int {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+        try {
+            val jobs = (0 until count).map { i -> scope.async { runCatching { probe(i) }.getOrDefault(-1L) } }
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+            for (i in 0 until count) {
+                val left = (deadline - System.nanoTime()) / 1_000_000L
+                val delayMs = if (left <= 0) {
+                    if (jobs[i].isCompleted) jobs[i].await() else -1L
+                } else {
+                    withTimeoutOrNull(left) { jobs[i].await() } ?: -1L
+                }
+                onResult(i, delayMs)
+                if (delayMs >= 0) return i
+            }
+            return -1
+        } finally {
+            scope.coroutineContext[Job]?.cancel()
+        }
     }
 
     /**
