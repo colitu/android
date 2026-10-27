@@ -42,6 +42,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -128,7 +131,8 @@ object ColituColors {
 
     val text = Color(0xFFF4F3FA)
     val muted = Color(0xFF9A9AAB)
-    val dim = Color(0xFF63636F)
+    /** Quietest text and icons: 5.3:1 on [surface] (WCAG AA for text). */
+    val dim = Color(0xFF8A8A9A)
     val line = Color(0x14FFFFFF)
     val lineStrong = Color(0x26FFFFFF)
     val field = Color(0xFF15151C)
@@ -885,6 +889,8 @@ fun ColituField(
     radius: Dp? = null,
     /** Space above and below the text; 15 gives the usual 54 dp field, 14 the 52 dp search. */
     verticalPadding: Dp = 15.dp,
+    /** Name a screen reader gives the field; the visible label, else the placeholder. */
+    accessibilityLabel: String? = label ?: hint,
 ) {
     var focused by remember { mutableStateOf(false) }
     val hasError = !error.isNullOrEmpty()
@@ -904,7 +910,8 @@ fun ColituField(
     )
     Column(modifier) {
         if (label != null) {
-            CText(label, ColituText.small, Modifier.padding(start = 4.dp, bottom = 6.dp), color = ColituColors.muted, weight = FontWeight.SemiBold)
+            // The field itself carries the name, so the label is not read twice.
+            CText(label, ColituText.small, Modifier.padding(start = 4.dp, bottom = 6.dp).clearAndSetSemantics {}, color = ColituColors.muted, weight = FontWeight.SemiBold)
         }
         Row(
             Modifier
@@ -921,7 +928,7 @@ fun ColituField(
             }
             Box(Modifier.weight(1f).padding(vertical = verticalPadding)) {
                 if (value.isEmpty() && hint != null) {
-                    CText(hint, ColituText.body.copy(fontSize = 16.sp), color = ColituColors.dim, maxLines = 1)
+                    CText(hint, ColituText.body.copy(fontSize = 16.sp), Modifier.clearAndSetSemantics {}, color = ColituColors.dim, maxLines = 2)
                 }
                 BasicTextField(
                     value = value,
@@ -942,6 +949,7 @@ fun ColituField(
                         .fillMaxWidth()
                         .tvFieldEscape()
                         .then(if (autofill != null) Modifier.semantics { contentType = autofill } else Modifier)
+                        .then(if (accessibilityLabel != null) Modifier.semantics { contentDescription = accessibilityLabel } else Modifier)
                         .onFocusChanged { focused = it.isFocused },
                 )
             }
@@ -1023,19 +1031,27 @@ fun ColituMark(size: Dp = 40.dp) {
 
 class ColituNavItem(val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String, val badge: Int = 0)
 
-/** Floating pill with one round button per tab; the active one is lavender. */
+/**
+ * Floating pill with one round button per tab. The active tab is a lavender
+ * pill that also shows its name next to the icon; the others stay 48 dp
+ * round buttons. The bar spans the width so the name fits on 360 dp phones
+ * and at large font sizes (the name shrinks before it is cut).
+ */
 @Composable
 fun ColituNavBar(items: List<ColituNavItem>, index: Int, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(50)
     Row(
         modifier
-            .wrapContentWidth()
+            .padding(horizontal = 12.dp)
+            .widthIn(max = 480.dp)
+            .fillMaxWidth()
             .colituGlow(Color(0xB3000000), 18.dp, shape, 12.dp)
             .clip(shape)
             .background(Color(0xF2141419))
             .border(1.dp, ColituColors.lineStrong, shape)
-            .padding(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         items.forEachIndexed { i, item ->
             val active = i == index
@@ -1043,26 +1059,43 @@ fun ColituNavBar(items: List<ColituNavItem>, index: Int, onChange: (Int) -> Unit
             val lit by animateFloatAsState(if (active) 1f else 0f, tween(240, easing = EaseOutCubic), label = "lit")
             Box(
                 Modifier
+                    .then(if (active) Modifier.weight(1f) else Modifier.width(48.dp))
                     .semantics {
                         selected = active
                         contentDescription = item.label
                         role = Role.Tab
                     }
-                    .pressable({ onChange(i) }, 0.9f, Role.Tab)
-                    .size(54.dp)
-                    .colituGlow(Color(0x669F8CFF).copy(alpha = 0.4f * lit), 10.dp, CircleShape, 6.dp)
-                    .clip(CircleShape)
+                    .pressable({ onChange(i) }, 0.94f, Role.Tab)
+                    .height(48.dp)
+                    .colituGlow(Color(0x669F8CFF).copy(alpha = 0.4f * lit), 10.dp, shape, 6.dp)
+                    .clip(shape)
                     .background(ColituColors.surface2)
                     .background(ColituGradients.accent, alpha = lit),
                 contentAlignment = Alignment.Center,
             ) {
-                ColituIcon(item.icon, iconColor, 22.dp)
+                if (active) {
+                    Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ColituIcon(item.icon, iconColor, 20.dp)
+                        Spacer(Modifier.width(6.dp))
+                        BasicText(
+                            item.label,
+                            Modifier.weight(1f, fill = false).clearAndSetSemantics {},
+                            style = ColituText.label.copy(fontSize = 13.sp, lineHeight = 16.sp, color = ColituColors.onAccent),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = 13.sp),
+                        )
+                    }
+                } else {
+                    ColituIcon(item.icon, iconColor, 22.dp)
+                }
                 if (item.badge > 0) {
                     // Unread count (live support), pinned to the top-right of the button.
                     Box(
                         Modifier
                             .align(Alignment.TopEnd)
-                            .padding(top = 6.dp, end = 6.dp)
+                            .padding(top = 3.dp, end = 3.dp)
                             .size(18.dp)
                             .clip(CircleShape)
                             .background(Color(0xFF0E0E14))

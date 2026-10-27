@@ -194,6 +194,8 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     // passport from its notification.
     LaunchedEffect(c.connected, c.connectedServerId) {
         if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituPassport.rememberCity(it.countryCode, it.city) }
+        // Recently used servers (this device only): Locations and the home shortcuts.
+        if (c.connected) c.connectedServer?.let { com.v2ray.ang.colitu.data.ColituQuickServers.recordConnected(it.id) }
     }
     LaunchedEffect(c.connected) {
         if (c.connected) com.v2ray.ang.colitu.data.PassportSync.refreshLater(5_000L)
@@ -221,7 +223,7 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     val items = listOf(
         ColituNavItem(ColituIcons.House, loc["nav.home"]),
         ColituNavItem(ColituIcons.Globe, loc["nav.locations"]),
-        ColituNavItem(ColituIcons.Gift, loc["nav.plan"]),
+        ColituNavItem(ColituIcons.Crown, loc["nav.plan"]),
         ColituNavItem(ColituIcons.Chat, loc["nav.support"], badge = c.supportUnread),
         ColituNavItem(ColituIcons.Person, loc["nav.account"]),
     )

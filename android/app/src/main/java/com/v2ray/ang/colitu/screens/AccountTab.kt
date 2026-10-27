@@ -1,7 +1,5 @@
 package com.v2ray.ang.colitu.screens
 
-import android.content.Intent
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,7 +166,7 @@ fun AccountTab(
                             else if (active && expires != null) "${planNameOf(user, c.subscription)} · ${loc.date(expires)}"
                             else planNameOf(user, c.subscription),
                             ColituText.small,
-                            maxLines = 1,
+                            maxLines = 2,
                         )
                     }
                     Spacer(Modifier.width(8.dp))
@@ -206,11 +204,8 @@ fun AccountTab(
             icon = ColituIcons.ShieldHalf,
             title = loc["settings.alwaysOn"],
             hint = loc["settings.alwaysOnHint"],
-            onClick = {
-                runCatching {
-                    context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-            },
+            // Same handler as the home screen's quick settings card.
+            onClick = { openVpnSettings(context) },
             trailing = { ColituIcon(ColituIcons.ArrowUpRightSquare, ColituColors.dim, 18.dp) },
         )
         if (advanced) {
@@ -533,7 +528,7 @@ private fun DeviceRow(device: ColituDevice, onActivate: () -> Unit, onRemove: ()
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 // The name gets the full width; the badge sits on the second line.
-                CText(device.name, ColituText.label, maxLines = 1)
+                CText(device.name, ColituText.label, maxLines = 2)
                 val lastSeen = device.lastActiveAt?.let { raw -> runCatching { Instant.parse(raw) }.getOrNull() }
                 if (device.current || device.suspended || lastSeen != null) {
                     Spacer(Modifier.height(4.dp))

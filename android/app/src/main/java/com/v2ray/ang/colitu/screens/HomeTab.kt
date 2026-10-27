@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import com.v2ray.ang.colitu.data.ColituQuickServers
+import com.v2ray.ang.colitu.data.ColituServer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,8 +44,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -234,8 +242,11 @@ fun HomeTab(
         }
         Spacer(Modifier.height(12.dp))
         LocationCard(c, onChangeLocation, Modifier.reveal(120))
+        QuickPicks(c, Modifier.reveal(140))
         Spacer(Modifier.height(12.dp))
         PlanRow(c, onOpenPlan, Modifier.reveal(160))
+        Spacer(Modifier.height(12.dp))
+        QuickSettingsCard(c, onOpenSplit, Modifier.reveal(170))
         Spacer(Modifier.height(12.dp))
         PassportCard(onOpenPassport, c.planActive, Modifier.reveal(180))
         InviteCard(c, onOpenReferral)
@@ -278,7 +289,7 @@ private fun InviteCard(c: ColituController, onOpenReferral: () -> Unit) {
                 ColituRoundIcon(ColituIcons.Gift, size = 36.dp, accent = true)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    CText(loc["referral.title"], ColituText.label, maxLines = 1)
+                    CText(loc["referral.title"], ColituText.label, maxLines = 2)
                     Spacer(Modifier.height(2.dp))
                     CText(inviteRewardText(data), ColituText.small, maxLines = 2)
                 }
@@ -392,6 +403,10 @@ private fun StatTile(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
     }
 }
 
+/**
+ * The server card: one tap target that opens Locations (chevron on the right).
+ * A screen reader hears "Server: Fastest, Finland. Tap to change."
+ */
 @Composable
 private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Modifier) {
     val loc = ColituLoc
@@ -403,29 +418,147 @@ private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Mo
     } else {
         server?.let { c.subtitleOf(it) }.orEmpty()
     }
-    ColituPanel(modifier, padding = PaddingValues(14.dp), radius = ColituRadius.md) {
-        Column {
+    val spoken = if (auto) {
+        listOfNotNull(loc["home.fastestShort"], server?.let { c.titleOf(it) }).joinToString(", ")
+    } else {
+        listOfNotNull(title, server?.takeIf { it.route == null }?.let { ColituServerNames.city(it.city).takeIf { city -> city.isNotBlank() } })
+            .joinToString(", ")
+    }
+    val description = loc.format("home.serverCard", "server" to spoken)
+    ColituPanel(
+        // The card is one button; its own texts are folded into the description.
+        modifier.semantics { contentDescription = description },
+        padding = PaddingValues(start = 14.dp, top = 14.dp, end = 10.dp, bottom = 14.dp),
+        radius = ColituRadius.md,
+        onClick = onChange,
+    ) {
+        Column(Modifier.clearAndSetSemantics {}) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (auto) ColituRoundIcon(ColituIcons.Bolt, size = 44.dp, accent = true)
                 else if (server?.route != null) ColituFlag(server.route.exit.country, 44.dp)
                 else ColituFlag(server?.countryCode, 44.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    CText(title, ColituText.label, maxLines = 1)
+                    CText(title, ColituText.label, maxLines = 2)
                     Spacer(Modifier.height(2.dp))
-                    CText(subtitle, ColituText.small, maxLines = 1)
+                    CText(subtitle, ColituText.small, maxLines = 2)
                 }
                 Spacer(Modifier.width(8.dp))
                 ColituIcon(
                     if (c.connected) ColituIcons.CheckCircle else ColituIcons.Info,
-                    if (c.connected) ColituColors.success else ColituColors.dim,
+                    if (c.connected) ColituColors.success else ColituColors.muted,
                     18.dp,
                 )
+                Spacer(Modifier.width(6.dp))
+                ColituIcon(ColituIcons.ChevronRight, ColituColors.muted, 16.dp)
             }
             ConnectionPathLines(c)
-            Spacer(Modifier.height(12.dp))
-            ColituButton(loc["home.changeServer"], onChange, height = 46.dp)
         }
+    }
+}
+
+/**
+ * Up to three shortcuts under the server card: favourites first, then the
+ * servers used last (this device only). One tap does what tapping the server
+ * in Locations does. Nothing is shown while both lists are empty.
+ */
+@Composable
+private fun QuickPicks(c: ColituController, modifier: Modifier) {
+    val lists = quickListsOf(c)
+    val picks = ColituQuickServers.picks(lists.favorites, lists.recent)
+    if (picks.isEmpty()) return
+    Spacer(Modifier.height(10.dp))
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        picks.forEach { server ->
+            androidx.compose.runtime.key(server.id) { QuickPick(c, server, Modifier.weight(1f, fill = false)) }
+        }
+    }
+}
+
+@Composable
+private fun QuickPick(c: ColituController, server: ColituServer, modifier: Modifier) {
+    val loc = ColituLoc
+    val shape = RoundedCornerShape(50)
+    val chosen = !c.autoSelection && c.selectedServerId == server.id
+    val city = ColituServerNames.city(server.city)
+    val label = when {
+        server.route != null -> c.titleOf(server)
+        city.isNotBlank() -> city
+        else -> c.titleOf(server)
+    }
+    val full = if (server.route == null && city.isNotBlank() && city != c.titleOf(server)) "${c.titleOf(server)}, $city" else c.titleOf(server)
+    Row(
+        modifier
+            .semantics {
+                contentDescription = loc.format("quick.pick", "server" to full)
+                selected = chosen
+            }
+            .pressable({ c.selectServer(server) })
+            .heightIn(min = 48.dp)
+            .clip(shape)
+            .background(ColituColors.surface2)
+            .border(if (chosen) 1.5.dp else 1.dp, if (chosen) ColituColors.violet else ColituColors.lineStrong, shape)
+            .padding(start = 8.dp, top = 6.dp, end = 14.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ColituFlag(server.route?.exit?.country ?: server.countryCode, 24.dp)
+        Spacer(Modifier.width(8.dp))
+        CText(label, ColituText.label, size = 13.5.sp, maxLines = 2)
+    }
+}
+
+/**
+ * Kill switch, split tunneling and always-on protection one tap from home.
+ * Each row calls the same handler as its row on the Account tab.
+ */
+@Composable
+private fun QuickSettingsCard(c: ColituController, onOpenSplit: () -> Unit, modifier: Modifier) {
+    val loc = ColituLoc
+    val context = LocalContext.current
+    val lockdown = rememberLockdownState()
+    ColituPanel(
+        modifier,
+        padding = PaddingValues(start = 14.dp, top = 12.dp, end = 8.dp, bottom = 6.dp),
+        radius = ColituRadius.md,
+    ) {
+        Column {
+            CText(
+                loc["home.quickSettings"],
+                ColituText.small,
+                Modifier.padding(bottom = 2.dp).semantics { heading() },
+                weight = FontWeight.SemiBold,
+                maxLines = 2,
+            )
+            QuickSettingRow(ColituIcons.XOctagon, loc["kill.title"], lockdown?.let { it.alwaysOn && it.lockdown }) { openVpnSettings(context) }
+            QuickSettingRow(ColituIcons.Antenna, loc["split.title"], c.splitTunnel.active, onOpenSplit)
+            QuickSettingRow(ColituIcons.ShieldHalf, loc["settings.alwaysOn"], lockdown?.alwaysOn) { openVpnSettings(context) }
+        }
+    }
+}
+
+/** One quick setting: icon, name, an ON/OFF badge when the state is known, and a chevron. */
+@Composable
+private fun QuickSettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, on: Boolean?, onClick: () -> Unit) {
+    val loc = ColituLoc
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .pressable(onClick, 0.98f, focusRadius = 12.dp)
+            .heightIn(min = 48.dp)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ColituIcon(icon, ColituColors.lilac, 18.dp)
+        Spacer(Modifier.width(12.dp))
+        CText(title, ColituText.label, Modifier.weight(1f), size = 14.5.sp, maxLines = 2)
+        if (on != null) {
+            Spacer(Modifier.width(8.dp))
+            ColituBadge(loc[if (on) "kill.badgeOn" else "kill.badgeOff"], if (on) BadgeTone.Accent else BadgeTone.Neutral)
+        }
+        Spacer(Modifier.width(8.dp))
+        ColituIcon(ColituIcons.ChevronRight, ColituColors.muted, 16.dp)
+        Spacer(Modifier.width(6.dp))
     }
 }
 
@@ -453,7 +586,7 @@ private fun ConnectionPathLines(c: ColituController) {
                 ColituText.small,
                 Modifier.weight(1f),
                 color = ColituColors.text,
-                maxLines = 1,
+                maxLines = 2,
             )
         }
         return
@@ -512,7 +645,6 @@ private fun RotationLine(status: ColituRotationStatus) {
 @Composable
 private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modifier) {
     val loc = ColituLoc
-    val context = LocalContext.current
     val status = c.planStatus
     val active = c.planActive
     val expires = c.expiresAt
@@ -535,6 +667,24 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
         ).joinToString(" · ")
     }
     val exhausted = freeState == ColituUpsell.FreeState.Exhausted
+    // Free plan: straight to the purchase (Play Billing sheet or the pricing page), not via the Plan tab.
+    val upgrade = rememberDirectUpgrade(c, onOpenPlan)
+    val showAction = !(upsell && exhausted)
+    // Large text: the button moves under the plan name so the name and details keep their room.
+    val stacked = LocalDensity.current.fontScale >= 1.2f
+    val action: @Composable () -> Unit = {
+        if (upsell) {
+            ColituButton(
+                loc["trial.upgrade"],
+                upgrade,
+                kind = if (freeState == ColituUpsell.FreeState.Low) ColituButtonKind.Primary else ColituButtonKind.Secondary,
+                expand = false,
+                height = 40.dp,
+            )
+        } else {
+            ColituButton(loc["plan.manage"], onOpenPlan, kind = ColituButtonKind.Secondary, expand = false, height = 40.dp)
+        }
+    }
     ColituPanel(modifier, padding = PaddingValues(start = 14.dp, top = 12.dp, end = 12.dp, bottom = 12.dp), radius = ColituRadius.md, onClick = onOpenPlan) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -542,7 +692,7 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CText(planNameOf(user, c.subscription), ColituText.label, Modifier.weight(1f, fill = false), maxLines = 1)
+                        CText(planNameOf(user, c.subscription), ColituText.label, Modifier.weight(1f, fill = false), maxLines = 2)
                         if (!active) {
                             Spacer(Modifier.width(8.dp))
                             ColituBadge(loc["plan.status.$status"], BadgeTone.Danger)
@@ -550,23 +700,17 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                     }
                     if (detail.isNotEmpty()) {
                         Spacer(Modifier.height(2.dp))
-                        CText(detail, ColituText.small, maxLines = 2)
+                        CText(detail, ColituText.small, maxLines = 3)
                     }
                 }
-                if (!(upsell && exhausted)) {
+                if (showAction && !stacked) {
                     Spacer(Modifier.width(8.dp))
-                    if (upsell) {
-                        ColituButton(
-                            loc["upsell.premium"],
-                            { openUpgrade(context, onOpenPlan) },
-                            kind = if (freeState == ColituUpsell.FreeState.Low) ColituButtonKind.Primary else ColituButtonKind.Secondary,
-                            expand = false,
-                            height = 36.dp,
-                        )
-                    } else {
-                        ColituButton(loc["plan.manage"], onOpenPlan, kind = ColituButtonKind.Secondary, expand = false, height = 36.dp)
-                    }
+                    action()
                 }
+            }
+            if (showAction && stacked) {
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.padding(start = 52.dp)) { action() }
             }
             if (limit != null) {
                 Spacer(Modifier.height(10.dp))
@@ -576,7 +720,7 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                     CText(
                         "${loc["home.traffic"]}: ${loc.format("home.trafficOf", "used" to loc.bytes(used), "limit" to loc.bytes(limit))}",
                         ColituText.small,
-                        maxLines = 1,
+                        maxLines = 2,
                     )
                 }
             }
@@ -598,7 +742,7 @@ private fun PlanRow(c: ColituController, onOpenPlan: () -> Unit, modifier: Modif
                 Spacer(Modifier.height(10.dp))
                 ColituButton(
                     loc["trial.upgrade"],
-                    { openUpgrade(context, onOpenPlan) },
+                    upgrade,
                     icon = if (upsellRoute == ColituUpsell.Route.Web) ColituIcons.ArrowUpRightSquare else ColituIcons.Star,
                     height = 48.dp,
                 )

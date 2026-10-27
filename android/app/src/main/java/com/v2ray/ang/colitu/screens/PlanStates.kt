@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -86,6 +87,55 @@ fun openUpgrade(context: Context, onOpenPlan: () -> Unit) {
         ColituUpsell.Route.PlayBilling -> onOpenPlan()
         ColituUpsell.Route.Web -> openUrl(context, PRICING_URL)
         ColituUpsell.Route.None -> Unit
+    }
+}
+
+/**
+ * "Get Premium" straight to the purchase, with no stop on the Plan tab: in
+ * the Google Play build Google Play's own purchase section opens in a sheet
+ * over the current screen ([ColituStore.purchaseSection]); elsewhere the
+ * pricing page opens as [openUpgrade] does. Returns the action to call.
+ */
+@Composable
+fun rememberDirectUpgrade(c: ColituController, onOpenPlan: () -> Unit): () -> Unit {
+    val context = LocalContext.current
+    var sheet by remember { mutableStateOf(false) }
+    val section = ColituStore.purchaseSection
+    if (sheet && section != null) {
+        // Once the account is on a paid plan the sheet has done its job.
+        val paid = c.planActive && !com.v2ray.ang.colitu.app.isFreePlan(c.user)
+        androidx.compose.runtime.LaunchedEffect(paid) { if (paid) sheet = false }
+        PurchaseSheet(c, section) { sheet = false }
+    }
+    return {
+        if (upsellRoute == ColituUpsell.Route.PlayBilling && section != null) sheet = true
+        else openUpgrade(context, onOpenPlan)
+    }
+}
+
+@Composable
+private fun PurchaseSheet(c: ColituController, section: @Composable (ColituController) -> Unit, onClose: () -> Unit) {
+    val loc = ColituLoc
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        ColituPanel(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 24.dp),
+            padding = PaddingValues(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 16.dp),
+            radius = ColituRadius.lg,
+        ) {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CText(loc["trial.upgrade"], ColituText.h2, Modifier.weight(1f), maxLines = 2)
+                    Box(Modifier.size(48.dp).clip(CircleShape).pressable(onClose), contentAlignment = Alignment.Center) {
+                        ColituIcon(ColituIcons.XMark, ColituColors.muted, 18.dp, description = loc["pay.cancel"])
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                section(c)
+            }
+        }
     }
 }
 
@@ -264,6 +314,19 @@ fun lockdownState(): LockdownState? {
     }.getOrNull()
 }
 
+/** [lockdownState], read again whenever the app comes back from the system VPN settings. */
+@Composable
+fun rememberLockdownState(): LockdownState? {
+    var state by remember { mutableStateOf(lockdownState()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) state = lockdownState() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    return state
+}
+
 fun openVpnSettings(context: Context) {
     runCatching { context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
@@ -277,14 +340,7 @@ fun openVpnSettings(context: Context) {
 fun KillSwitchRow() {
     val loc = ColituLoc
     val context = LocalContext.current
-    var state by remember { mutableStateOf(lockdownState()) }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) state = lockdownState() }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
-    }
-    val current = state
+    val current = rememberLockdownState()
     val hint = when {
         current == null -> loc["kill.unknown"]
         current.alwaysOn && current.lockdown -> loc["kill.on"]

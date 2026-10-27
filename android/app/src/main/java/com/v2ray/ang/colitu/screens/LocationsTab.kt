@@ -81,6 +81,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -91,6 +94,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.v2ray.ang.colitu.app.ColituController
+import com.v2ray.ang.colitu.data.ColituQuickServers
 import com.v2ray.ang.colitu.data.ColituServer
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituColors
@@ -282,6 +286,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
         )
     val openedAt = remember { SystemClock.uptimeMillis() }
     val still = rememberStill()
+    val quick = quickListsOf(c)
 
     val content: LazyListScope.() -> Unit = {
         item(key = "title", contentType = "title") {
@@ -310,6 +315,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 onChange = { query = it },
                 label = null,
                 hint = loc["locations.search"] + "…",
+                accessibilityLabel = loc["locations.search"],
                 prefix = ColituIcons.Search,
                 fill = ColituColors.surface,
                 radius = FieldRadius,
@@ -318,9 +324,35 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                     Box(
                         Modifier.size(40.dp).clip(CircleShape).press({ query = "" }, radius = 20.dp),
                         contentAlignment = Alignment.Center,
-                    ) { ColituIcon(ColituIcons.XCircleOutline, ColituColors.muted, 18.dp) }
+                    ) { ColituIcon(ColituIcons.XCircleOutline, ColituColors.muted, 18.dp, description = loc["locations.clear"]) }
                 }),
             )
+        }
+        // Favourites and recently used servers (this device only), while nothing is searched.
+        if (q.isEmpty()) {
+            val quickKeys = Keys()
+            if (quick.favorites.isNotEmpty()) {
+                item(key = "sec-fav", contentType = "section") {
+                    Column {
+                        Spacer(Modifier.height(18.dp))
+                        SectionHeader(loc["quick.favorites"])
+                    }
+                }
+                quick.favorites.forEach { server ->
+                    item(key = quickKeys.of("fav-" + server.id), contentType = "server") { QuickRow(c, server) }
+                }
+            }
+            if (quick.recent.isNotEmpty()) {
+                item(key = "sec-recent", contentType = "section") {
+                    Column {
+                        Spacer(Modifier.height(if (quick.favorites.isEmpty()) 18.dp else 2.dp))
+                        SectionHeader(loc["quick.recent"])
+                    }
+                }
+                quick.recent.forEach { server ->
+                    item(key = quickKeys.of("rec-" + server.id), contentType = "server") { QuickRow(c, server) }
+                }
+            }
         }
         item(key = "chips", contentType = "chips") {
             if (advanced) {
@@ -461,6 +493,22 @@ private fun recommended(c: ColituController, items: List<ColituServer>): List<Co
         .take(3)
         .toSet()
     return items.filter { it in fastest }
+}
+
+/** Favourites and recently used servers that are still in the list (a removed server never shows). */
+internal class QuickLists(val favorites: List<ColituServer>, val recent: List<ColituServer>)
+
+/** Simple mode has no multihop routes, so only nodes count there. */
+internal fun quickListsOf(c: ColituController): QuickLists {
+    val pool = if (c.advancedMode) c.allServers else c.servers
+    val favorites = ColituQuickServers.resolve(ColituQuickServers.favoriteIds, pool)
+    val recent = ColituQuickServers.recentWithoutFavorites(ColituQuickServers.resolve(ColituQuickServers.recentIds, pool), favorites)
+    return QuickLists(favorites, recent)
+}
+
+@Composable
+private fun QuickRow(c: ColituController, server: ColituServer) {
+    if (server.route != null) RouteCard(c, server, Modifier) else ServerCard(c, server, recommended = false, Modifier)
 }
 
 // ── Motion helpers ─────────────────────────────────────────────────────────
@@ -630,6 +678,11 @@ private fun FilterChip(label: String, icon: ImageVector, selected: Boolean, onCl
     val edge by animateColorAsState(if (selected) SelectedBorder else ColituColors.line, spec, label = "chipEdge")
     Row(
         Modifier
+            // Named and marked chosen for a screen reader, also when the strip cuts the chip off.
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            }
             .press(onClick, radius = FieldRadius)
             .height(44.dp)
             .clip(shape)
@@ -712,8 +765,11 @@ private fun RowBody(
     subtitle: String,
     connected: Boolean,
     badge: (@Composable () -> Unit)? = null,
+    ping: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit,
 ) {
+    // Large text: the ping moves under the name so the name keeps its width and never breaks mid-word.
+    val pingBelow = ping != null && largeText()
     Row(
         Modifier.fillMaxWidth().heightIn(min = RowMinHeight - CardPaddingVertical * 2),
         verticalAlignment = Alignment.CenterVertically,
@@ -733,8 +789,13 @@ private fun RowBody(
                 Spacer(Modifier.height(3.dp))
                 SubLine(subtitle, connected)
             }
+            if (pingBelow) {
+                Spacer(Modifier.height(4.dp))
+                ping!!()
+            }
         }
         Spacer(Modifier.width(12.dp))
+        if (ping != null && !pingBelow) ping()
         trailing()
     }
 }
@@ -748,7 +809,7 @@ private fun SubLine(text: String, connected: Boolean) {
             if (text.isNotEmpty()) BasicText(" · ", style = SubStyle, maxLines = 1)
         }
         if (text.isNotEmpty()) {
-            BasicText(text, Modifier.weight(1f, fill = false), style = SubStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(text, Modifier.weight(1f, fill = false), style = SubStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -784,10 +845,44 @@ private fun ServerCard(c: ColituController, server: ColituServer, recommended: B
                 subtitle = subtitle,
                 connected = connected,
                 badge = badgeFor(server),
+                ping = { if (selectable) Ping(c.pingOf(server), unreachable(c, server)) else Offline() },
             ) {
-                if (selectable) Ping(c.pingOf(server)) else Offline()
+                FavoriteButton(server.id)
             }
         }
+    }
+}
+
+/** The system font size is 120 % or more. */
+@Composable
+private fun largeText(): Boolean = LocalDensity.current.fontScale >= 1.2f
+
+/** A ping was tried on this list and failed (no entry at all means not measured yet). */
+private fun unreachable(c: ColituController, server: ColituServer): Boolean =
+    c.pings[server.id]?.let { it.ms == null } == true
+
+/**
+ * Star on every server row: adds or removes a favourite (stored on this device).
+ * 48 dp target; a screen reader says "Add to favourites" or "Remove from favourites".
+ */
+@Composable
+private fun FavoriteButton(id: String) {
+    val favorite = ColituQuickServers.isFavorite(id)
+    val label = ColituLoc[if (favorite) "quick.removeFavorite" else "quick.addFavorite"]
+    Box(
+        Modifier
+            .padding(start = 4.dp)
+            .size(48.dp)
+            .clip(CircleShape)
+            .press({ ColituQuickServers.toggleFavorite(id) }, radius = 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        ColituIcon(
+            if (favorite) ColituIcons.Star else ColituIcons.StarOutline,
+            if (favorite) ColituColors.warning else ColituColors.muted,
+            20.dp,
+            description = label,
+        )
     }
 }
 
@@ -856,8 +951,8 @@ private fun CountryGroup(c: ColituController, group: LocationEntry.Group, modifi
                     title = name,
                     subtitle = loc.count("locationCount", group.servers.size),
                     connected = !expanded && hasConnected,
+                    ping = { if (anyOnline) Ping(best, group.servers.filter { it.isAvailable }.all { unreachable(c, it) }) else Offline() },
                 ) {
-                    if (anyOnline) Ping(best) else Offline()
                     Spacer(Modifier.width(12.dp))
                     ColituIcon(ColituIcons.ChevronDown, ColituColors.muted, 16.dp, Modifier.graphicsLayer { rotationZ = turn })
                 }
@@ -904,6 +999,7 @@ private fun CityRow(c: ColituController, server: ColituServer) {
     val label = ColituServerNames.city(server.city)
         .ifEmpty { ColituServerNames.displayName(server.displayName, countryCode = server.countryCode) }
     val tags = tagsOf(server)
+    val large = largeText()
     val shape = RoundedCornerShape(FieldRadius)
     val edge by animateColorAsState(
         if (active) SelectedBorder else Color.Transparent,
@@ -923,7 +1019,7 @@ private fun CityRow(c: ColituController, server: ColituServer) {
             .heightIn(min = 56.dp)
             .clip(shape)
             .border(1.5.dp, edge, shape)
-            .padding(start = 14.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
+            .padding(start = 14.dp, top = 4.dp, end = 0.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -932,7 +1028,7 @@ private fun CityRow(c: ColituController, server: ColituServer) {
                     label,
                     Modifier.weight(1f, fill = false),
                     style = NameStyle.copy(fontSize = 15.5.sp, lineHeight = 19.5.sp),
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (connected) {
@@ -944,13 +1040,20 @@ private fun CityRow(c: ColituController, server: ColituServer) {
                 Spacer(Modifier.height(6.dp))
                 TagLine(tags)
             }
+            if (large) {
+                Spacer(Modifier.height(4.dp))
+                if (selectable) Ping(c.pingOf(server), unreachable(c, server)) else Offline()
+            }
         }
         Spacer(Modifier.width(10.dp))
-        if (selectable) Ping(c.pingOf(server)) else Offline()
-        Spacer(Modifier.width(8.dp))
+        if (!large) {
+            if (selectable) Ping(c.pingOf(server), unreachable(c, server)) else Offline()
+            Spacer(Modifier.width(8.dp))
+        }
         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
             if (checkAlpha > 0f) ColituIcon(ColituIcons.Check, ColituColors.lilac, 17.dp, Modifier.alpha(checkAlpha))
         }
+        FavoriteButton(server.id)
     }
 }
 
@@ -979,8 +1082,9 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
                 title = ColituServerNames.route(route.displayName),
                 subtitle = ColituLoc["multihop.ping"],
                 connected = connected,
+                ping = { Ping(c.pingOf(route), unreachable(c, route)) },
             ) {
-                Ping(c.pingOf(route))
+                FavoriteButton(route.id)
             }
         }
     }
@@ -1073,8 +1177,13 @@ private fun TagView(tag: Tag, modifier: Modifier) {
 
 /** Signal bars and the ping in milliseconds, in calm tones; a new value cross-fades in. */
 @Composable
-private fun Ping(ms: Int?) {
+private fun Ping(ms: Int?, unreachable: Boolean = false) {
     val still = LocalStill.current
+    if (ms == null && unreachable) {
+        // A failed ping says so in words, not only with grey bars.
+        BasicText(ColituLoc["server.unreachable"], style = PingTextStyle, maxLines = 2)
+        return
+    }
     AnimatedContent(
         targetState = ms,
         transitionSpec = {

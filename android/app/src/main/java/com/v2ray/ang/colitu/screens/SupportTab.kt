@@ -1,5 +1,12 @@
 package com.v2ray.ang.colitu.screens
 
+import com.v2ray.ang.colitu.design.focusRing
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -246,8 +253,8 @@ private fun SupportNewRequest(c: ColituController, onCancel: () -> Unit, onCreat
             Column {
                 ColituField(subject, { subject = it.take(160) }, loc["support.subject"], hint = loc["support.subjectHint"], enabled = !sending)
                 Spacer(Modifier.height(14.dp))
-                CText(loc["support.message"], ColituText.small, Modifier.padding(start = 4.dp, bottom = 6.dp), color = ColituColors.muted, weight = FontWeight.SemiBold)
-                TextArea(message, { message = it.take(8000) }, loc["support.messageHint"], minHeight = 130.dp, enabled = !sending)
+                CText(loc["support.message"], ColituText.small, Modifier.padding(start = 4.dp, bottom = 6.dp).clearAndSetSemantics {}, color = ColituColors.muted, weight = FontWeight.SemiBold)
+                TextArea(message, { message = it.take(8000) }, loc["support.messageHint"], minHeight = 130.dp, enabled = !sending, label = loc["support.message"])
                 Spacer(Modifier.height(10.dp))
                 FileChips(files)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -263,15 +270,22 @@ private fun SupportNewRequest(c: ColituController, onCancel: () -> Unit, onCreat
                 }
                 CText(loc["support.attachHint"], ColituText.small, Modifier.padding(start = 6.dp))
                 Spacer(Modifier.height(14.dp))
-                ColituTile(onClick = { diagnostics = !diagnostics }, padding = PaddingValues(12.dp)) {
+                // The whole row is one switch for a screen reader; the knob is only the state.
+                val diagnosticsInteraction = remember { MutableInteractionSource() }
+                ColituTile(
+                    Modifier
+                        .focusRing(diagnosticsInteraction, ColituRadius.md)
+                        .toggleable(diagnostics, diagnosticsInteraction, null, role = Role.Switch) { diagnostics = it },
+                    padding = PaddingValues(12.dp),
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             CText(loc["support.diagnostics"], ColituText.label)
                             Spacer(Modifier.height(2.dp))
-                            CText(loc["support.diagnosticsHint"], ColituText.small, maxLines = 4)
+                            CText(loc["support.diagnosticsHint"], ColituText.small, maxLines = 6)
                         }
                         Spacer(Modifier.width(10.dp))
-                        ColituSwitch(diagnostics) { diagnostics = it }
+                        ColituSwitch(diagnostics, null)
                     }
                 }
                 error?.let {
@@ -642,6 +656,8 @@ private fun TextArea(
     minHeight: androidx.compose.ui.unit.Dp,
     maxHeight: androidx.compose.ui.unit.Dp = 260.dp,
     enabled: Boolean = true,
+    /** Name a screen reader gives the field; the placeholder when there is no label. */
+    label: String = hint,
 ) {
     val shape = RoundedCornerShape(ColituRadius.md)
     var focused by remember { mutableStateOf(false) }
@@ -658,14 +674,14 @@ private fun TextArea(
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        if (value.isEmpty()) CText(hint, ColituText.body.copy(fontSize = 15.sp), color = ColituColors.dim)
+        if (value.isEmpty()) CText(hint, ColituText.body.copy(fontSize = 15.sp), Modifier.clearAndSetSemantics {}, color = ColituColors.dim)
         BasicTextField(
             value = value,
             onValueChange = onChange,
             enabled = enabled,
             textStyle = ColituText.body.copy(fontSize = 15.sp, color = ColituColors.text),
             cursorBrush = SolidColor(ColituColors.lilac),
-            modifier = Modifier.fillMaxWidth().tvFieldEscape().onFocusChanged { focused = it.isFocused },
+            modifier = Modifier.fillMaxWidth().tvFieldEscape().onFocusChanged { focused = it.isFocused }.semantics { contentDescription = label },
         )
     }
 }

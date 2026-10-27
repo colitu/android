@@ -201,6 +201,41 @@ object ColituIcons {
         }
     }
 
+    /** The star as an outline: a server that is not a favourite yet. */
+    val StarOutline = icon("star.outline") {
+        stroke(1.7f) {
+            for (i in 0 until 10) {
+                val angle = Math.toRadians(-90.0 + i * 36.0)
+                val radius = if (i % 2 == 0) 9.0 else 4.0
+                val x = (12 + radius * cos(angle)).toFloat()
+                val y = (12.6 + radius * sin(angle)).toFloat()
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
+            close()
+        }
+    }
+
+    /** Crown: the plan (Premium) tab. */
+    val Crown = icon("crown") {
+        fill {
+            moveTo(3f, 7.5f)
+            lineTo(7.6f, 11.4f)
+            lineTo(12f, 4.5f)
+            lineTo(16.4f, 11.4f)
+            lineTo(21f, 7.5f)
+            lineTo(19.2f, 17.2f)
+            horizontalLineTo(4.8f)
+            close()
+        }
+        fill {
+            moveTo(5.2f, 18.6f)
+            horizontalLineTo(18.8f)
+            verticalLineTo(20.4f)
+            horizontalLineTo(5.2f)
+            close()
+        }
+    }
+
     val Bolt = icon("bolt") {
         fill {
             moveTo(13.6f, 2f)
