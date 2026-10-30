@@ -777,17 +777,13 @@ private fun RowBody(
         leading()
         Spacer(Modifier.width(FlagGap))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Two lines before an ellipsis: "Birleşik Krallık" on a 360 dp phone.
-                BasicText(title, Modifier.weight(1f, fill = false), style = NameStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (badge != null) {
-                    Spacer(Modifier.width(8.dp))
-                    badge()
-                }
-            }
-            if (connected || subtitle.isNotEmpty()) {
+            // Two lines before an ellipsis: "Birleşik Krallık" on a 360 dp phone. The badge sits on
+            // the second line: next to the name, with the ping and the star, it left the name too
+            // narrow on a 360 dp phone ("Swede" / "n" on the connected card).
+            BasicText(title, style = NameStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (connected || subtitle.isNotEmpty() || badge != null) {
                 Spacer(Modifier.height(3.dp))
-                SubLine(subtitle, connected)
+                SubLine(subtitle, connected, badge)
             }
             if (pingBelow) {
                 Spacer(Modifier.height(4.dp))
@@ -800,16 +796,25 @@ private fun RowBody(
     }
 }
 
-/** The muted second line; "Connected" in violet goes first when it applies. */
+/** The muted second line; "Connected" in violet goes first when it applies, the badge last. */
 @Composable
-private fun SubLine(text: String, connected: Boolean) {
+private fun SubLine(text: String, connected: Boolean, badge: (@Composable () -> Unit)? = null) {
+    // "Connected" with the city or a badge does not fit next to the ping and the star on a 360 dp
+    // phone: the connected card shows only "Connected" then (Home shows the city).
+    val city = if (connected && badge != null) "" else text
+    val shownBadge = if (connected) null else badge
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (connected) {
             BasicText(ColituLoc["server.connected"], style = ConnectedStyle, maxLines = 1)
-            if (text.isNotEmpty()) BasicText(" · ", style = SubStyle, maxLines = 1)
+            if (city.isNotEmpty()) BasicText(" · ", style = SubStyle, maxLines = 1)
         }
-        if (text.isNotEmpty()) {
-            BasicText(text, Modifier.weight(1f, fill = false), style = SubStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (city.isNotEmpty()) {
+            // Next to a badge one line with an ellipsis: two lines broke "Stockholm" mid-word.
+            BasicText(city, Modifier.weight(1f, fill = false), style = SubStyle, maxLines = if (badge != null) 1 else 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (shownBadge != null) {
+            if (city.isNotEmpty()) Spacer(Modifier.width(8.dp))
+            shownBadge()
         }
     }
 }
