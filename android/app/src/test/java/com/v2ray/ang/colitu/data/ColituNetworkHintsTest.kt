@@ -105,6 +105,18 @@ class ColituNetworkHintsTest {
     }
 
     @Test
+    fun blockedServersAreParsedAndKeptPerNetwork() {
+        val json = JsonParser.parseString("""{"blocked":[],"blocked_servers":["node-b","node-a"],"scope":"country"}""").asJsonObject
+        assertEquals(setOf("node-a", "node-b"), ColituNetworkHints.fromJson(json)?.blockedServers)
+        assertEquals(emptySet<String>(), ColituNetworkHints.fromJson(JsonParser.parseString("""{"blocked":[]}""").asJsonObject)?.blockedServers)
+        val record = ColituNetworkRecord("RU-AS1", null, emptySet(), 1_000L, emptyList(), setOf("node-a"))
+        assertEquals(setOf("node-a"), ColituNetworkRecord.fromJson(record.toJson())?.blockedServersFor("RU-AS1", 2_000L))
+        assertEquals(emptySet<String>(), record.blockedServersFor("RU-AS2", 2_000L))
+        // A record written before blocked_servers existed still reads.
+        assertEquals(emptySet<String>(), ColituNetworkRecord.fromJson("""{"network":"RU-AS1","blocked":[],"at":1000}""")?.blockedServersFor("RU-AS1", 2_000L))
+    }
+
+    @Test
     fun hintedStartOnlyWithoutOwnMemory() {
         val offered = listOf("hysteria2", "vless-reality", "trojan", "vless-xhttp")
         val rank: (List<String>) -> List<String> = { it.sorted() }

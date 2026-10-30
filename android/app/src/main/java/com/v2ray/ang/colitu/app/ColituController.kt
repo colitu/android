@@ -150,6 +150,25 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * stalling mid-session here: they go last, and the warm spare takes one
      * only when nothing else qualifies.
      */
+    /**
+     * Servers the panel hints as blocked in this country (an address block),
+     * except the last good one here: this phone's own success beats the hint.
+     * Automatic mode treats them like servers that failed on this network
+     * (last, still a fallback); a manual choice is untouched.
+     */
+    private fun hintedServers(network: String, now: Long): Set<String> {
+        val hinted = networkRecord?.blockedServersFor(clientNetwork, now).orEmpty()
+        if (hinted.isEmpty()) return emptySet()
+        return hinted - setOfNotNull(memory.lastGoodServer(network, now))
+    }
+
+    /** Penalized on this network: own failures plus [hintedServers]. */
+    private fun penalizedHere(network: String, now: Long): Set<String> = memory.penalized(network, now) + hintedServers(network, now)
+
+    /** Penalty times for ranking: hinted servers count as the oldest penalty, own penalties keep their time. */
+    private fun penaltyTimesHere(network: String, now: Long): Map<String, Long> =
+        hintedServers(network, now).associateWith { 0L } + memory.penaltyTimes(network, now)
+
     private fun hintedBlocked(now: Long = System.currentTimeMillis()): Set<String> {
         val blocked = networkRecord?.blockedFor(clientNetwork, now).orEmpty()
         val network = networkKey
@@ -323,8 +342,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             val now = System.currentTimeMillis()
             val network = networkKey
             return ColituServerRanking.rank(
-                servers, pings, network, memory.lastGoodServer(network, now), memory.penalized(network, now), clientCountry, now,
-                penaltyAt = memory.penaltyTimes(network, now),
+                servers, pings, network, memory.lastGoodServer(network, now), penalizedHere(network, now), clientCountry, now,
+                penaltyAt = penaltyTimesHere(network, now),
             )
         }
     val recommendedServer: ColituServer? get() = rankedServers.firstOrNull()
@@ -551,7 +570,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     }
                     // Token and hints belong to the network they were asked on (VPN off only).
                     response.clientNetwork?.let { network ->
-                        val record = ColituNetworkRecord(network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(), response.networkHints?.preferred.orEmpty())
+                        val record = ColituNetworkRecord(
+                            network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(),
+                            response.networkHints?.preferred.orEmpty(), response.networkHints?.blockedServers.orEmpty(),
+                        )
                         networkRecord = record
                         store.encode(KEY_NETWORK_RECORD, record.toJson())
                     }
@@ -917,7 +939,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val network = networkKey
         val app = rankedServers
         val request = ColituEngine.rankRequest(
-            servers, pings, network, memory.lastGoodServer(network, now), memory.penaltyTimes(network, now), clientCountry, now,
+            servers, pings, network, memory.lastGoodServer(network, now), penaltyTimesHere(network, now), clientCountry, now,
         )
         val (order, source) = ColituEngine.decideOrder(context, "rank", request, app) { it.id }
         LogUtil.i(AppConfig.TAG, "Colitu: automatic order ($source): ${order.take(5).joinToString(" > ") { it.id }}")
@@ -1515,7 +1537,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // Recovery set: the API cannot be asked, so the set's next server is the spare.
         if (recovery) return recoveryNext?.let { SparePlan(it.first, it.second, null, started) } ?: SparePlan(server, null, null, started)
         if (!connectsAutomatically) return SparePlan(server, null, null, started)
-        val other = ColituWarmSpare.spareServer(rankedServers, server.id, memory.penalized(networkKey, System.currentTimeMillis()))
+        val other = ColituWarmSpare.spareServer(rankedServers, server.id, penalizedHere(networkKey, System.currentTimeMillis()))
             ?: return SparePlan(server, null, null, started)
         val fetch = viewModelScope.async {
             val result = safeCall { ColituServerRepository.fetchNodeCandidates(other.id) }

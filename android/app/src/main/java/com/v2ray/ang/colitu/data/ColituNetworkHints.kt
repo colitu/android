@@ -10,9 +10,17 @@ import com.google.gson.JsonParser
  * last unless this phone's own memory says they carried traffic here in the
  * last 24 h (local experience beats the hint). `preferred` (Adaptive Connect
  * 3.0): transports that worked for most users here, best first; a phone
- * without its own memory of the network starts with them.
+ * without its own memory of the network starts with them. `blocked_servers`:
+ * servers most users in this country could not reach in the last hours (an
+ * address block); automatic mode treats them like servers that failed here.
  */
-data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val updatedAt: String?, val preferred: List<String> = emptyList()) {
+data class ColituNetworkHints(
+    val blocked: Set<String>,
+    val scope: String?,
+    val updatedAt: String?,
+    val preferred: List<String> = emptyList(),
+    val blockedServers: Set<String> = emptySet(),
+) {
     companion object {
         private fun protocols(json: JsonObject, name: String): List<String> =
             json.get(name)?.takeIf { it.isJsonArray }?.asJsonArray
@@ -27,6 +35,7 @@ data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val 
                 json.get("scope")?.takeIf { it.isJsonPrimitive }?.asString,
                 json.get("updated_at")?.takeIf { it.isJsonPrimitive }?.asString,
                 protocols(json, "preferred").filterNot { it in blocked },
+                protocols(json, "blocked_servers").toSet(),
             )
         }
     }
@@ -38,7 +47,14 @@ data class ColituNetworkHints(val blocked: Set<String>, val scope: String?, val 
  * observations so the panel counts them for that network) and the hinted
  * transports. Both only count on the same network and for [TTL_MS].
  */
-data class ColituNetworkRecord(val clientNetwork: String, val token: String?, val blocked: Set<String>, val at: Long, val preferred: List<String> = emptyList()) {
+data class ColituNetworkRecord(
+    val clientNetwork: String,
+    val token: String?,
+    val blocked: Set<String>,
+    val at: Long,
+    val preferred: List<String> = emptyList(),
+    val blockedServers: Set<String> = emptySet(),
+) {
     private fun valid(network: String?, now: Long) = network == clientNetwork && now - at in 0 until TTL_MS
 
     fun tokenFor(network: String?, now: Long): String? = token?.takeIf { valid(network, now) }
@@ -47,11 +63,14 @@ data class ColituNetworkRecord(val clientNetwork: String, val token: String?, va
 
     fun preferredFor(network: String?, now: Long): List<String> = if (valid(network, now)) preferred else emptyList()
 
+    fun blockedServersFor(network: String?, now: Long): Set<String> = if (valid(network, now)) blockedServers else emptySet()
+
     fun toJson(): String = JsonObject().apply {
         addProperty("network", clientNetwork)
         token?.let { addProperty("token", it) }
         add("blocked", JsonArray().apply { blocked.forEach(::add) })
         add("preferred", JsonArray().apply { preferred.forEach(::add) })
+        add("blocked_servers", JsonArray().apply { blockedServers.forEach(::add) })
         addProperty("at", at)
     }.toString()
 
@@ -67,6 +86,7 @@ data class ColituNetworkRecord(val clientNetwork: String, val token: String?, va
                 o.get("blocked")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }?.toSet().orEmpty(),
                 o.get("at").asLong,
                 o.get("preferred")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }.orEmpty(),
+                o.get("blocked_servers")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }?.toSet().orEmpty(),
             )
         }.getOrNull()
     }
