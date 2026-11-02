@@ -254,9 +254,11 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     val q = fold(query.trim())
     // Cities of one country tie on the title, so they sort by city inside a group.
     val byName = compareBy<ColituServer> { c.titleOf(it) }.thenBy { ColituServerNames.city(it.city) }.thenBy { it.displayName }
+    // Unreachable with the VPN off (two failed rounds): left out, see ColituReachability.
+    val hidden = c.hiddenServerIds
     val items = c.servers
         .filter { server ->
-            server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${ColituServerNames.city(server.city)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
+            server.id !in hidden && server.inCategory(filter) && (q.isEmpty() || fold("${c.titleOf(server)} ${ColituServerNames.city(server.city)} ${server.displayName} ${server.city.orEmpty()} ${server.countryCode.orEmpty()}").contains(q))
         }
         .sortedWith(
             compareBy<ColituServer> { if (it.isAvailable) 0 else 1 }.then(
@@ -275,7 +277,7 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
     // of the exit and the entry both count for the search.
     val routeItems = if (filter != "all" || !advanced) emptyList() else c.routes
         .filter { route ->
-            q.isEmpty() || fold("${route.displayName} ${ColituServerNames.route(route.displayName)} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q)
+            route.id !in hidden && (q.isEmpty() || fold("${route.displayName} ${ColituServerNames.route(route.displayName)} ${route.route?.entry?.label.orEmpty()} ${route.route?.exit?.label.orEmpty()} ${route.route?.entry?.country.orEmpty()} ${route.route?.exit?.country.orEmpty()}").contains(q))
         }
         .sortedWith(
             when (sort) {
@@ -339,7 +341,8 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                     }
                 }
                 quick.favorites.forEach { server ->
-                    item(key = quickKeys.of("fav-" + server.id), contentType = "server") { QuickRow(c, server) }
+                    // A favourite stays when it is unreachable, dimmed.
+                    item(key = quickKeys.of("fav-" + server.id), contentType = "server") { QuickRow(c, server, dimmed = server.id in hidden) }
                 }
             }
             if (quick.recent.isNotEmpty()) {
@@ -498,17 +501,19 @@ private fun recommended(c: ColituController, items: List<ColituServer>): List<Co
 /** Favourites and recently used servers that are still in the list (a removed server never shows). */
 internal class QuickLists(val favorites: List<ColituServer>, val recent: List<ColituServer>)
 
-/** Simple mode has no multihop routes, so only nodes count there. */
+/** Simple mode has no multihop routes, so only nodes count there. Unreachable ones leave the recent list only. */
 internal fun quickListsOf(c: ColituController): QuickLists {
     val pool = if (c.advancedMode) c.allServers else c.servers
+    val hidden = c.hiddenServerIds
     val favorites = ColituQuickServers.resolve(ColituQuickServers.favoriteIds, pool)
     val recent = ColituQuickServers.recentWithoutFavorites(ColituQuickServers.resolve(ColituQuickServers.recentIds, pool), favorites)
+        .filterNot { it.id in hidden }
     return QuickLists(favorites, recent)
 }
 
 @Composable
-private fun QuickRow(c: ColituController, server: ColituServer) {
-    if (server.route != null) RouteCard(c, server, Modifier) else ServerCard(c, server, recommended = false, Modifier)
+private fun QuickRow(c: ColituController, server: ColituServer, dimmed: Boolean = false) {
+    if (server.route != null) RouteCard(c, server, Modifier, dimmed) else ServerCard(c, server, recommended = false, Modifier, dimmed)
 }
 
 // ── Motion helpers ─────────────────────────────────────────────────────────
@@ -825,7 +830,7 @@ private fun Offline() {
 }
 
 @Composable
-private fun ServerCard(c: ColituController, server: ColituServer, recommended: Boolean, modifier: Modifier) {
+private fun ServerCard(c: ColituController, server: ColituServer, recommended: Boolean, modifier: Modifier, dimmed: Boolean = false) {
     val loc = ColituLoc
     val selected = !c.autoSelection && c.selectedServerId == server.id
     val connected = c.connected && c.connectedServerId == server.id
@@ -837,7 +842,7 @@ private fun ServerCard(c: ColituController, server: ColituServer, recommended: B
     val subtitle = if (city.isNotEmpty() && !city.equals(country, ignoreCase = true)) city else ""
     Column(modifier.padding(bottom = CardGap)) {
         RowCard(
-            Modifier.alpha(if (selectable) 1f else 0.5f).press(if (selectable) ({ c.selectServer(server) }) else null),
+            Modifier.alpha(if (selectable && !dimmed) 1f else 0.5f).press(if (selectable) ({ c.selectServer(server) }) else null),
             edge = when {
                 selected || connected -> Edge.Selected
                 recommended -> Edge.Recommended
@@ -862,9 +867,11 @@ private fun ServerCard(c: ColituController, server: ColituServer, recommended: B
 @Composable
 private fun largeText(): Boolean = LocalDensity.current.fontScale >= 1.2f
 
-/** A ping was tried on this list and failed (no entry at all means not measured yet). */
-private fun unreachable(c: ColituController, server: ColituServer): Boolean =
-    c.pings[server.id]?.let { it.ms == null } == true
+/**
+ * A ping was tried with the VPN off and failed while the network worked (no entry at all
+ * means not measured yet; with the VPN on, or when the network failed, the row shows "—").
+ */
+private fun unreachable(c: ColituController, server: ColituServer): Boolean = c.pingFailed(server)
 
 /**
  * Star on every server row: adds or removes a favourite (stored on this device).
@@ -891,11 +898,30 @@ private fun FavoriteButton(id: String) {
     }
 }
 
-/** The one small badge a row may carry: ad-free YouTube, else the ad blocker when the node has it. */
+/**
+ * The one small badge a row may carry: the panel's "Önerilen", else ad-free YouTube, else the
+ * ad blocker when the node has it.
+ */
 private fun badgeFor(server: ColituServer): (@Composable () -> Unit)? = when {
+    server.recommended -> ({ RecommendedBadge() })
     "youtube_adfree" in server.services -> ({ MiniBadge { ServiceMark("youtube_adfree", 12.dp) } })
     server.hostsAdBlockDns -> ({ MiniBadge { ColituIcon(ColituIcons.EyeSlash, ColituColors.muted, 12.dp) } })
     else -> null
+}
+
+/** Small text pill for the panel's recommended servers ("Önerilen"). */
+@Composable
+private fun RecommendedBadge() {
+    Box(
+        Modifier
+            .clip(CircleShape)
+            .background(ColituColors.surface2)
+            .border(1.dp, RecommendedBorder, CircleShape)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(ColituLoc["server.recommendedBadge"], style = SubStyle.copy(fontSize = 11.sp, lineHeight = 14.sp), maxLines = 1)
+    }
 }
 
 /** Icon-only round badge so the country name keeps its room. */
@@ -1039,6 +1065,9 @@ private fun CityRow(c: ColituController, server: ColituServer) {
                 if (connected) {
                     Spacer(Modifier.width(8.dp))
                     BasicText(loc["server.connected"], style = ConnectedStyle.copy(fontSize = 12.5.sp), maxLines = 1)
+                } else if (server.recommended) {
+                    Spacer(Modifier.width(8.dp))
+                    RecommendedBadge()
                 }
             }
             if (tags.isNotEmpty()) {
@@ -1067,13 +1096,13 @@ private fun CityRow(c: ColituController, server: ColituServer) {
  * estimate: the exit adds a hop).
  */
 @Composable
-private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifier) {
+private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifier, dimmed: Boolean = false) {
     val ends = route.route ?: return
     val selected = !c.autoSelection && c.selectedServerId == route.id
     val connected = c.connected && c.connectedServerId == route.id
     Column(modifier.padding(bottom = CardGap)) {
         RowCard(
-            Modifier.press({ c.selectServer(route) }),
+            Modifier.alpha(if (dimmed) 0.5f else 1f).press({ c.selectServer(route) }),
             edge = if (selected || connected) Edge.Selected else Edge.Plain,
         ) {
             RowBody(

@@ -54,6 +54,16 @@ data class ColituServer(
      * never by automatic mode ([ColituServerRanking.autoExcluded]).
      */
     val alpha: Boolean = false,
+    /**
+     * The panel's "Önerilen" flag (optional, false when absent): sorts first inside its
+     * country with a small badge. Not [isRecommended], which marks the first of the list.
+     */
+    val recommended: Boolean = false,
+    /**
+     * The panel's "Beyaz listede çalışır" (Adaptive Connect 4): the entry address works
+     * under mobile operators' whitelists; a route carries its entry node's flag.
+     */
+    val whitelistOk: Boolean = false,
 ) {
     val isMultihop: Boolean get() = route != null
     val flagEmoji: String get() = countryCodeToFlag(countryCode)
@@ -102,6 +112,8 @@ data class ColituServer(
                     latencyHost = json.getString("latency_host"),
                     latencyPort = json.getString("latency_port")?.toIntOrNull(),
                     alpha = json.get("alpha")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } == true,
+                    recommended = json.get("recommended")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } == true,
+                    whitelistOk = json.get("whitelist_ok")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } == true,
                 )
             } catch (e: Exception) {
                 null
@@ -150,6 +162,8 @@ data class ColituServerListResponse(
     val networkHints: ColituNetworkHints? = null,
     /** Rollout switches for this device (`features`); null from an older panel. */
     val features: Map<String, Boolean>? = null,
+    /** Adaptive Connect 4 whitelist check: domestic hosts per country; null from an older panel. */
+    val whitelistProbe: Map<String, List<String>>? = null,
 ) {
     companion object {
         /**
@@ -176,6 +190,7 @@ data class ColituServerListResponse(
                 json.optText("network_token"),
                 ColituNetworkHints.fromJson(json.get("network_hints")?.takeIf { it.isJsonObject }?.asJsonObject),
                 ColituRemoteFeatures.parse(json.get("features")?.takeIf { it.isJsonObject }?.asJsonObject),
+                ColituWhitelist.parseProbe(json.get("whitelist_probe")?.takeIf { it.isJsonObject }?.asJsonObject),
             )
         }
 

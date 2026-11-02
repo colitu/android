@@ -64,6 +64,15 @@ class ColituLocTest {
         assertEquals(ColituLoc["err.noPlan"], colituErrorMessage("ENTITLEMENT_INACTIVE"))
         assertEquals(ColituLoc["err.network"], colituErrorMessage("timeout"))
         assertEquals(ColituLoc["err.generic"], colituErrorMessage("something_new"))
+        assertEquals(ColituLoc["err.engineNotStarted"], colituErrorMessage("ENGINE_NOT_STARTED"))
+    }
+
+    @Test
+    fun engineNotStartedIsSaidInEveryLanguage() {
+        val sentences = listOf("ru", "tr", "en").map { inLanguage(it) { ColituLoc["err.engineNotStarted"] } }
+        assertEquals("Bağlantı servisi başlatılamadı. Telefonu yeniden başlatıp tekrar deneyin.", sentences[1])
+        assertEquals(3, sentences.toSet().size)
+        sentences.forEach { assertNotEquals("err.engineNotStarted", it) }
     }
 
     @Test

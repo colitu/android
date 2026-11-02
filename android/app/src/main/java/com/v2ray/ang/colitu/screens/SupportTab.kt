@@ -51,6 +51,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -331,7 +335,7 @@ private fun uploadFullReport(c: ColituController, conversationId: String) {
     // Not tied to the screen: leaving the tab right after sending must not cancel it.
     kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
         runCatching {
-            ColituSupportRepository.uploadReport(conversationId, c.fullSupportReport())
+            ColituSupportRepository.uploadReport(conversationId, c.fullSupportReport(), runCatching { c.supportEngine() }.getOrNull())
         }
     }
 }
@@ -661,11 +665,19 @@ private fun TextArea(
 ) {
     val shape = RoundedCornerShape(ColituRadius.md)
     var focused by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     Box(
         Modifier
             .fillMaxWidth()
             .heightIn(min = minHeight, max = maxHeight)
             .clip(shape)
+            // The whole box is the field: a tap below the first line (or on the padding) used to
+            // leave the focus on the field above.
+            .clickable(enabled = enabled, interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
             .background(ColituColors.field)
             .border(
                 if (focused && ColituTv.isTv) 2.dp else 1.dp,
@@ -681,7 +693,8 @@ private fun TextArea(
             enabled = enabled,
             textStyle = ColituText.body.copy(fontSize = 15.sp, color = ColituColors.text),
             cursorBrush = SolidColor(ColituColors.lilac),
-            modifier = Modifier.fillMaxWidth().tvFieldEscape().onFocusChanged { focused = it.isFocused }.semantics { contentDescription = label },
+            modifier = Modifier.fillMaxWidth().heightIn(min = (minHeight - 24.dp).coerceAtLeast(0.dp)).focusRequester(focusRequester).tvFieldEscape()
+                .onFocusChanged { focused = it.isFocused }.semantics { contentDescription = label },
         )
     }
 }

@@ -154,6 +154,15 @@ object ColituServerNames {
         return "$localizedHead ($localizedSuffix)"
     }
 
+    /**
+     * The name ends in the bridge suffix ("Finlandiya (Köprü)", "… (Мост)", "… (Bridge)"): a node
+     * whose entry address is in Russia and whose traffic leaves abroad (its country is the exit's).
+     */
+    fun isBridgeName(raw: String?): Boolean {
+        val match = suffixed.matchEntire(raw?.trim().orEmpty()) ?: return false
+        return suffixIndex.containsKey(normalize(match.groupValues[2].trim()))
+    }
+
     /** A multihop route name, "Varşova → Frankfurt": each end as a city or a display name. */
     fun route(raw: String?, language: String? = null): String {
         val text = raw?.trim().orEmpty()

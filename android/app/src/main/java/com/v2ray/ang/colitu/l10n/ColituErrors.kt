@@ -53,6 +53,7 @@ fun colituErrorMessage(code: String?, signingIn: Boolean = false): String {
         "UNREACHABLE", "TUNNEL_TIMEOUT" -> loc["err.unreachable"]
         "VERIFY_FAILED" -> loc["err.verify"]
         "TUN_FAILED" -> loc["err.tun"]
+        "ENGINE_NOT_STARTED" -> loc["err.engineNotStarted"]
         "VPN_PERMISSION_DENIED" -> loc["err.permission"]
         "CONFIG_NOT_READY", "CONFIG_CACHE_MISS", "PARSE_ERROR", "CONFIG_EXPIRED", "ENGINE_FAILED" -> loc["err.engine"]
         "INVALID_EMAIL" -> loc["auth.err.email"]

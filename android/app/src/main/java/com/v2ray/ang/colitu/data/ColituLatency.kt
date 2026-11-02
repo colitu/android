@@ -1,5 +1,6 @@
 package com.v2ray.ang.colitu.data
 
+import android.net.Network
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -15,7 +16,10 @@ import java.net.Socket
  * Ping of a location: the TCP connect time to the node's latency probe
  * address (the panel's latency_host / latency_port), best of two tries, like
  * the Windows app. Measured outside the tunnel only; through a running VPN
- * the number would describe the path between two nodes, not the phone.
+ * the number would describe the path between two nodes, not the phone. With
+ * the VPN up the caller passes the physical [Network]: the app is excluded
+ * from its own tunnel (CoreVpnService) and, as the VPN owner, may bind
+ * sockets to the underlying network, so the number is the phone's own.
  *
  * The probe address comes from the server list, so it is bounded: at most
  * [MAX_SERVERS] servers, [PARALLEL] connects at a time, only [ALLOWED_PORTS],
@@ -34,9 +38,10 @@ object ColituLatency {
      */
     internal val ALLOWED_PORTS = setOf(443, 2053, 2083, 2087, 2096, 3443, 4433, 7443, 8388, 8443, 9443)
 
-    suspend fun measure(host: String, port: Int): Int? = withContext(Dispatchers.IO) {
+    /** One round: a try and one retry, the best counts. */
+    suspend fun measure(host: String, port: Int, network: Network? = null): Int? = withContext(Dispatchers.IO) {
         if (!probeAllowed(host, port)) return@withContext null
-        val tries = (0 until 2).map { connectMs(host, port) }
+        val tries = (0 until 2).map { connectMs(host, port, network) }
         tries.filterNotNull().minOrNull()
     }
 
@@ -44,12 +49,12 @@ object ColituLatency {
      * Pings of every server with a probe address, by server id; null when the
      * probe timed out or was refused (automatic mode tries that server last).
      */
-    suspend fun measureAll(servers: List<ColituServer>): Map<String, Int?> = coroutineScope {
+    suspend fun measureAll(servers: List<ColituServer>, network: Network? = null): Map<String, Int?> = coroutineScope {
         val gate = Semaphore(PARALLEL)
         servers
             .filter { !it.latencyHost.isNullOrBlank() && (it.latencyPort ?: 0) in 1..65535 }
             .take(MAX_SERVERS)
-            .map { server -> async { server.id to gate.withPermit { measure(server.latencyHost!!, server.latencyPort!!) } } }
+            .map { server -> async { server.id to gate.withPermit { measure(server.latencyHost!!, server.latencyPort!!, network) } } }
             .awaitAll()
             .toMap()
     }
@@ -63,15 +68,15 @@ object ColituLatency {
         return literal == null || !ColituAddressRanges.isNonPublic(literal)
     }
 
-    private fun connectMs(host: String, port: Int): Int? = try {
+    private fun connectMs(host: String, port: Int, network: Network?): Int? = try {
         // Resolve first so the DNS lookup is not counted as ping; a name that
         // resolves to a local address is not probed either.
-        val resolved = InetAddress.getByName(host)
+        val resolved = network?.getByName(host) ?: InetAddress.getByName(host)
         if (ColituAddressRanges.isNonPublic(resolved)) {
             null
         } else {
             val address = InetSocketAddress(resolved, port)
-            Socket().use { socket ->
+            (network?.socketFactory?.createSocket() ?: Socket()).use { socket ->
                 val started = System.nanoTime()
                 socket.connect(address, TIMEOUT_MS)
                 ((System.nanoTime() - started) / 1_000_000).toInt().coerceAtLeast(1)

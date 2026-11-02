@@ -89,6 +89,7 @@ object ColituMultihop {
             latencyHost = json.text("latency_host"),
             latencyPort = json.text("latency_port")?.toIntOrNull(),
             route = ColituRoute(json.text("route_slug"), entry, exit),
+            whitelistOk = json.get("whitelist_ok")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { it.isBoolean && it.asBoolean } == true,
         )
     }
 }

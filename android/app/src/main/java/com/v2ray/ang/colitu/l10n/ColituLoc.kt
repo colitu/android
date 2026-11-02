@@ -224,6 +224,21 @@ object ColituLoc {
         "home.phase.verifying" to arrayOf("Проверяем трафик…", "Trafik doğrulanıyor…", "Verifying traffic…"),
         "home.phase.switching" to arrayOf("Пробуем другой протокол…", "Başka protokol deneniyor…", "Trying another protocol…"),
         "home.phase.switchingServer" to arrayOf("Пробуем другой сервер…", "Başka sunucu deneniyor…", "Trying another server…"),
+        "ac4.whitelist.switched" to arrayOf(
+            "Оператор работает в режиме белого списка, переключаемся на подходящий сервер.",
+            "Operatörünüz beyaz liste modunda, uygun sunucuya geçildi.",
+            "Your operator is in whitelist mode, switched to a suitable server.",
+        ),
+        "ac4.whitelist.none" to arrayOf(
+            "Оператор работает в режиме белого списка. Подходящего сервера пока нет.",
+            "Operatörünüz beyaz liste modunda. Henüz uygun sunucu yok.",
+            "Your operator is in whitelist mode. No suitable server yet.",
+        ),
+        "ac4.whitelist.off" to arrayOf(
+            "Режим белого списка у оператора закончился.",
+            "Operatörünüzün beyaz liste modu sona erdi.",
+            "Your operator's whitelist mode has ended.",
+        ),
         "home.phase.reconnecting" to arrayOf("Соединение прервалось, переподключаемся…", "Bağlantı koptu, yeniden bağlanılıyor…", "Connection dropped, reconnecting…"),
         "home.switchingTransport" to arrayOf("Протокол не отвечает, пробуем другой…", "Protokol yanıt vermiyor, başkası deneniyor…", "Protocol isn’t responding, trying another…"),
         "home.fastest" to arrayOf("Самый быстрый сервер", "En hızlı sunucu", "Fastest server"),
@@ -510,6 +525,7 @@ object ColituLoc {
         "err.verify" to arrayOf("VPN подключился, но трафик не идёт. Закройте другие VPN-приложения и попробуйте снова.", "VPN bağlandı ama trafik akmıyor. Diğer VPN uygulamalarını kapatıp tekrar deneyin.", "The VPN connected but traffic isn’t flowing. Close other VPN apps and try again."),
         "err.tun" to arrayOf("Android не смог запустить VPN-туннель. Закройте другие VPN-приложения и попробуйте снова.", "Android VPN tünelini başlatamadı. Diğer VPN uygulamalarını kapatıp tekrar deneyin.", "Android couldn’t start the VPN tunnel. Close other VPN apps and try again."),
         "err.permission" to arrayOf("Доступ к VPN не разрешён. Нажмите «Подключить» и разрешите запрос Android.", "VPN izni verilmedi. “Bağlan”a basıp Android’in isteğine izin verin.", "VPN permission was denied. Press Connect and allow Android’s request."),
+        "err.engineNotStarted" to arrayOf("Не удалось запустить службу подключения. Перезагрузите телефон и попробуйте снова.", "Bağlantı servisi başlatılamadı. Telefonu yeniden başlatıp tekrar deneyin.", "The connection service couldn’t start. Restart your phone and try again."),
         "err.engine" to arrayOf("VPN-движок не запустился с этой конфигурацией. Попробуйте ещё раз.", "VPN motoru bu yapılandırmayla başlayamadı. Tekrar deneyin.", "The VPN engine couldn’t start with this configuration. Please try again."),
         "err.blocked" to arrayOf("Подключение сейчас недоступно: {reason}", "Bağlantı şu anda kullanılamıyor: {reason}", "Connecting isn’t available right now: {reason}"),
         "err.updateRequired" to arrayOf("Обновите Colitu, чтобы подключиться.", "Bağlanmak için Colitu’yu güncelleyin.", "Update Colitu to connect."),
@@ -1009,6 +1025,7 @@ object ColituLoc {
         "home.fastestShort" to arrayOf("Самый быстрый", "En hızlı", "Fastest"),
         "home.quickSettings" to arrayOf("Быстрые настройки", "Hızlı ayarlar", "Quick settings"),
         "server.unreachable" to arrayOf("Недоступен", "Ulaşılamıyor", "Unreachable"),
+        "server.recommendedBadge" to arrayOf("Рекомендуемый", "Önerilen", "Recommended"),
         "locations.categories" to arrayOf("Категории", "Kategoriler", "Categories"),
         "locations.clear" to arrayOf("Очистить поиск", "Aramayı temizle", "Clear search"),
     )

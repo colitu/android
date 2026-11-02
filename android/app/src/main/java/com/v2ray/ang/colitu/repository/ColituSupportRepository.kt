@@ -164,8 +164,8 @@ object ColituSupportRepository {
         }
 
     /** Attaches [report] to a conversation (a new one, with diagnostics on). */
-    suspend fun uploadReport(conversationId: String, report: String): Result<Unit> {
-        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel())
+    suspend fun uploadReport(conversationId: String, report: String, engine: JsonObject? = null): Result<Unit> {
+        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel(), engine)
         return when (val result = ColituApiClient.post("/support/conversations/${Uri.encode(conversationId)}/diagnostics", body)) {
             is ColituApiClient.ApiResult.Success -> Result.success(Unit)
             is ColituApiClient.ApiResult.Error -> Result.failure(Exception(result.message))
@@ -175,8 +175,8 @@ object ColituSupportRepository {
     enum class RequestReportResult { Sent, NoLongerPending, Failed }
 
     /** Answers an agent's request; a 404 means it is no longer pending (never retried). */
-    suspend fun sendRequestedReport(requestId: String, report: String): RequestReportResult {
-        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel())
+    suspend fun sendRequestedReport(requestId: String, report: String, engine: JsonObject? = null): RequestReportResult {
+        val body = ColituDiagnosticsUpload.body(report, appVersionLabel(), osLabel(), engine)
         return when (val result = ColituApiClient.post("/support/diagnostics-requests/${Uri.encode(requestId)}/report", body)) {
             is ColituApiClient.ApiResult.Success -> RequestReportResult.Sent
             is ColituApiClient.ApiResult.Error -> if (result.code == 404) RequestReportResult.NoLongerPending else RequestReportResult.Failed

@@ -8,7 +8,8 @@ internal sealed interface LocationEntry {
 
     /**
      * A country with two or more servers. [servers] keep the order they came in, so the
-     * caller's sort decides the cities' order; [expandedByDefault] is true when the
+     * caller's sort decides the cities' order, except that the panel's recommended ones
+     * ([ColituServer.recommended]) come first; [expandedByDefault] is true when the
      * selected server is one of them.
      */
     data class Group(
@@ -21,7 +22,7 @@ internal sealed interface LocationEntry {
 /**
  * Groups an already filtered and sorted server list by country code. Countries keep
  * the order of their first server (so the sort applies to countries and, inside each
- * group, to cities). A country with exactly one server, or a server without a country
+ * group, to cities; recommended servers first in their country). A country with exactly one server, or a server without a country
  * code, stays a [LocationEntry.Single]. With [flat] (a search query) nothing is grouped.
  */
 internal fun groupByCountry(
@@ -51,9 +52,13 @@ internal fun groupByCountry(
         val code = item as String
         val list = byCountry.getValue(code)
         if (list.size == 1) LocationEntry.Single(list[0])
-        else LocationEntry.Group(code, list.toList(), selectedServerId != null && list.any { it.id == selectedServerId })
+        else LocationEntry.Group(code, recommendedFirst(list), selectedServerId != null && list.any { it.id == selectedServerId })
     }
 }
+
+/** The panel's recommended servers first, the rest in the order they came (stable). */
+internal fun recommendedFirst(servers: List<ColituServer>): List<ColituServer> =
+    servers.sortedBy { if (it.recommended) 0 else 1 }
 
 /** The lowest ping among the group's servers that are online; null when none was measured. */
 internal fun bestPing(servers: List<ColituServer>, pingOf: (ColituServer) -> Int?): Int? =

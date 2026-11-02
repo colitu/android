@@ -43,4 +43,11 @@ object ColituFeatures {
         flag: Boolean = ADAPTIVE_CONNECT_3,
         recoveryTest: Boolean = ColituRecoveryTestMode.enabled,
     ): Boolean = recoverySet(flag, recoveryTest) && ColituRecoverySet.shouldTryAtGiveUp(automatic, apiUnreachable, alreadyTried)
+
+    /**
+     * Adaptive Connect 4: the on-device decision model ([ColituLm]) and whitelist mode
+     * ([ColituWhitelist]), only when the panel turns `features.ac_engine_4` on for this
+     * device. Off, the automatic choice is exactly the one of Adaptive Connect 3.
+     */
+    fun acEngine4(remote: Boolean = ColituRemoteFeatures.acEngine4): Boolean = remote
 }

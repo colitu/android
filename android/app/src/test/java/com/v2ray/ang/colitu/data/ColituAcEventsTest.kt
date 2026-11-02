@@ -92,7 +92,7 @@ class ColituAcEventsTest {
         val cases = mapOf(
             "TIMEOUT" to "timeout", "TUNNEL_TIMEOUT" to "timeout", "UNREACHABLE" to "timeout",
             "IO_ERROR" to "reset", "network_error" to "no_network", "VERIFY_FAILED" to "blocked",
-            "ENGINE_FAILED" to "core_crash", "TUN_FAILED" to "core_crash",
+            "ENGINE_FAILED" to "core_crash", "TUN_FAILED" to "core_crash", "ENGINE_NOT_STARTED" to "other",
             "AUTH_EXPIRED" to "auth", "ENTITLEMENT_EXPIRED" to "auth", "DEVICE_REVOKED" to "auth",
             "QUOTA_EXCEEDED" to "quota", "FREE_DAILY_LIMIT_REACHED" to "quota",
             "NETWORK_CHANGE" to "network_change", "dns" to "dns", "TLS" to "tls",

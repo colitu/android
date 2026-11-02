@@ -143,11 +143,13 @@ data class ColituDiagnosticsRequest(
 
 /** Body of POST /support/diagnostics-requests/{id}/report and /support/conversations/{id}/diagnostics. */
 object ColituDiagnosticsUpload {
-    fun body(report: String, appVersion: String, osVersion: String): JsonObject = JsonObject().apply {
+    /** [engine]: the optional Adaptive Connect `engine` section ([ColituDiagnosticsEngine]), already masked. */
+    fun body(report: String, appVersion: String, osVersion: String, engine: JsonObject? = null): JsonObject = JsonObject().apply {
         addProperty("report", report)
         addProperty("platform", "android")
         addProperty("app_version", appVersion)
         addProperty("os_version", osVersion)
+        engine?.let { add("engine", it) }
     }
 }
 

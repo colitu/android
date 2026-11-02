@@ -177,6 +177,13 @@ object AppConfig {
     /** Colitu: result of [MSG_COLITU_IDLE], "<id>,<bytes>" (-1 when unknown). */
     const val MSG_COLITU_IDLE_RESULT = 86
 
+    /**
+     * Colitu: the VPN service process got its start command (sent first in
+     * CoreVpnService.onStartCommand). A start that times out without it never
+     * reached the service: Android did not start the process (ENGINE_NOT_STARTED).
+     */
+    const val MSG_COLITU_SERVICE_ALIVE = 87
+
     /** Colitu: MMKV key (settings store) with the time the tunnel came up. */
     const val PREF_COLITU_CONNECTED_AT = "colitu_connected_at"
 

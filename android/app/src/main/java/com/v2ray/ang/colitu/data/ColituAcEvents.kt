@@ -47,6 +47,7 @@ object ColituAcEvents {
      * nothing: DPI freeze or throttling) -> blocked; ENGINE_FAILED, TUN_FAILED -> core_crash;
      * AUTH_EXPIRED, UNAUTHORIZED, DEVICE_*, ENTITLEMENT_*, PREMIUM_REQUIRED, SERVER_NOT_ALLOWED -> auth;
      * QUOTA_EXCEEDED, FREE_DAILY_LIMIT_REACHED -> quota; NETWORK_CHANGE -> network_change;
+     * ENGINE_NOT_STARTED (Android never started the VPN service process) -> other;
      * a code that already is a reason (dns, tls, refused, handshake, reset, ...) is kept;
      * everything else (panel errors, missing config, no servers) -> other.
      */
@@ -63,6 +64,7 @@ object ColituAcEvents {
             "ENTITLEMENT_INACTIVE", "ENTITLEMENT_EXPIRED", "PREMIUM_REQUIRED", "SERVER_NOT_ALLOWED" -> "auth"
             "QUOTA_EXCEEDED", "FREE_DAILY_LIMIT_REACHED" -> "quota"
             "NETWORK_CHANGE" -> "network_change"
+            "ENGINE_NOT_STARTED" -> "other"
             else -> "other"
         }
     }
@@ -155,6 +157,23 @@ object ColituAcEvents {
             addProperty("best_node_id", node(bestId) ?: chosen)
             addProperty("best_ms", clampMs(bestMs.toLong()))
             addProperty("mode", "auto")
+        }
+    }
+
+    /**
+     * Adaptive Connect 4 whitelist mode entered ([on]) or left, with the check that decided it.
+     * No node; totals 1..10 (null when a set was empty: the panel refuses a total of 0).
+     */
+    fun whitelist(on: Boolean, foreignOk: Int, foreignTotal: Int, domesticOk: Int, domesticTotal: Int, ms: Long): JsonObject? {
+        if (foreignTotal !in 1..10 || domesticTotal !in 1..10) return null
+        return JsonObject().apply {
+            addProperty("kind", "whitelist")
+            addProperty("state", if (on) "on" else "off")
+            addProperty("foreign_ok", foreignOk.coerceIn(0, foreignTotal))
+            addProperty("foreign_total", foreignTotal)
+            addProperty("domestic_ok", domesticOk.coerceIn(0, domesticTotal))
+            addProperty("domestic_total", domesticTotal)
+            addProperty("ms", clampMs(ms))
         }
     }
 

@@ -26,6 +26,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.MessageUtil
 import com.v2ray.ang.util.MyContextWrapper
 import com.v2ray.ang.util.Utils
 import java.lang.ref.SoftReference
@@ -129,6 +130,8 @@ class CoreVpnService : VpnService(), ServiceControl {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service command received")
+        // The UI tells a process that never started (no answer at all) from a slow tunnel by this.
+        MessageUtil.sendMsg2UI(this, AppConfig.MSG_COLITU_SERVICE_ALIVE, "")
         NotificationManager.showNotification(null)
 
         // Android starts the service by itself for Always-on VPN and after the

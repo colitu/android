@@ -17,15 +17,21 @@ import com.v2ray.ang.colitu.repository.ColituSupportRepository
 object ColituDiagnosticsCenter {
     private val gate = ColituDiagnosticsGate()
 
-    /** [buildReport] makes the full (redacted) text; [onSent] runs once after a successful send. Never throws. */
-    suspend fun check(onSent: () -> Unit = {}, buildReport: suspend () -> String) {
+    /**
+     * [buildReport] makes the full (redacted) text, [buildEngine] the masked engine section
+     * (null: none); [onSent] runs once after a successful send. Never throws.
+     */
+    suspend fun check(onSent: () -> Unit = {}, buildEngine: suspend () -> com.google.gson.JsonObject? = { null }, buildReport: suspend () -> String) {
         if (com.v2ray.ang.BuildConfig.COLITU_OPT_IN_REPORTING) return
         if (!ColituTokenManager.isLoggedIn()) return
         if (!gate.tryStartCheck()) return
         val request = runCatching { ColituSupportRepository.pendingDiagnosticsRequest().getOrNull() }.getOrNull() ?: return
         if (!gate.shouldSend(request)) return
         gate.markAttempt(request.id)
-        val result = runCatching { ColituSupportRepository.sendRequestedReport(request.id, buildReport()) }
+        val result = runCatching {
+            val engine = runCatching { buildEngine() }.getOrNull()
+            ColituSupportRepository.sendRequestedReport(request.id, buildReport(), engine)
+        }
             .getOrDefault(ColituSupportRepository.RequestReportResult.Failed)
         when (result) {
             ColituSupportRepository.RequestReportResult.Sent -> {
