@@ -33,6 +33,10 @@ object ColituAcEvents {
     )
     private val NETWORK_TYPES = setOf("wifi", "cellular", "ethernet", "other")
 
+    /** An automatic connect without a server list: the panel chose (next to [ColituLm.ENGINE_AC4], [ColituLm.ENGINE_AC3]). */
+    const val ENGINE_PANEL = "panel"
+    private val ENGINES = setOf(ColituLm.ENGINE_AC4, ColituLm.ENGINE_AC3, ENGINE_PANEL)
+
     // ── Event builders (null when a required field is missing or invalid) ───────
 
     private fun node(id: String?): String? = id?.trim()?.lowercase()?.takeIf { it.length in 8..64 }
@@ -69,7 +73,8 @@ object ColituAcEvents {
         }
     }
 
-    fun connect(nodeId: String?, protocol: String?, ok: Boolean, code: String?, ms: Long, firstTry: Boolean, auto: Boolean): JsonObject? {
+    /** [engine]: what ordered an automatic connect (`ac4`, `ac3`, `panel`); a manual connect has none. */
+    fun connect(nodeId: String?, protocol: String?, ok: Boolean, code: String?, ms: Long, firstTry: Boolean, auto: Boolean, engine: String? = null): JsonObject? {
         val n = node(nodeId) ?: return null
         val p = protocol(protocol) ?: return null
         return JsonObject().apply {
@@ -81,6 +86,7 @@ object ColituAcEvents {
             addProperty("ms", clampMs(ms))
             addProperty("first_try", firstTry)
             addProperty("mode", if (auto) "auto" else "manual")
+            engine?.takeIf { auto && it in ENGINES }?.let { addProperty("engine", it) }
         }
     }
 

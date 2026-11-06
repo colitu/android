@@ -175,6 +175,24 @@ class ColituAc4Test {
     // ── Switch off: Adaptive Connect 3 unchanged ──────────────────────────────
 
     @Test
+    fun aModelOfAnotherCountryIsNotUsed() {
+        val ru = ColituLm.Model(version = 1, country = "RU")
+        assertEquals(ru, ColituLm.modelFor(ru, "RU"))
+        assertEquals(ru, ColituLm.modelFor(ru, " ru "))
+        assertEquals(ru, ColituLm.modelFor(ru, "ru"))
+        assertNull(ColituLm.modelFor(ru, "FI"))
+        assertNull(ColituLm.modelFor(ru, ""))
+        assertNull(ColituLm.modelFor(ru, null))
+        assertNull(ColituLm.modelFor(ColituLm.Model(version = 1, country = ""), "RU"))
+        assertNull(ColituLm.modelFor(null, "RU"))
+        val empty = ColituLm.Model(version = 1, country = "")
+        assertEquals(empty, ColituLm.modelFor(empty, ""))
+        assertEquals(empty, ColituLm.modelFor(empty, null))
+        val spaced = ColituLm.Model(version = 1, country = " tr ")
+        assertEquals(spaced, ColituLm.modelFor(spaced, "TR"))
+    }
+
+    @Test
     fun switchOffMeansAc3() {
         assertFalse(ColituFeatures.acEngine4(remote = false))
         assertTrue(ColituFeatures.acEngine4(remote = true))

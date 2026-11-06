@@ -12,6 +12,19 @@ class ColituAcEventsTest {
     private val other = "aaaaaaaa-0000-4000-8000-bbbbbbbbbbbb"
 
     @Test
+    fun connectEventNamesTheEngineOfAnAutomaticConnectOnly() {
+        fun engine(auto: Boolean, value: String?) =
+            ColituAcEvents.connect(node, "hysteria2", true, null, 1, firstTry = true, auto = auto, engine = value)!!.get("engine")?.asString
+        assertEquals("ac4", engine(true, ColituLm.ENGINE_AC4))
+        assertEquals("ac3", engine(true, ColituLm.ENGINE_AC3))
+        assertEquals("panel", engine(true, ColituAcEvents.ENGINE_PANEL))
+        assertNull(engine(true, null))
+        assertNull(engine(true, "something-else"))
+        assertNull(engine(false, ColituLm.ENGINE_AC4))
+        assertFalse(ColituAcEvents.connect(node, "hysteria2", true, null, 1, firstTry = true, auto = true)!!.has("engine"))
+    }
+
+    @Test
     fun connectEventShape() {
         val ok = ColituAcEvents.connect(node.uppercase(), "vless-reality", true, null, 1234, firstTry = true, auto = false)!!
         assertEquals("connect", ok.get("kind").asString)

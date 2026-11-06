@@ -221,6 +221,14 @@ object ColituLm {
 
     // ── Decision ──────────────────────────────────────────────────────────────
 
+    /**
+     * [model] when it was built for the network's country, else null (Adaptive Connect 3 rules until
+     * the right one comes): another country's priors miss and every server scores alike. Both empty
+     * count as equal.
+     */
+    fun modelFor(model: Model?, networkCountry: String?): Model? =
+        model?.takeIf { it.country.trim().uppercase() == networkCountry.orEmpty().trim().uppercase() }
+
     fun decide(input: Input): Decision {
         val m = input.model
         if (!input.engineEnabled || m == null || m.version != FORMAT_VERSION) return Decision(ENGINE_AC3)

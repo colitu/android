@@ -149,6 +149,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private val vpnOn: Boolean get() = status != VpnStatus.Disconnected
 
     /**
+     * No tunnel is up or on its way, as far as anything here can tell. [vpnOn] alone is not enough:
+     * after an app restart with the tunnel up, or a start from the tile or Always-on, the status says
+     * Disconnected until the VPN process answers.
+     */
+    private fun vpnReallyOff(): Boolean = ColituListGuard.vpnOff(
+        status, serviceUp, serviceHeld,
+        starting = pendingStart != null || connectJob?.isActive == true,
+        coreUp = store.decodeLong(AppConfig.PREF_COLITU_CONNECTED_AT, 0L) > 0L && systemVpnUp(),
+    )
+
+    /** A VPN interface exists: without one the VPN process died and its connected-at mark is a leftover. */
+    private fun systemVpnUp(): Boolean = runCatching {
+        val cm = connectivity() ?: return@runCatching true
+        @Suppress("DEPRECATION")
+        cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+    }.getOrDefault(true)
+
+    /**
      * The ping a row shows. With the VPN on only one measured in the last 30 min (outside the
      * tunnel, or the last one with the VPN off); else "— ms".
      */
@@ -669,6 +687,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (showLoading && servers.isEmpty()) loading = true
         var listLoaded = false
         coroutineScope {
+            val offWhenAsked = vpnReallyOff()
             val policy = async { refreshPolicy() }
             val list = async { safeCall { ColituServerRepository.fetchServers() } }
             val me = async { runCatching { ColituAuthRepository.fetchMe() } }
@@ -680,23 +699,28 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     servers = response.servers
                     routes = response.multihop
                     offline = false
-                    // Asked through the VPN both come back empty: keep the last real ones.
-                    response.clientCountry?.let {
-                        clientCountry = it
-                        store.encode(KEY_CLIENT_COUNTRY, it)
-                    }
-                    // Token and hints belong to the network they were asked on (VPN off only).
-                    response.clientNetwork?.let { network ->
-                        val record = ColituNetworkRecord(
-                            network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(),
-                            response.networkHints?.preferred.orEmpty(), response.networkHints?.blockedServers.orEmpty(),
-                        )
-                        networkRecord = record
-                        store.encode(KEY_NETWORK_RECORD, record.toJson())
-                    }
-                    response.clientNetwork?.let {
-                        clientNetwork = it
-                        store.encode(KEY_CLIENT_NETWORK, it)
+                    // Through the VPN the panel sees the exit: empty for a node it knows, but a bridge
+                    // exit it does not know would be stored as this device's home. The last real ones stay.
+                    if (ColituListGuard.trustsPlace(offWhenAsked, vpnReallyOff())) {
+                        response.clientCountry?.let {
+                            clientCountry = it
+                            store.encode(KEY_CLIENT_COUNTRY, it)
+                        }
+                        // Token and hints belong to the network they were asked on (VPN off only).
+                        response.clientNetwork?.let { network ->
+                            val record = ColituNetworkRecord(
+                                network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(),
+                                response.networkHints?.preferred.orEmpty(), response.networkHints?.blockedServers.orEmpty(),
+                            )
+                            networkRecord = record
+                            store.encode(KEY_NETWORK_RECORD, record.toJson())
+                        }
+                        response.clientNetwork?.let {
+                            clientNetwork = it
+                            store.encode(KEY_CLIENT_NETWORK, it)
+                        }
+                    } else if (response.clientCountry != null || response.clientNetwork != null) {
+                        LogUtil.w(AppConfig.TAG, "Colitu: a list fetched through the VPN named a network (an exit the panel does not know); ignored")
                     }
                     response.whitelistProbe?.let {
                         whitelistProbe = it
@@ -733,9 +757,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** With the VPN on the panel sees a Colitu node's address: the stored token (VPN off) names the network. */
+    /**
+     * With the VPN on the panel sees the exit: the stored token (VPN off) names the network, and
+     * without one nothing is fetched, so a model of the exit's country cannot replace the stored one.
+     */
     private fun refreshAcModel() {
-        val token = if (vpnOn) networkRecord?.tokenFor(clientNetwork, System.currentTimeMillis()) else null
+        val off = vpnReallyOff()
+        val token = if (off) null else networkRecord?.tokenFor(clientNetwork, System.currentTimeMillis())
+        if (!ColituListGuard.fetchesModel(off, token)) return
         viewModelScope.launch { ColituAcModel.refreshIfDue(token) }
     }
 
@@ -1098,6 +1127,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     /** The running connect is in automatic mode; how many servers failed before the one that is tried. */
     private var acAuto = true
+    /** What ordered this automatic connect ([ColituAcEvents.connect]); null: a manual one. */
+    private var acEngine: String? = null
     private var acFallbacks = 0
     private var acTransportFallback = false
     /** The node and transport tried last (what a failed connect names). */
@@ -1129,9 +1160,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (ColituFeatures.acEngine4()) {
             refreshAcModel()
             val (ac4, why) = ac4Order()
-            if (ac4 != null) return ac4
+            if (ac4 != null) {
+                acEngine = ColituLm.ENGINE_AC4
+                return ac4
+            }
             reason = why
         }
+        acEngine = ColituLm.ENGINE_AC3
         val now = System.currentTimeMillis()
         val network = networkKey
         val app = rankedServers
@@ -1190,18 +1225,19 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     /**
      * Adaptive Connect 4: the model's order (its choice first, then the ranking, one entry per
-     * server) and the reason; a null order means the Adaptive Connect 3 rules (no model,
-     * unknown version, nothing eligible).
+     * server) and the reason; a null order means the Adaptive Connect 3 rules (no model, a model
+     * of another country, unknown version, nothing eligible).
      */
     private fun ac4Order(): Pair<List<ColituServer>?, String> {
         val now = System.currentTimeMillis()
         val network = networkKey
         val stored = ColituAcModel.current()
+        val model = ColituLm.modelFor(stored?.first, clientCountry)
         val whitelist = whitelistMode
         val pool = ac4Pool()
         val candidates = ac4Candidates(pool, network, now)
         val input = ColituLm.Input(
-            model = stored?.first,
+            model = model,
             modelAgeH = stored?.let { (now - it.second).coerceAtLeast(0L) / 3_600_000.0 } ?: 0.0,
             engineEnabled = true,
             country = clientCountry.orEmpty(),
@@ -1213,7 +1249,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val decision = ColituLm.decide(input)
         val choice = decision.choice
         val reason = when {
-            decision.engine != ColituLm.ENGINE_AC4 -> if (stored == null) "no_model" else "model_version"
+            decision.engine != ColituLm.ENGINE_AC4 -> when {
+                stored == null -> "no_model"
+                model == null -> "model_country"
+                else -> "model_version"
+            }
             choice == null -> "no_eligible"
             decision.explored -> "explore"
             whitelist && !decision.whitelistNone -> "whitelist"
@@ -1275,7 +1315,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             ColituAcEvents.connect(
                 nodeId ?: acNode, protocol ?: acProtocol, ok, code, ms,
                 // First try: the first round on the first server (its primary or its spare), as on Windows.
-                firstTry = acFallbacks == 0 && !acTransportFallback, auto = acAuto,
+                firstTry = acFallbacks == 0 && !acTransportFallback, auto = acAuto, engine = acEngine,
             ),
         )
         if (metricFirst) ColituMetrics.markFirstDone()
@@ -1513,10 +1553,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         phase = ConnectPhase.Preparing
         error = null
         ColituServerRepository.clearConfigUnreachable()
+        acEngine = null
         var server = effectiveServer
         if (server == null) {
             // No server list (the API was blocked from the start): the recovery set may still carry the connect.
             if (ColituFeatures.recoverySet() && servers.isEmpty() && connectsAutomatically) {
+                // Nothing on the device ordered it: the servers and their order are the panel's.
+                acAuto = true
+                acEngine = ColituAcEvents.ENGINE_PANEL
                 safeCall { ColituServerRepository.fetchConfigCandidates() }
                 if (apiUnreachable(null) && connectViaRecoverySet(context, emptyList(), begin, connectsAutomatically)) return
             }
