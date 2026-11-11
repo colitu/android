@@ -62,6 +62,7 @@ import com.v2ray.ang.colitu.data.ColituUser
 import com.v2ray.ang.colitu.data.ColituVpnConfig
 import com.v2ray.ang.colitu.data.ColituUiMode
 import com.v2ray.ang.colitu.data.ColituWarmSpare
+import com.v2ray.ang.colitu.data.ColituFlapGuard
 import com.v2ray.ang.colitu.data.XrayMobileAdapter
 import com.v2ray.ang.colitu.l10n.ColituLoc
 import com.v2ray.ang.colitu.l10n.ColituServerNames
@@ -398,6 +399,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private var serviceCommandSeen = false
     /** This connect's service process never started: no other transport or server is tried. */
     private var engineNotStarted = false
+    /** Transports that keep dropping right after they connect on this network (DPI freezes). */
+    private val flaps = ColituFlapGuard()
+
+    /** The active transport died mid-session; a drop soon after the connect, or a second within 15 min, demotes it for 30 min. */
+    private fun noteFlap(server: ColituServer, protocol: String, connectedForMs: Long, why: String) {
+        if (flaps.drop(networkKey, server.id, protocol, connectedForMs, System.currentTimeMillis())) {
+            LogUtil.w(AppConfig.TAG, "Colitu: $protocol on ${server.id.take(8)} dropped ${connectedForMs / 1000} s after connecting ($why); it goes last on this network for 30 minutes")
+        }
+    }
     private var pendingStop: CompletableDeferred<Unit>? = null
     /** Running tunnel checks by id; answers to a finished or older check are ignored. */
     private val pendingVerifies = java.util.concurrent.ConcurrentHashMap<Long, CompletableDeferred<Long>>()
@@ -1267,7 +1277,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
             return null to reason
         }
         val byId = pool.associateBy { it.id }
-        val order = (listOf(choice) + decision.ranking).map { candidates[it].nodeId }.distinct().mapNotNull { byId[it] }
+        val modelOrder = (listOf(choice) + decision.ranking).map { candidates[it].nodeId }.distinct().mapNotNull { byId[it] }
+        // A server that just carried nothing on this network (penalized for 30 minutes) goes last:
+        // the model alone put the same dead server first again on every reconnect.
+        val penalized = memory.penalized(network, now)
+        val order = ColituFlapGuard.penalizedLast(modelOrder) { it.id in penalized }
+        if (order !== modelOrder) {
+            LogUtil.w(AppConfig.TAG, "Colitu: AC4 order, penalized server(s) moved last: ${modelOrder.filter { it.id in penalized }.joinToString { it.id.take(8) }}")
+        }
         ac4Pick = candidates[choice].nodeId to candidates[choice].protocol
         LogUtil.i(
             AppConfig.TAG,
@@ -1492,6 +1509,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         val wait = RECONNECT_DELAYS_MS.getOrNull(reconnectAttempt) ?: return false
         reconnectAttempt++
         verifyJob?.cancel()
+        // Per attempt, as in startConnectFlow: left set from the attempt before, an ordinary start
+        // failure of this one ended the connect at once as "engine not started" (no other
+        // transport or server tried).
+        engineNotStarted = false
         // What stalled in this connect stays last (it is cleared once a connect succeeds).
         reconnecting = true
         userStopped = false
@@ -1607,8 +1628,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         return
                     }
                     lmServerFailed(server.id)
-                    // A picked server is never left, so it is not penalized either.
-                    if (ColituTransportOrder.penalizeFailedServer(automatic)) {
+                    // A picked server is never left, so it is not penalized either, except in a
+                    // server outage (no port answered): then the reconnects and Adaptive Connect 4
+                    // started on it again at once.
+                    if (ColituTransportOrder.penalizeFailedServer(automatic) || serverOutageThisRound) {
                         memory.penalize(networkKey, server.id, System.currentTimeMillis())
                         saveMemory()
                     }
@@ -1827,15 +1850,20 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // so it is not remembered, and the same server is tried again while
         // the node takes it (normally within a second or two).
         val pending = offered.any { it.credentialsPending }
+        // What stalled before this server's tries (a mid-session freeze that started this recovery)
+        // stays marked through the pending retries; only what failed while the node took the new
+        // credentials is forgiven.
+        val stalledBefore = stalledThisConnect.toSet()
         // What already stalled in this connect goes last (see orderForStart).
         var outcome = tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = pending, deadline, spare, offered)
         if (pending) {
             val settleUntil = minOf(deadline, android.os.SystemClock.elapsedRealtime() + PENDING_SETTLE_MS)
-            while (outcome is StartOutcome.Failed && android.os.SystemClock.elapsedRealtime() + PENDING_RETRY_MS < settleUntil) {
+            // Not in a server outage: no port answered, new credentials cannot help.
+            while (outcome is StartOutcome.Failed && !serverOutageThisRound && android.os.SystemClock.elapsedRealtime() + PENDING_RETRY_MS < settleUntil) {
                 LogUtil.w(AppConfig.TAG, "Colitu: new credentials not on ${server.id.take(8)} yet; trying it again")
                 cameUp = cameUp || outcome.cameUp
                 delay(PENDING_RETRY_MS)
-                stalledThisConnect.removeAll(offeredTransports)
+                stalledThisConnect.retainAll(stalledBefore)
                 outcome = tryStart(context, server, orderForStart(server, offered, probe = true), begin, fromCache = true, deadline, spare, offered)
             }
         }
@@ -1970,14 +1998,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * the probe decides. The rest follow in preference order; stalled ones last.
      */
     private suspend fun orderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
-        val auto = automaticOrderForStart(server, configs, probe)
-        val picked = preferredTransport.takeIf { it.isNotEmpty() } ?: return ac4First(server, auto)
-        val order = ColituTransportChoice.putFirst(auto, { it.protocolType }, picked, skip = stalledThisConnect)
+        val now = System.currentTimeMillis()
+        val network = networkKey
+        // Transports that keep freezing right after the connect on this network go last; a
+        // successful connect clears the stall marks, so they alone did not hold them back.
+        val flapping = configs.mapNotNull { it.protocolType }.filterTo(mutableSetOf()) { flaps.isDemoted(network, server.id, it, now) }
+        val auto = ColituFlapGuard.demotedLast(automaticOrderForStart(server, configs, probe)) { it.protocolType in flapping }
+        if (flapping.isNotEmpty() && auto.isNotEmpty()) {
+            LogUtil.w(AppConfig.TAG, "Colitu: dropped right after connecting here recently, tried last: $flapping")
+        }
+        val picked = preferredTransport.takeIf { it.isNotEmpty() } ?: return ac4First(server, auto, flapping)
+        // A pick that stalled on this server and network (or keeps freezing here) is no longer forced first.
+        val skip = stalledThisConnect + memory.stalled(network, server.id, now) + flapping
+        val order = ColituTransportChoice.putFirst(auto, { it.protocolType }, picked, skip = skip)
         LogUtil.w(
             AppConfig.TAG,
             when {
                 order.firstOrNull()?.protocolType == picked -> "Colitu: connection method picked by the user goes first: $picked"
-                picked in stalledThisConnect -> "Colitu: connection method picked by the user ($picked) stalled in this connect; automatic order"
+                picked in skip -> "Colitu: connection method picked by the user ($picked) stalled on this server and network recently; automatic order"
                 else -> "Colitu: connection method picked by the user ($picked) is not offered here; automatic order"
             },
         )
@@ -1988,11 +2026,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * The transport the model chose for [server] goes first, unless it stalled in this connect,
      * stalled on this network or is hinted as blocked here (then the automatic order stays).
      */
-    private fun ac4First(server: ColituServer, order: List<ColituVpnConfig>): List<ColituVpnConfig> {
+    private fun ac4First(server: ColituServer, order: List<ColituVpnConfig>, flapping: Set<String> = emptySet()): List<ColituVpnConfig> {
         val (id, protocol) = ac4Pick ?: return order
         if (id != server.id || protocol.isEmpty()) return order
         val now = System.currentTimeMillis()
-        val skip = stalledThisConnect + memory.stalled(networkKey, server.id, now) + hintedBlocked(now)
+        val skip = stalledThisConnect + memory.stalled(networkKey, server.id, now) + hintedBlocked(now) + flapping
         val result = ColituTransportChoice.putFirst(order, { it.protocolType }, protocol, skip)
         if (result.firstOrNull()?.protocolType != order.firstOrNull()?.protocolType) {
             LogUtil.w(AppConfig.TAG, "Colitu: transport chosen by the model goes first: $protocol")
@@ -2042,6 +2080,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (!serverOutageThisRound) return order
         // The transports whose port did not answer cannot connect either (about 7 s each): the round
         // gets back to Hysteria2 sooner.
+        if (ColituFlapGuard.nothingCanConnect(order, { it.protocolType }, roundProbe)) {
+            // No UDP transport to fall back on and no TCP port answered: each one would cost about
+            // 8 s. Nothing to try; the connect moves on (and penalizes the server, see connectServer).
+            LogUtil.w(AppConfig.TAG, "Colitu: server outage and no transport left to try on ${server.id.take(8)}; giving it up")
+            return emptyList()
+        }
         val reachable = ColituTransportOrder.withoutSilent(order, { it.protocolType }, roundProbe)
         val skipped = order.filter { it !in reachable }.mapNotNull { it.protocolType }
         LogUtil.w(
@@ -2285,6 +2329,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         candidates: List<ColituVpnConfig>,
         quiet: Boolean,
     ) {
+        // The transports of the server now carrying traffic: after a connect from the cache (or a
+        // spare on another server) the set was still the previous server's, and the watcher's
+        // "nothing else to switch to" was wrong. Empty (unknown) never counts as "nothing else".
+        offeredTransports = candidates.mapNotNull { it.protocolType }.toSet()
         onConnected(actual, config, guid, quiet)
         endMetricAttempt(ok = true, nodeId = actual.id.takeIf { isNode(it) }, protocol = config.protocolType)
         endMetricRecovery(ok = true, newProtocol = config.protocolType)
@@ -2473,6 +2521,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     if (spare != null && ++primaryMisses >= STALL_PROBE_FAILURES && !primaryRecorded && deviceOnline()) {
                         primaryRecorded = true
                         recordSpareCarrying(server, protocol, spare)
+                        noteFlap(server, protocol, android.os.SystemClock.elapsedRealtime() - started, "the warm spare took over")
                     }
                     continue
                 }
@@ -2495,6 +2544,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             if (move == ColituTransportOrder.StallMove.Wait) continue
             if (!deviceOnline()) continue
             failures = 0
+            noteFlap(server, protocol, now - started, "it stopped carrying traffic")
             val previousSwitchAt = lastAutoSwitchAt
             val switchedFrom = lastAutoSwitchFrom
             lastAutoSwitchAt = now
