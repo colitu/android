@@ -301,7 +301,9 @@ class ColituRelayTest {
                 assertTrue(e.toString(), e is javax.net.ssl.SSLPeerUnverifiedException)
                 assertTrue(ColituEndpoints.isConnectLevel(e))
             }
-            assertNull("no request may reach a wrong certificate", server.requestHead)
+            // The handshake ends on the server side before the client checks the name: it may see the
+            // connection close (an empty head), but never a request line.
+            assertTrue("no request may reach a wrong certificate", server.requestHead.isNullOrEmpty())
         }
     }
 
