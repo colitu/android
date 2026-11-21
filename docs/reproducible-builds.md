@@ -20,11 +20,24 @@ reproduced.
 
 ## The one file that is not in the source
 
-The API mirror origins are kept out of the public repository. The build writes
-them to a single file at the root of the APK, `colitu-build.json`, which the
-app reads at start (`ColituBuildValues`); nothing else in the APK depends on
-them. Anyone holding the published APK can read that file, so a rebuild uses
-the same value and gets an identical APK.
+The API mirror origins and the built-in API relays are kept out of the public
+repository. The build writes them to a single file at the root of the APK,
+`colitu-build.json`, which the app reads at start (`ColituBuildValues`);
+nothing else in the APK depends on them. Anyone holding the published APK can
+read that file, so a rebuild uses the same values and gets an identical APK.
+
+## The one exception: ColituGecko (from 3.2.0)
+
+`libgeckoclient.so` (in every ABI) is ColituGecko, Colitu's own protocol. Its
+source is in a private repository and is not published; the app's integration
+code is in this repository, and `scripts/gecko.env` pins the exact commit the
+library is built from (`scripts/build-gecko.sh`, pinned Go release, `-trimpath`,
+empty build id). It is not committed here, so a rebuild from this repository
+alone has no `libgeckoclient.so`: copy it from the published APK
+(`unzip -j Colitu_<version>_universal.apk 'lib/*/libgeckoclient.so'` into
+`android/app/libs/<abi>/`) before building, and everything else in the APK
+must then come out identical. Without it the app works and ColituGecko stays
+off ("gecko-client missing").
 
 ## Checking a release
 
@@ -34,7 +47,7 @@ git clone https://github.com/colitu/android && cd android && git checkout v<vers
 unzip -p Colitu_<version>_universal.apk colitu-build.json
 # Build without a signing key (JDK 21.0.12):
 cd android
-COLITU_MIRRORS='<the "mirrors" value from colitu-build.json>' ./gradlew assembleDirectRelease
+COLITU_MIRRORS='<the "mirrors" value>' COLITU_RELAYS='<the "relays" value, if any>' ./gradlew assembleDirectRelease
 # Compare, ignoring only the signature (https://github.com/obfusk/apksigcopier):
 apksigcopier compare Colitu_<version>_arm64-v8a.apk --unsigned app/build/outputs/apk/direct/release/Colitu_<version>_arm64-v8a.apk
 ```

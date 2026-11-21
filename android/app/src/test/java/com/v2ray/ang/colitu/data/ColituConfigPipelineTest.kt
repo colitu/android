@@ -32,7 +32,7 @@ class ColituConfigPipelineTest {
     private fun import(spare: String?): String {
         val proxied = XrayMobileAdapter.withLocalProxy(panelProfile("vless-reality"), LocalProxy(20001, "u", "p"))
         val layered = ColituAdBlock.apply(
-            ColituSplitTunnel.configure(ColituRuBypass.configure(proxied, "LT", privacyMode = false), ColituSplitTunnel.Settings()),
+            ColituSplitTunnel.configure(ColituRuBypass.configure(proxied), ColituSplitTunnel.Settings()),
             on = true,
             servers = doh,
         )

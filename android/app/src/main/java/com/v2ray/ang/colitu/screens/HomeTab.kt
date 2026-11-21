@@ -188,12 +188,6 @@ fun HomeTab(
                 ProtocolChip(c, on)
             }
         }
-        if (advanced && c.ruDirectActive) {
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                RuDirectChip(onOpenPrivacy)
-            }
-        }
         if (!advanced && c.advancedSettingsOn) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -410,6 +404,11 @@ private fun StatTile(icon: androidx.compose.ui.graphics.vector.ImageVector, labe
 @Composable
 private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Modifier) {
     val loc = ColituLoc
+    // Connected over ColituGecko: no server, the panel's anchors pick the exit.
+    if (c.connected && c.transport == com.v2ray.ang.colitu.data.ColituGeckoRules.PROTOCOL) {
+        GeckoLocationCard(c, onChange, modifier)
+        return
+    }
     val server = if (c.connected) c.connectedServer ?: c.effectiveServer else c.effectiveServer
     val auto = c.connectsAutomatically
     val title = if (auto) loc["home.fastest"] else c.titleOf(server)
@@ -457,6 +456,36 @@ private fun LocationCard(c: ColituController, onChange: () -> Unit, modifier: Mo
     }
 }
 
+/** The server card while ColituGecko carries the connection: the animated word and "automatic exit". */
+@Composable
+private fun GeckoLocationCard(c: ColituController, onChange: () -> Unit, modifier: Modifier) {
+    val loc = ColituLoc
+    val description = loc.format("home.serverCard", "server" to "${loc["transport.gecko"]}, ${loc["gecko.autoExit"]}")
+    ColituPanel(
+        modifier.semantics { contentDescription = description },
+        padding = PaddingValues(start = 14.dp, top = 14.dp, end = 10.dp, bottom = 14.dp),
+        radius = ColituRadius.md,
+        onClick = onChange,
+    ) {
+        Column(Modifier.clearAndSetSemantics {}) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ColituRoundIcon(ColituIcons.Bolt, size = 44.dp, accent = true)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    com.v2ray.ang.colitu.design.ColituGeckoLabel(ColituText.label, showDot = true)
+                    Spacer(Modifier.height(2.dp))
+                    CText(loc["gecko.autoExit"], ColituText.small, maxLines = 1)
+                }
+                Spacer(Modifier.width(8.dp))
+                ColituIcon(ColituIcons.CheckCircle, ColituColors.success, 18.dp)
+                Spacer(Modifier.width(6.dp))
+                ColituIcon(ColituIcons.ChevronRight, ColituColors.muted, 16.dp)
+            }
+            ConnectionPathLines(c)
+        }
+    }
+}
+
 /**
  * Up to three shortcuts under the server card: favourites first, then the
  * servers used last (this device only). One tap does what tapping the server
@@ -479,7 +508,7 @@ private fun QuickPicks(c: ColituController, modifier: Modifier) {
 private fun QuickPick(c: ColituController, server: ColituServer, modifier: Modifier) {
     val loc = ColituLoc
     val shape = RoundedCornerShape(50)
-    val chosen = !c.autoSelection && c.selectedServerId == server.id
+    val chosen = c.isNormalSelection(server.id)
     val city = ColituServerNames.city(server.city)
     val label = when {
         server.route != null -> c.titleOf(server)
@@ -817,10 +846,6 @@ private fun TvHome(
                 Spacer(Modifier.height(8.dp))
                 ProtocolChip(c, on)
             }
-            if (c.advancedMode && c.ruDirectActive) {
-                Spacer(Modifier.height(8.dp))
-                RuDirectChip(onOpenPrivacy)
-            }
             if (!c.advancedMode && c.advancedSettingsOn) {
                 Spacer(Modifier.height(8.dp))
                 ColituLinkButton(loc["mode.advancedSettingsOn"], onOpenAdvanced, icon = ColituIcons.Info)
@@ -839,7 +864,8 @@ private fun TvHome(
                 }
             }
             c.error?.let { ColituNotice(it) }
-            if (c.error != null && c.offerFastest) ColituLinkButton(loc["home.tryFastest"], { c.tryFastest() }, icon = ColituIcons.Bolt)
+            if (c.error != null && c.offerAutoProtocol) ColituLinkButton(loc["gecko.tryAutomatic"], { c.tryAutomaticProtocol() }, icon = ColituIcons.Bolt)
+            else if (c.error != null && c.offerFastest) ColituLinkButton(loc["home.tryFastest"], { c.tryFastest() }, icon = ColituIcons.Bolt)
             if (c.offline) ColituNotice(loc["home.offline"], error = false)
             LocationCard(c, onChangeLocation, Modifier)
             PlanRow(c, onOpenPlan, Modifier)

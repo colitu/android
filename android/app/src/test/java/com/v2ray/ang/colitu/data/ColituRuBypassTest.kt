@@ -22,7 +22,7 @@ class ColituRuBypassTest {
         val json = JsonParser.parseString(ColituRuBypass.apply(runtime)).asJsonObject
         val rules = rules(json)
         assertEquals(2, rules.size)
-        assertEquals("geosite:category-ru", rules[0].getAsJsonArray("domain").single().asString)
+        assertEquals(ColituRuBypass.DIRECT_DOMAINS, rules[0].getAsJsonArray("domain").map { it.asString })
         assertEquals("geoip:ru", rules[1].getAsJsonArray("ip").single().asString)
         assertTrue(rules.all { it.get("outboundTag").asString == "direct" })
 
@@ -54,21 +54,6 @@ class ColituRuBypassTest {
         assertEquals(3, rules.size)
     }
 
-    @Test
-    fun russianServerKeepsRussianSitesInTheTunnel() {
-        assertTrue(!ColituRuBypass.applies("RU", privacyMode = false))
-        assertTrue(!ColituRuBypass.applies("ru", privacyMode = false))
-        assertTrue(ColituRuBypass.applies("DE", privacyMode = false))
-        assertTrue(ColituRuBypass.applies(null, privacyMode = false))
-    }
-
-    @Test
-    fun privacyModeNeverApplies() {
-        for (country in listOf("DE", "RU", "ru", null)) {
-            assertFalse(ColituRuBypass.applies(country, privacyMode = true))
-        }
-    }
-
     /** Any rule that would send Russian traffic outside the tunnel. */
     private fun ruDirectRules(config: String): List<JsonObject> {
         val routing = JsonParser.parseString(config).asJsonObject.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject
@@ -83,59 +68,37 @@ class ColituRuBypassTest {
     }
 
     @Test
-    fun privacyModeOffSendsRussianSitesDirect() {
-        val config = ColituRuBypass.configure(runtime, "DE", privacyMode = false)
+    fun russianDestinationsAreAlwaysDirect() {
+        val config = ColituRuBypass.configure(runtime)
         assertEquals(2, ruDirectRules(config).size)
+        val domains = ruDirectRules(config).first { it.has("domain") }.getAsJsonArray("domain").map { it.asString }
+        for (d in listOf("geosite:category-ru", "domain:ru", "domain:su", "domain:xn--p1ai", "domain:vk.com", "domain:yandex.net", "domain:tbank.com", "domain:moscow", "domain:tatar")) {
+            assertTrue(d, d in domains)
+        }
+        assertTrue(ruDirectRules(config).any { it.has("ip") })
     }
 
     @Test
-    fun privacyModeOnLeavesNoRussianDirectRule() {
-        val config = ColituRuBypass.configure(runtime, "DE", privacyMode = true)
-        assertTrue(ruDirectRules(config).isEmpty())
-        // With ad blocking on top, only its DNS rule is there.
-        val servers = listOf("https://dns-a.example.test:3443/dns-query")
-        val withAdBlock = ColituAdBlock.apply(config, on = true, servers = servers)
-        assertTrue(ruDirectRules(withAdBlock).isEmpty())
-        assertEquals(listOf("dns-out"), rules(JsonParser.parseString(withAdBlock).asJsonObject).map { it.get("outboundTag").asString })
-    }
-
-    @Test
-    fun russianServerGetsNoRussianDirectRule() {
-        assertTrue(ruDirectRules(ColituRuBypass.configure(runtime, "RU", privacyMode = false)).isEmpty())
-        assertTrue(ruDirectRules(ColituRuBypass.configure(runtime, "RU", privacyMode = true)).isEmpty())
-    }
-
-    @Test
-    fun privacyModeRemovesRulesFromAnEarlierProfile() {
-        // A stored profile built while privacy mode was off, with ad blocking.
-        val servers = listOf("https://dns-a.example.test:3443/dns-query")
-        val stored = ColituAdBlock.apply(ColituRuBypass.configure(runtime, "DE", privacyMode = false), on = true, servers = servers)
-        assertEquals(2, ruDirectRules(stored).size)
-        val updated = ColituRuBypass.configure(stored, "DE", privacyMode = true)
-        assertTrue(ruDirectRules(updated).isEmpty())
-        assertEquals("dns-out", rules(JsonParser.parseString(updated).asJsonObject).single().get("outboundTag").asString)
-        // And back: off again restores them, once.
-        assertEquals(2, ruDirectRules(ColituRuBypass.configure(updated, "DE", privacyMode = false)).size)
-    }
-
-    @Test
-    fun privacyModeStripsRussianEntriesFromPanelRules() {
+    fun ruleIsPresentWithPrivacyModeOnAndAheadOfProxyRules() {
+        // Privacy mode is stored separately and does not reach the config generator at all.
         val panel = """
             {"inbounds":[],"outbounds":[{"tag":"proxy","protocol":"vless"},{"tag":"direct","protocol":"freedom"}],
-             "routing":{"rules":[
-               {"type":"field","ip":["geoip:private","geoip:ru"],"outboundTag":"direct"},
-               {"type":"field","domain":["geosite:category-gov-ru@ads"],"port":"443","outboundTag":"direct"},
-               {"type":"field","domain":["domain:yandex.ru","full:example.com"],"outboundTag":"direct"},
-               {"type":"field","domain":["geosite:category-ru"],"outboundTag":"proxy"}
-             ]}}
+             "routing":{"rules":[{"type":"field","domain":["geosite:category-ru"],"outboundTag":"proxy"},
+                                 {"type":"field","network":"tcp,udp","outboundTag":"proxy"}]}}
         """.trimIndent()
-        val rules = rules(JsonParser.parseString(ColituRuBypass.configure(panel, "DE", privacyMode = true)).asJsonObject)
-        assertEquals(3, rules.size)
-        assertEquals(listOf("geoip:private"), rules[0].getAsJsonArray("ip").map { it.asString })
-        // The port-only remainder would have sent all of 443 direct: dropped whole.
-        assertEquals(listOf("full:example.com"), rules[1].getAsJsonArray("domain").map { it.asString })
-        // Rules to the proxy are left alone.
-        assertEquals("proxy", rules[2].get("outboundTag").asString)
+        val servers = listOf("https://dns-a.example.test:3443/dns-query")
+        val config = ColituAdBlock.apply(ColituRuBypass.configure(panel), on = true, servers = servers)
+        val all = rules(JsonParser.parseString(config).asJsonObject)
+        val ruIndexes = all.indices.filter { all[it].get("ruleTag")?.asString == ColituRuBypass.RULE_TAG }
+        assertEquals(2, ruIndexes.size)
+        // Behind only the DNS hijack, ahead of every rule to the proxy.
+        assertTrue(ruIndexes.all { i -> all.take(i).all { it.get("outboundTag").asString == "dns-out" || it.get("ruleTag")?.asString == ColituRuBypass.RULE_TAG } })
+    }
+
+    @Test
+    fun applyingTwiceKeepsTwoRules() {
+        val once = ColituRuBypass.configure(runtime)
+        assertEquals(2, ruDirectRules(ColituRuBypass.configure(once)).size)
     }
 
     @Test

@@ -10,11 +10,17 @@ object ColituTransportChoice {
     /** The methods the menu offers, in menu order. */
     val METHODS = listOf("hysteria2", "vless-reality", "vless-xhttp", "trojan", "shadowsocks")
 
-    /** A known method in its canonical spelling, or "" (automatic) for anything else. */
+    /** ColituGecko: listed after [METHODS] while the panel offers it; a pick of it connects Gecko-only (no server's transport). */
+    const val GECKO = ColituGeckoRules.PROTOCOL
+
+    /** A known method (or [GECKO]) in its canonical spelling, or "" (automatic) for anything else. */
     fun normalize(protocol: String?): String {
         val trimmed = protocol?.trim().orEmpty()
-        return METHODS.firstOrNull { it.equals(trimmed, ignoreCase = true) }.orEmpty()
+        return (METHODS + GECKO).firstOrNull { it.equals(trimmed, ignoreCase = true) }.orEmpty()
     }
+
+    /** The menu's options: automatic, the server transports, then ColituGecko when [geckoListed]. */
+    fun options(geckoListed: Boolean): List<String> = listOf("") + METHODS + if (geckoListed) listOf(GECKO) else emptyList()
 
     /**
      * [ordered] with the items of [picked] moved to the front, the rest in

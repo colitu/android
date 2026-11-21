@@ -29,6 +29,8 @@ fun colituErrorMessage(code: String?, signingIn: Boolean = false): String {
         "ACCOUNT_UNDER_REVIEW" -> loc["err.accountUnderReview"]
         "SIGNUP_BLOCKED" -> loc["err.signupBlocked"]
         "ACCOUNT_BLOCKED" -> loc["err.accountBlocked"]
+        "GECKO_FAILED" -> loc["gecko.err.failed"]
+        "GECKO_UNAVAILABLE" -> loc["gecko.err.unavailable"]
         "MULTIHOP_ROUTE_NOT_FOUND" -> loc["multihop.gone"]
         "MULTIHOP_NEEDS_VLESS" -> loc["multihop.needsVless"]
         "ROTATION_NEEDS_VLESS" -> loc["rotation.needsVless"]

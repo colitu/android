@@ -13,9 +13,11 @@ object ColituRemoteFeatures {
     const val STORE_ID = "COLITU_SERVERS"
     const val KEY_AC3 = "feature_adaptive_connect_3"
     const val KEY_AC4 = "feature_ac_engine_4"
+    const val KEY_TLS_EVENTS = "feature_tls_probe_events"
 
     @Volatile private var ac3Cache: Boolean? = null
     @Volatile private var ac4Cache: Boolean? = null
+    @Volatile private var tlsEventsCache: Boolean? = null
 
     /** Adaptive Connect 3.0 is on for this device; false when never told (or without MMKV, e.g. JVM tests). */
     val adaptiveConnect3: Boolean
@@ -24,6 +26,13 @@ object ColituRemoteFeatures {
     /** Adaptive Connect 4 (decision model, whitelist mode) is on for this device; false when never told. */
     val acEngine4: Boolean
         get() = ac4Cache ?: runCatching { store().decodeBool(KEY_AC4, false) }.getOrDefault(false).also { ac4Cache = it }
+
+    /**
+     * The panel accepts TLS probe events (`probe`/`port`/`measure` fields) in ac-events; an older panel rejects the
+     * whole report on unknown fields. False when never told or absent from the last list.
+     */
+    val tlsProbeEvents: Boolean
+        get() = tlsEventsCache ?: runCatching { store().decodeBool(KEY_TLS_EVENTS, false) }.getOrDefault(false).also { tlsEventsCache = it }
 
     /** The `features` object of a /servers answer: the switches it carries, null when absent. */
     fun parse(json: JsonObject?): Map<String, Boolean>? {
@@ -35,6 +44,10 @@ object ColituRemoteFeatures {
 
     /** Stores what the panel said; keys it did not send keep their value. */
     fun update(features: Map<String, Boolean>?) {
+        // Absence means false (a list without the flag comes from a panel that would reject the fields).
+        val tls = features?.get("tls_probe_events") == true
+        runCatching { store().encode(KEY_TLS_EVENTS, tls) }
+        tlsEventsCache = tls
         features?.get("adaptive_connect_3")?.let { ac3 ->
             runCatching { store().encode(KEY_AC3, ac3) }
             ac3Cache = ac3
@@ -48,6 +61,8 @@ object ColituRemoteFeatures {
     fun clear() {
         runCatching { store().removeValueForKey(KEY_AC3) }
         runCatching { store().removeValueForKey(KEY_AC4) }
+        runCatching { store().removeValueForKey(KEY_TLS_EVENTS) }
+        tlsEventsCache = false
         ac3Cache = false
         ac4Cache = false
     }

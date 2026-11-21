@@ -197,16 +197,27 @@ object CoreServiceManager {
         // CSL alpha: the core gets the CSL routes and csl-client runs next to it.
         val session = cslSession.incrementAndGet()
         com.v2ray.ang.colitu.data.ColituCslRuntime.stop()
+        com.v2ray.ang.colitu.data.ColituGeckoRuntime.stop()
+        // ColituGecko (wins over CSL): a Gecko-only profile runs with every flow to gecko-client; any
+        // other profile has no Gecko at all. One that cannot run fails the start (GECKO_UNAVAILABLE).
+        val gecko = com.v2ray.ang.colitu.data.ColituGeckoRuntime.plan(service, content)
         val csl = com.v2ray.ang.colitu.data.ColituCslStore.get(guid)
-        val cslOff = com.v2ray.ang.colitu.data.ColituCslRuntime.offReason(service, csl)
+        val cslOff = if (gecko != null) "ColituGecko is the protocol" else com.v2ray.ang.colitu.data.ColituCslRuntime.offReason(service, csl)
         val withCsl = if (cslOff == null) com.v2ray.ang.colitu.data.ColituCslRules.apply(content, csl!!.port, com.v2ray.ang.colitu.data.ColituCslRules::newAccount) else null
         if (com.v2ray.ang.colitu.data.ColituCslStore.enabled && withCsl == null) {
             LogUtil.w(AppConfig.TAG, "Colitu: CSL alpha: off (${cslOff ?: "the config could not take CSL"})")
         }
 
         NotificationManager.showNotification(currentConfig)
-        coreController.startLoop(withCsl?.first ?: content, tunFd)
+        coreController.startLoop(gecko?.coreConfig ?: withCsl?.first ?: content, tunFd)
         if (!coreController.isRunning) error("ENGINE_FAILED")
+        if (gecko != null) {
+            // No silent switch: on a failure the core keeps the Gecko-only config (nothing leaks) and the
+            // app's connect flow moves on or shows the error (ColituController's Gecko step and watcher).
+            com.v2ray.ang.colitu.data.ColituGeckoRuntime.start(service, gecko) { reason ->
+                LogUtil.w(AppConfig.TAG, "Colitu: Gecko failed ($reason)")
+            }
+        }
         if (withCsl != null) {
             com.v2ray.ang.colitu.data.ColituCslRuntime.start(service, withCsl.second, csl!!.credential) {
                 restartWithoutCsl(service, session, content, tunFd)
@@ -231,9 +242,10 @@ object CoreServiceManager {
      * VPN interface stays, so nothing leaves around the tunnel meanwhile).
      */
     private fun restartWithoutCsl(service: Service, session: Int, content: String, tunFd: Int) {
+        val sidecar = "CSL"
         CoroutineScope(Dispatchers.IO).launch {
             if (cslSession.get() != session) return@launch
-            LogUtil.w(AppConfig.TAG, "Colitu: CSL alpha: core restarts without CSL")
+            LogUtil.w(AppConfig.TAG, "Colitu: $sidecar alpha: core restarts without $sidecar")
             runCatching { coreController.stopLoop() }
             val deadline = SystemClock.elapsedRealtime() + CORE_STOP_WAIT_MS
             while (coreController.isRunning && SystemClock.elapsedRealtime() < deadline) {
@@ -241,7 +253,7 @@ object CoreServiceManager {
             }
             if (cslSession.get() != session || coreController.isRunning) return@launch
             runCatching { coreController.startLoop(content, tunFd) }
-                .onFailure { LogUtil.e(AppConfig.TAG, "Colitu: CSL alpha: restart without CSL failed", it) }
+                .onFailure { LogUtil.e(AppConfig.TAG, "Colitu: $sidecar alpha: restart without $sidecar failed", it) }
             if (coreController.isRunning) startColituTraffic(service)
         }
     }
@@ -253,6 +265,7 @@ object CoreServiceManager {
         val service = getService() ?: return false
         cslSession.incrementAndGet()
         com.v2ray.ang.colitu.data.ColituCslRuntime.stop()
+        com.v2ray.ang.colitu.data.ColituGeckoRuntime.stop()
 
         if (coreController.isRunning) {
             CoroutineScope(Dispatchers.IO).launch {
@@ -323,7 +336,9 @@ object CoreServiceManager {
         }
     }
 
-    private val colituOutboundTags = listOf(AppConfig.TAG_PROXY, com.v2ray.ang.colitu.data.ColituWarmSpare.SPARE_TAG)
+    private val colituOutboundTags = listOf(
+        AppConfig.TAG_PROXY, com.v2ray.ang.colitu.data.ColituWarmSpare.SPARE_TAG, com.v2ray.ang.colitu.data.ColituGeckoRules.OUTBOUND_TAG,
+    )
 
     private fun stopColituTraffic() {
         colituTrafficJob?.cancel()
@@ -415,10 +430,18 @@ object CoreServiceManager {
             .retryOnConnectionFailure(false)
             .build()
 
+    /**
+     * GET [url] through [client]; the delay only when the answer is the check page's own
+     * ([com.v2ray.ang.colitu.data.ColituProbeCheck]): a status code alone also came from a
+     * server that refused us and handed the connection to its cover site.
+     */
     private fun primaryDelay(client: okhttp3.OkHttpClient, url: String): Long = runCatching {
         val started = SystemClock.elapsedRealtime()
-        client.newCall(okhttp3.Request.Builder().url(url).head().build()).execute().use { response ->
-            if (response.code in 200..299) SystemClock.elapsedRealtime() - started else -1L
+        client.newCall(okhttp3.Request.Builder().url(url).get().build()).execute().use { response ->
+            val source = response.body.source()
+            source.request(com.v2ray.ang.colitu.data.ColituProbeCheck.MAX_BODY_BYTES.toLong())
+            val body = source.buffer.readUtf8(minOf(source.buffer.size, com.v2ray.ang.colitu.data.ColituProbeCheck.MAX_BODY_BYTES.toLong()))
+            if (com.v2ray.ang.colitu.data.ColituProbeCheck.accepts(url, response.code, body)) SystemClock.elapsedRealtime() - started else -1L
         }
     }.getOrDefault(-1L)
 

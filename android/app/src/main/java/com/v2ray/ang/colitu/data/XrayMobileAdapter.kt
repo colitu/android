@@ -20,6 +20,8 @@ object XrayMobileAdapter {
         "vless-xhttp" to 2,
         "trojan" to 3,
         "shadowsocks" to 4,
+        "vless-ws" to 5,
+        "vless-reality-relay" to 6,
     )
 
     val supportedProtocols = transportRank.keys
@@ -82,18 +84,20 @@ object XrayMobileAdapter {
             when (protocol) {
                 "hysteria2" -> transportType == "hysteria"
                 "vless-xhttp" -> transportType == "xhttp" && transport.requiredString("path").startsWith("/")
+                "vless-ws" -> transportType == "ws" && transport.requiredString("path").startsWith("/")
+                "vless-reality-relay" -> transportType == "tcp"
                 else -> transportType in setOf("tcp", "ws", "grpc")
             },
         ) { "CONFIG_TRANSPORT_UNSUPPORTED" }
         require(
             when (protocol) {
-                "vless-reality", "vless-xhttp" -> security.requiredString("type") == "reality"
-                "trojan", "hysteria2" -> security.requiredString("type") == "tls"
+                "vless-reality", "vless-xhttp", "vless-reality-relay" -> security.requiredString("type") == "reality"
+                "trojan", "hysteria2", "vless-ws" -> security.requiredString("type") == "tls"
                 else -> security.requiredString("type") == "none"
             },
         ) { "CONFIG_SECURITY_INVALID" }
         val outbound = when (protocol) {
-            "vless-reality", "vless-xhttp" -> vless(host, port, credentials, transport, security)
+            "vless-reality", "vless-xhttp", "vless-ws", "vless-reality-relay" -> vless(host, port, credentials, transport, security)
             "trojan" -> trojan(host, port, credentials, transport, security)
             "hysteria2" -> hysteria2(host, port, credentials, transport, security)
             else -> shadowsocks(host, port, credentials)
@@ -283,6 +287,7 @@ object XrayMobileAdapter {
     fun transportName(protocol: String?): String = when (protocol) {
         null, "" -> ""
         in transportRank.keys -> ColituLoc["transport.$protocol"]
+        ColituGeckoRules.PROTOCOL -> ColituLoc["transport.gecko"]
         else -> ColituLoc["transport.other"]
     }
 
@@ -305,7 +310,7 @@ object XrayMobileAdapter {
                 })
             })
         })
-        add("streamSettings", stream(t, s))
+        add("streamSettings", stream(t, s, host))
     }
 
     private fun trojan(host: String, port: Int, c: JsonObject, t: JsonObject, s: JsonObject) = JsonObject().apply {
@@ -430,13 +435,21 @@ object XrayMobileAdapter {
         return out.takeIf { it.size() > 0 }
     }
 
-    private fun stream(t: JsonObject, s: JsonObject) = JsonObject().apply {
+    private fun stream(t: JsonObject, s: JsonObject, endpointHost: String = "") = JsonObject().apply {
         addProperty("network", t.requiredString("type"))
         if (t.requiredString("type") == "xhttp") {
             add("xhttpSettings", JsonObject().apply {
                 addProperty("path", t.requiredString("path"))
                 addProperty("mode", t.get("mode")?.takeIf { it.isJsonPrimitive }?.asString ?: "auto")
                 xmux(t)?.let { mux -> add("extra", JsonObject().apply { add("xmux", mux) }) }
+            })
+        }
+        if (t.requiredString("type") == "ws") {
+            // vless-ws rides a CDN relay: the Host header is transport.host, else the TLS name, else the endpoint.
+            val wsHost = t.optString("host") ?: s.optString("server_name") ?: endpointHost
+            add("wsSettings", JsonObject().apply {
+                addProperty("path", t.requiredString("path"))
+                addProperty("host", wsHost)
             })
         }
         val type = s.requiredString("type")
@@ -452,13 +465,22 @@ object XrayMobileAdapter {
             // Present a Chrome TLS fingerprint (uTLS): DPI in Russia drops
             // handshakes that look like Go's default client, which made Trojan
             // time out while the same server answered normal browsers.
+            val ws = t.requiredString("type") == "ws"
             add("tlsSettings", JsonObject().apply {
-                addProperty("serverName", s.requiredString("server_name"))
-                addProperty("fingerprint", "chrome")
-                add("alpn", JsonArray().apply { add("h2"); add("http/1.1") })
+                addProperty("serverName", if (ws) (s.optString("server_name") ?: endpointHost) else s.requiredString("server_name"))
+                addProperty("fingerprint", if (ws) (s.optString("fingerprint") ?: "firefox") else "chrome")
+                add("alpn", JsonArray().apply {
+                    val custom = if (ws) s.get("alpn")?.takeIf { it.isJsonArray }?.asJsonArray
+                        ?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive }?.asString?.takeIf { v -> v.isNotBlank() } } else null
+                    if (ws) (custom?.takeIf { it.isNotEmpty() } ?: listOf("http/1.1")).forEach { add(it) }
+                    else { add("h2"); add("http/1.1") }
+                })
             })
         }
     }
+
+    private fun JsonObject.optString(key: String): String? =
+        takeIf { has(key) && !get(key).isJsonNull && get(key).isJsonPrimitive }?.get(key)?.asString?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.requiredString(key: String): String =
         takeIf { has(key) && !get(key).isJsonNull && get(key).isJsonPrimitive }?.get(key)?.asString

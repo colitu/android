@@ -96,6 +96,11 @@ import androidx.compose.ui.window.PopupProperties
 import com.v2ray.ang.colitu.app.ColituController
 import com.v2ray.ang.colitu.data.ColituQuickServers
 import com.v2ray.ang.colitu.data.ColituServer
+import com.v2ray.ang.colitu.data.ColituWhitelistRow
+import com.v2ray.ang.colitu.design.ColituButton
+import com.v2ray.ang.colitu.design.ColituRadius
+import com.v2ray.ang.colitu.design.pressable
+import androidx.compose.foundation.verticalScroll
 import com.v2ray.ang.colitu.design.CText
 import com.v2ray.ang.colitu.design.ColituColors
 import com.v2ray.ang.colitu.design.ColituField
@@ -269,10 +274,13 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
                 },
             ),
         )
+    // RU only: an extra "Whitelist" row per whitelist server at the very top (found by the search by country, city
+    // in any app language and "whitelist" words; hidden by category filters; not by local unreachability, they dial the relay).
+    val whitelistRows = if (filter == "all") ColituWhitelistRow.rows(c.servers, c.lastClientCountry).filter { ColituWhitelistRow.matches(it, query) } else emptyList()
     val recommended = recommended(c, items)
     val rest = items.filterNot { it in recommended }
     // A search shows matches flat; otherwise a country with several servers becomes one expandable card.
-    val restEntries = groupByCountry(rest, if (c.autoSelection) null else c.selectedServerId, flat = q.isNotEmpty())
+    val restEntries = groupByCountry(rest, if (c.autoSelection || c.whitelistRowId != null) null else c.selectedServerId, flat = q.isNotEmpty())
     // Multihop routes have no use-case categories: they show under "All" only. The flag and name
     // of the exit and the entry both count for the search.
     val routeItems = if (filter != "all" || !advanced) emptyList() else c.routes
@@ -407,6 +415,12 @@ fun LocationsTab(c: ColituController, onOpenPlan: () -> Unit) {
             else -> {
                 val keys = Keys()
                 var row = 0
+                whitelistRows.forEach { server ->
+                    val index = row++
+                    item(key = keys.of("wl-" + server.id), contentType = "server") {
+                        WhitelistCard(c, server, Modifier.rowReveal(index, openedAt))
+                    }
+                }
                 if (items.isNotEmpty()) {
                     item(key = "sec-first", contentType = "section") {
                         SectionHeader(if (recommended.isNotEmpty()) loc["locations.recommended"] else loc["locations.allServers"]) {
@@ -770,7 +784,11 @@ private fun RowBody(
     subtitle: String,
     connected: Boolean,
     badge: (@Composable () -> Unit)? = null,
+    titleMaxLines: Int = 2,
+    /** Shown instead of [title] when a word of it would not fit on a line ("RU → NL" for a route). */
+    compactTitle: String? = null,
     ping: (@Composable () -> Unit)? = null,
+    beforePing: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit,
 ) {
     // Large text: the ping moves under the name so the name keeps its width and never breaks mid-word.
@@ -785,7 +803,11 @@ private fun RowBody(
             // Two lines before an ellipsis: "Birleşik Krallık" on a 360 dp phone. The badge sits on
             // the second line: next to the name, with the ping and the star, it left the name too
             // narrow on a 360 dp phone ("Swede" / "n" on the connected card).
-            BasicText(title, style = NameStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (compactTitle == null) {
+                BasicText(title, style = NameStyle, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis)
+            } else {
+                FittingTitle(title, compactTitle, titleMaxLines)
+            }
             if (connected || subtitle.isNotEmpty() || badge != null) {
                 Spacer(Modifier.height(3.dp))
                 SubLine(subtitle, connected, badge)
@@ -796,9 +818,35 @@ private fun RowBody(
             }
         }
         Spacer(Modifier.width(12.dp))
+        beforePing?.invoke()
         if (ping != null && !pingBelow) ping()
         trailing()
     }
+}
+
+/**
+ * [full] when every word of it fits on a line and the whole fits in [maxLines] (breaks only
+ * between words), else [compact]: a name is never cut inside a word or down to "Росси…".
+ */
+@Composable
+private fun FittingTitle(full: String, compact: String, maxLines: Int) {
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val width = constraints.maxWidth
+        val fits = remember(full, width, measurer) { wordsFit(measurer, full, width, maxLines) }
+        BasicText(if (fits) full else compact, style = NameStyle, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun wordsFit(measurer: androidx.compose.ui.text.TextMeasurer, text: String, width: Int, maxLines: Int): Boolean {
+    if (text.split(' ').any { it.isNotEmpty() && measurer.measure(it, NameStyle).size.width > width }) return false
+    val layout = measurer.measure(
+        text,
+        NameStyle,
+        maxLines = maxLines,
+        constraints = androidx.compose.ui.unit.Constraints(maxWidth = width),
+    )
+    return !layout.hasVisualOverflow
 }
 
 /** The muted second line; "Connected" in violet goes first when it applies, the badge last. */
@@ -832,8 +880,8 @@ private fun Offline() {
 @Composable
 private fun ServerCard(c: ColituController, server: ColituServer, recommended: Boolean, modifier: Modifier, dimmed: Boolean = false) {
     val loc = ColituLoc
-    val selected = !c.autoSelection && c.selectedServerId == server.id
-    val connected = c.connected && c.connectedServerId == server.id
+    val selected = c.isNormalSelection(server.id)
+    val connected = c.connected && c.connectedServerId == server.id && !(c.transport in ColituWhitelistRow.PROTOCOLS && c.whitelistRowId == server.id)
     val selectable = server.isAvailable
     // Panel names (Turkish) in the app language; recomposes on a language switch.
     val country = server.countryCode?.let { loc.countryName(it) }?.takeIf { it.isNotBlank() }
@@ -860,6 +908,97 @@ private fun ServerCard(c: ColituController, server: ColituServer, recommended: B
                 FavoriteButton(server.id)
             }
         }
+    }
+}
+
+/** The virtual "Whitelist" row (RU): the node's own flag and no ping; picking it connects with vless-ws only. */
+@Composable
+private fun WhitelistCard(c: ColituController, server: ColituServer, modifier: Modifier) {
+    val loc = ColituLoc
+    val selected = !c.autoSelection && c.whitelistRowId == server.id
+    val connected = c.connected && c.connectedServerId == server.id && c.transport in ColituWhitelistRow.PROTOCOLS && c.whitelistRowId == server.id
+    var info by remember { mutableStateOf(false) }
+    if (info) WhitelistInfoSheet { info = false }
+    // Several servers each get a row: the country and city tell them apart.
+    val country = server.countryCode?.let { loc.countryName(it) }?.takeIf { it.isNotBlank() }
+        ?: ColituServerNames.displayName(server.displayName, countryCode = server.countryCode)
+    val city = ColituServerNames.city(server.city)
+    val where = if (city.isNotEmpty() && !city.equals(country, ignoreCase = true)) "$country, $city" else country
+    Column(modifier.padding(bottom = CardGap)) {
+        RowCard(
+            Modifier.press({ c.selectWhitelistRow(server) }),
+            edge = if (selected || connected) Edge.Selected else Edge.Recommended,
+        ) {
+            RowBody(
+                leading = { ColituFlag(server.countryCode, FlagSize) },
+                title = loc["transport.vless-ws"],
+                subtitle = where,
+                connected = connected,
+                beforePing = { WhitelistInfoButton { info = true } },
+            ) {}
+        }
+    }
+}
+
+/** Muted circled "i" on the Whitelist row: opens the explainer; 48 dp target, the tap never reaches the row. */
+@Composable
+private fun WhitelistInfoButton(onClick: () -> Unit) {
+    Box(
+        Modifier.size(48.dp).clip(CircleShape).press(onClick, radius = 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        ColituIcon(ColituIcons.Info, ColituColors.muted, 20.dp, description = ColituLoc["whitelist.info.title"])
+    }
+}
+
+/** "What is the whitelist?": a short in-app sheet at the bottom (no link: the site does not open under a whitelist). */
+@Composable
+internal fun WhitelistInfoSheet(onClose: () -> Unit) {
+    val loc = ColituLoc
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().pressable(onClose, scale = 1f, focusRing = false), contentAlignment = Alignment.BottomCenter) {
+            ColituPanel(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp).pressable(null),
+                padding = PaddingValues(start = 20.dp, top = 22.dp, end = 20.dp, bottom = 20.dp),
+                radius = ColituRadius.lg,
+            ) {
+                Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    CText(loc["whitelist.info.title"], ColituText.h2, maxLines = 3)
+                    Spacer(Modifier.height(10.dp))
+                    CText(loc["whitelist.info.lead"], ColituText.muted)
+                    Spacer(Modifier.height(16.dp))
+                    WhitelistInfoRow(ColituIcons.Antenna, loc["whitelist.info.when"])
+                    Spacer(Modifier.height(14.dp))
+                    WhitelistInfoRow(ColituIcons.Route, loc["whitelist.info.how"])
+                    Spacer(Modifier.height(14.dp))
+                    WhitelistInfoRow(ColituIcons.Clock, loc["whitelist.info.note"])
+                    Spacer(Modifier.height(20.dp))
+                    ColituButton(loc["whitelist.info.ok"], onClose)
+                }
+            }
+        }
+    }
+}
+
+/** An icon and a sentence whose lead-in ("When:") is bold. */
+@Composable
+private fun WhitelistInfoRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    val cut = text.indexOf(':')
+    val styled = androidx.compose.ui.text.buildAnnotatedString {
+        if (cut > 0) {
+            pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = ColituColors.text))
+            append(text.substring(0, cut + 1))
+            pop()
+            append(text.substring(cut + 1))
+        } else append(text)
+    }
+    Row(verticalAlignment = Alignment.Top) {
+        Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) { ColituIcon(icon, ColituColors.violet, 20.dp) }
+        Spacer(Modifier.width(10.dp))
+        BasicText(styled, Modifier.weight(1f).padding(top = 4.dp), style = ColituText.muted)
     }
 }
 
@@ -952,7 +1091,7 @@ private fun CountryGroup(c: ColituController, group: LocationEntry.Group, modifi
     var expanded by rememberSaveable { mutableStateOf(group.expandedByDefault) }
     val name = loc.countryName(group.countryCode).takeIf { it.isNotBlank() }
         ?: ColituServerNames.displayName(group.servers.first().displayName, countryCode = group.countryCode)
-    val hasSelected = !c.autoSelection && group.servers.any { it.id == c.selectedServerId }
+    val hasSelected = group.servers.any { c.isNormalSelection(it.id) }
     val hasConnected = c.connected && group.servers.any { it.id == c.connectedServerId }
     val best = bestPing(group.servers) { c.pingOf(it) }
     val anyOnline = group.servers.any { it.isAvailable }
@@ -1023,7 +1162,7 @@ private fun CountryGroup(c: ColituController, group: LocationEntry.Group, modifi
 private fun CityRow(c: ColituController, server: ColituServer) {
     val loc = ColituLoc
     val still = LocalStill.current
-    val selected = !c.autoSelection && c.selectedServerId == server.id
+    val selected = c.isNormalSelection(server.id)
     val connected = c.connected && c.connectedServerId == server.id
     val active = selected || connected
     val selectable = server.isAvailable
@@ -1107,14 +1246,19 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
         ) {
             RowBody(
                 leading = {
+                    // Two small flags side by side (the name carries the arrow): two 32 dp flags and
+                    // an arrow left "Россия → Нидерланды" too little room on a 360 dp phone.
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        ColituFlag(ends.entry.country, 32.dp)
-                        ColituIcon(ColituIcons.ArrowRight, ColituColors.muted, 13.dp, Modifier.padding(horizontal = 4.dp))
-                        ColituFlag(ends.exit.country, 32.dp)
+                        ColituFlag(ends.entry.country, RouteFlag)
+                        Spacer(Modifier.width(3.dp))
+                        ColituFlag(ends.exit.country, RouteFlag)
                     }
                 },
                 title = ColituServerNames.route(route.displayName),
-                subtitle = ColituLoc["multihop.ping"],
+                // Two lines, broken between words only; when a word does not fit, the country codes.
+                titleMaxLines = 2,
+                compactTitle = routeCodes(ends.entry.country, ends.exit.country) ?: ColituServerNames.route(route.displayName),
+                subtitle = ColituLoc["multihop.ping.short"],
                 connected = connected,
                 ping = { Ping(c.pingOf(route), unreachable(c, route)) },
             ) {
@@ -1122,6 +1266,16 @@ private fun RouteCard(c: ColituController, route: ColituServer, modifier: Modifi
             }
         }
     }
+}
+
+/** Flag size of the two ends of a route card. */
+private val RouteFlag = 22.dp
+
+/** "RU → NL", or null when a code is missing. */
+private fun routeCodes(entry: String?, exit: String?): String? {
+    val a = entry?.trim()?.uppercase()?.takeIf { it.length == 2 } ?: return null
+    val b = exit?.trim()?.uppercase()?.takeIf { it.length == 2 } ?: return null
+    return "$a → $b"
 }
 
 // ── Tags ───────────────────────────────────────────────────────────────────

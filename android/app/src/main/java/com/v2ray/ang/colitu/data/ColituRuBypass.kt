@@ -7,14 +7,15 @@ import com.tencent.mmkv.MMKV
 import com.v2ray.ang.colitu.api.ColituSecureStore
 
 /**
- * Russian sites and apps go out directly instead of through the tunnel, as on
- * iOS. Banks, Gosuslugi, marketplaces and other Russian services refuse
- * connections that arrive from a foreign IP ("turn off your VPN"); with this
- * they see the device's own Russian address while everything else stays
- * behind the VPN.
+ * Russian destinations ALWAYS leave directly from the device, never through
+ * the tunnel (owner decision 2026-11-20). Banks, Gosuslugi, marketplaces and
+ * other Russian services refuse connections that arrive from a foreign IP, and
+ * the nodes refuse Russian destinations anyway.
  *
- * Privacy mode turns this off: then the generated config has no Russian
- * direct rule at all and every connection goes through the VPN.
+ * This is independent of privacy mode, of the chosen server (also a server in
+ * Russia) and of every other setting: the generated config always carries the
+ * Russian direct rules, ahead of every proxy rule. Privacy mode only governs
+ * the rest of the traffic.
  */
 object ColituRuBypass {
     internal const val RULE_TAG = "colitu-ru-direct"
@@ -84,21 +85,22 @@ object ColituRuBypass {
         }
 
     /**
-     * The one rule for the config and the screens alike: Russian sites go
-     * direct only while privacy mode is off and the server is outside Russia.
-     * Through a server in Russia the Russian sites already see a Russian
-     * address, and someone abroad picks that server for exactly those sites:
-     * they stay in the tunnel.
+     * [raw] as it should run: always with the Russian direct rules. The
+     * arguments of earlier versions (server country, privacy mode) no longer
+     * matter.
      */
-    fun applies(serverCountry: String?, privacyMode: Boolean): Boolean =
-        !privacyMode && !serverCountry.equals("RU", ignoreCase = true)
+    fun configure(raw: String): String = apply(raw)
 
-    /**
-     * [raw] as it should run for [serverCountry]: with the Russian direct
-     * rules when they [applies], otherwise with none left ([strip]).
-     */
-    fun configure(raw: String, serverCountry: String?, privacyMode: Boolean): String =
-        if (applies(serverCountry, privacyMode)) apply(raw) else strip(raw)
+    /** Domain matchers sent direct: the geosite list plus the suffixes the nodes refuse too. */
+    internal val DIRECT_DOMAINS = listOf(
+        "geosite:category-ru",
+        "domain:ru", "domain:su", "domain:xn--p1ai", "domain:xn--d1acj3b", "domain:xn--80asehdb",
+        "domain:moscow", "domain:tatar",
+        "domain:vk.com", "domain:vk.me", "domain:vkontakte.com", "domain:userapi.com", "domain:vk-cdn.net",
+        "domain:vkuser.net", "domain:mycdn.me",
+        "domain:yandex.com", "domain:yandex.net", "domain:yastatic.net", "domain:yandex.by", "domain:yandex.kz",
+        "domain:ya.cc", "domain:ok.me", "domain:odnoklassniki.com", "domain:tinkoff.com", "domain:tbank.com",
+    )
 
     /**
      * [raw] with Russian domains (`geosite:category-ru`) and Russian IPs
@@ -141,54 +143,10 @@ object ColituRuBypass {
         val dnsPrefix = existing.takeWhile { it.isJsonObject && it.asJsonObject.get("outboundTag")?.asString == "dns-out" }
         val rules = JsonArray().apply {
             dnsPrefix.forEach(::add)
-            add(directRule { add("domain", JsonArray().apply { add("geosite:category-ru") }) })
+            add(directRule { add("domain", JsonArray().apply { DIRECT_DOMAINS.forEach(::add) }) })
             add(directRule { add("ip", JsonArray().apply { add("geoip:ru") }) })
             existing.drop(dnsPrefix.size).forEach(::add)
         }
-        routing.add("rules", rules)
-        json.add("routing", routing)
-        return json.toString()
-    }
-
-    /**
-     * [raw] without any rule that sends Russian traffic to the `direct`
-     * outbound: the rules [apply] added and, should the panel's routing
-     * policy ever carry one, Russian geosite/geoip/TLD entries of its direct
-     * rules. A rule whose only domains or IPs were Russian is dropped whole,
-     * since keeping it without them would widen it to all traffic.
-     */
-    fun strip(raw: String): String {
-        val json = JsonParser.parseString(raw).asJsonObject
-        val routing = json.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject ?: return raw
-        val existing = routing.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray ?: return raw
-        var changed = false
-        val rules = JsonArray()
-        for (element in existing) {
-            val rule = element.takeIf { it.isJsonObject }?.asJsonObject
-            if (rule == null) {
-                rules.add(element)
-                continue
-            }
-            if (rule.get("ruleTag")?.takeIf { it.isJsonPrimitive }?.asString == RULE_TAG) {
-                changed = true
-                continue
-            }
-            if (rule.get("outboundTag")?.takeIf { it.isJsonPrimitive }?.asString != "direct") {
-                rules.add(rule)
-                continue
-            }
-            var emptied = false
-            for (field in listOf("domain", "ip")) {
-                val values = rule.get(field)?.takeIf { it.isJsonArray }?.asJsonArray ?: continue
-                val kept = values.filterNot { it.isJsonPrimitive && isRussian(field, it.asString) }
-                if (kept.size == values.size()) continue
-                changed = true
-                if (kept.isEmpty()) emptied = true
-                rule.add(field, JsonArray().apply { kept.forEach(::add) })
-            }
-            if (!emptied) rules.add(rule)
-        }
-        if (!changed) return raw
         routing.add("rules", rules)
         json.add("routing", routing)
         return json.toString()

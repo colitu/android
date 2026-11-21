@@ -26,7 +26,7 @@ object ColituAcEvents {
     const val PROBE_WINDOW_MS = 60L * 60 * 1000
     const val FLAP_WINDOW_MS = 2L * 60 * 1000
 
-    val PROTOCOLS = setOf("vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic")
+    val PROTOCOLS = setOf("vless-reality", "vless-xhttp", "hysteria2", "trojan", "shadowsocks", "tuic", "vless-ws", "vless-reality-relay")
     val REASONS = setOf(
         "timeout", "reset", "tls", "dns", "refused", "handshake", "blocked", "no_network",
         "core_crash", "auth", "quota", "network_change", "other",
@@ -146,6 +146,32 @@ object ColituAcEvents {
     }
 
     /**
+     * A TLS probe (spec TLS-PROBE-SPEC §4): [result] is a [ColituTlsProbe.Result]; [measure] true for the
+     * panel's measurement targets, false for the ip_blocked classifier. Fail reasons: tls_rst | timeout | refused.
+     */
+    fun tlsProbe(
+        nodeId: String?, protocol: String?, result: ColituTlsProbe.Result, ms: Long, port: Int, measure: Boolean,
+        enabled: Boolean = ColituFeatures.tlsProbeEvents(),
+    ): JsonObject? {
+        // Without features.tls_probe_events the panel rejects the whole report on the new fields: no event at all.
+        if (!enabled) return null
+        val n = node(nodeId) ?: return null
+        val p = protocol(protocol) ?: return null
+        if (port !in 1..65535) return null
+        return JsonObject().apply {
+            addProperty("kind", "probe")
+            addProperty("node_id", n)
+            addProperty("protocol", p)
+            addProperty("outcome", outcome(result == ColituTlsProbe.Result.Ok))
+            addProperty("reason", ColituTlsProbe.reasonOf(result))
+            addProperty("ms", clampMs(ms))
+            addProperty("probe", "tls")
+            addProperty("port", port)
+            addProperty("measure", measure)
+        }
+    }
+
+    /**
      * An automatic choice: the node picked, its measured ping, and the node with the lowest
      * measured ping among [candidates] (id to fresh ping, null = none). Null when the chosen
      * node has no measurement or nothing was measured, so best_ms <= ms always holds.
@@ -199,7 +225,13 @@ object ColituAcEvents {
             // At most the last probe of a node per hour.
             if (event.get("kind")?.asString == "probe") {
                 val id = event.get("node_id")?.asString
-                entries.removeAll { it.event.get("kind")?.asString == "probe" && it.event.get("node_id")?.asString == id && at - it.at in 0..PROBE_WINDOW_MS }
+                // A TLS probe is its own series per port and purpose; the TCP ping (no "probe" field) another.
+                fun series(e: JsonObject) = listOf("probe", "port", "measure").joinToString("|") { e.get(it)?.asString.orEmpty() }
+                val mine = series(event)
+                entries.removeAll {
+                    it.event.get("kind")?.asString == "probe" && it.event.get("node_id")?.asString == id &&
+                        series(it.event) == mine && at - it.at in 0..PROBE_WINDOW_MS
+                }
             }
             entries += Entry(event, token, type, at)
             while (entries.size > cap) entries.removeAt(0)

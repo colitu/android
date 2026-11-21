@@ -24,7 +24,7 @@ class ColituEndpointsTest {
         "https://mirror.example.test/downloads/endpoints.json",
     )
 
-    private fun newState(store: EndpointStore = MemoryStore()) = ColituEndpointState(store, builtinApi, builtinLists)
+    private fun newState(store: EndpointStore = MemoryStore()) = ColituEndpointState(store, builtinApi, builtinLists, emptyList())
 
     private class MemoryStore : EndpointStore {
         val map = HashMap<String, String>()
@@ -88,7 +88,8 @@ class ColituEndpointsTest {
     @Test fun refreshStopsAtTheFirstAcceptedFile() {
         val state = newState()
         val asked = ArrayList<String>()
-        val ok = ColituEndpoints.refresh({ url ->
+        val ok = ColituEndpoints.refresh({ req ->
+            val url = req.url.toString()
             asked += url
             if (url.startsWith("https://colitu.com")) null else fixture("valid")
         }, state)
@@ -96,7 +97,7 @@ class ColituEndpointsTest {
         assertEquals(builtinLists, asked)
         asked.clear()
         // A bad file is ignored and the next URL is asked.
-        assertFalse(ColituEndpoints.refresh({ asked += it; fixture("tampered") }, state))
+        assertFalse(ColituEndpoints.refresh({ asked += it.url.toString(); fixture("tampered") }, state))
         assertEquals(2, asked.size)
     }
 

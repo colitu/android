@@ -50,4 +50,7 @@ object ColituFeatures {
      * device. Off, the automatic choice is exactly the one of Adaptive Connect 3.
      */
     fun acEngine4(remote: Boolean = ColituRemoteFeatures.acEngine4): Boolean = remote
+
+    /** `features.tls_probe_events`: ac-events may carry the TLS probe fields (absent = false). */
+    fun tlsProbeEvents(remote: Boolean = ColituRemoteFeatures.tlsProbeEvents): Boolean = remote
 }

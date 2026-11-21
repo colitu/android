@@ -53,6 +53,93 @@ object ColituWhitelist {
     /** A check is due: the VPN is off and the last [FAILURES_TO_CHECK] connects failed. */
     fun checkDue(vpnOff: Boolean, failuresInRow: Int): Boolean = vpnOff && failuresInRow >= FAILURES_TO_CHECK
 
+    // ── Trigger rules (owner 2026-11-17): 3-4 normal servers silent -> check, no second tap ──
+
+    const val LEDGER_MIN_SERVERS = 3
+    const val LEDGER_MIN_COUNTRIES = 2
+    const val PING_MIN_SERVERS = 4
+    const val PING_MIN_COUNTRIES = 2
+    const val DEBOUNCE_MS = 60_000L
+
+    /** Failure reasons that do not blame the network or the server (same list as the connect-failure counter). */
+    val NOT_COUNTED_REASONS = setOf("auth", "quota", "core_crash", "network_change", "no_network", "user_cancel")
+
+    /**
+     * Distinct servers that failed in a connect attempt on the current network (entry country each).
+     * Pure state, no clock of its own: [now] is passed in.
+     */
+    class FailureLedger {
+        private val servers = LinkedHashMap<String, String>()
+        private var network: String? = null
+        private var lastCheckAt: Long? = null
+        private var sizeAtNotWhitelist = 0
+
+        val size: Int get() = servers.size
+        val countries: Int get() = servers.values.filter { it.isNotEmpty() }.toSet().size
+
+        /** Another network: everything (and the debounce) starts over. */
+        fun onNetwork(key: String) {
+            if (network != null && network != key) {
+                reset()
+                lastCheckAt = null
+            }
+            network = key
+        }
+
+        /** [server] failed on [country] (entry) for [reason]; false when it is not counted. */
+        fun add(networkKey: String, serverId: String, country: String?, reason: String? = null): Boolean {
+            onNetwork(networkKey)
+            if (reason != null && reason in NOT_COUNTED_REASONS) return false
+            servers.putIfAbsent(serverId, country?.trim()?.uppercase().orEmpty())
+            return true
+        }
+
+        /** Success, whitelist mode entered: the servers and the "not whitelist" memory go; the debounce stays. */
+        fun reset() {
+            servers.clear()
+            sizeAtNotWhitelist = 0
+        }
+
+        /** A check is due: >= 3 servers in >= 2 countries, one more than at the last "not whitelist", debounced. */
+        fun due(now: Long): Boolean {
+            if (servers.size < LEDGER_MIN_SERVERS || countries < LEDGER_MIN_COUNTRIES) return false
+            if (sizeAtNotWhitelist > 0 && servers.size <= sizeAtNotWhitelist) return false
+            return canCheck(now)
+        }
+
+        /** No T1/T2 check ran on this network in the last [DEBOUNCE_MS]. */
+        fun canCheck(now: Long): Boolean {
+            val last = lastCheckAt
+            return last == null || now - last !in 0 until DEBOUNCE_MS
+        }
+
+        /** A check ran (any trigger) at [now]; "not whitelist" needs one more server before the next one. */
+        fun checked(now: Long, whitelist: Boolean) {
+            lastCheckAt = now
+            if (whitelist) reset() else sizeAtNotWhitelist = servers.size
+        }
+
+        /** Marks a check as started (debounce) before its result is known. */
+        fun started(now: Long) {
+            lastCheckAt = now
+        }
+    }
+
+    /**
+     * T2: after a ping round with the VPN off, at least [PING_MIN_SERVERS] servers outside Russia and not
+     * multihop were pinged, none answered, in at least [PING_MIN_COUNTRIES] countries. [measured]: id -> ms (null = no answer).
+     */
+    fun pingsDue(servers: List<ColituServer>, measured: Map<String, Int?>): Boolean {
+        val pinged = servers.asSequence()
+            .filter { !it.isMultihop && it.id in measured }
+            .map { it to ColituRussianServers.countries(it).first }
+            .filter { (_, entry) -> entry.isNotEmpty() && entry != ColituRussianServers.RU }
+            .toList()
+        if (pinged.size < PING_MIN_SERVERS) return false
+        if (pinged.any { (s, _) -> measured[s.id] != null }) return false
+        return pinged.map { it.second }.toSet().size >= PING_MIN_COUNTRIES
+    }
+
     /** What the mode is after [check]: entered by the rule, left only when the foreign set works. */
     fun next(current: Boolean, check: Check): Boolean = if (current) !check.foreignWorks else check.whitelist
 

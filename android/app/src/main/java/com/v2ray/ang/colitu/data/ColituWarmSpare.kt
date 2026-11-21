@@ -108,7 +108,7 @@ object ColituWarmSpare {
             spareChoice(primary, offered, stalled + hinted, sameServer, worked = worked)?.let { return it }
             return spareChoice(primary, offered, stalled, sameServer, worked = worked)?.let { it.first to "hinted-fallback" }
         }
-        val usable = offered.filter { it in XrayMobileAdapter.supportedProtocols && it !in stalled }
+        val usable = offered.filter { it in XrayMobileAdapter.supportedProtocols && it !in stalled && it !in ColituWhitelistRow.PROTOCOLS }
         // On another server, what carried traffic on this network lately wins
         // over the family rule, the primary's own transport first: an
         // unproven family (often frozen by the same DPI) is no spare at all.

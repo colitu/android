@@ -27,6 +27,8 @@ import com.v2ray.ang.colitu.api.ColituAuthEvents
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ClientBootstrapPolicy
 import com.v2ray.ang.colitu.data.ColituAdBlock
+import com.v2ray.ang.colitu.data.ColituIpBlock
+import com.v2ray.ang.colitu.data.ColituTlsProbe
 import com.v2ray.ang.colitu.data.ColituConnectMemory
 import com.v2ray.ang.colitu.data.ColituAcEvents
 import com.v2ray.ang.colitu.data.ColituMetrics
@@ -53,11 +55,16 @@ import com.v2ray.ang.colitu.data.ColituEngine
 import com.v2ray.ang.colitu.data.ColituAcModel
 import com.v2ray.ang.colitu.data.ColituEngineJournal
 import com.v2ray.ang.colitu.data.ColituEngineJournalStore
+import com.v2ray.ang.colitu.data.ColituGeckoOffer
+import com.v2ray.ang.colitu.data.ColituGeckoRules
+import com.v2ray.ang.colitu.data.ColituGeckoRuntime
+import com.v2ray.ang.colitu.data.ColituGeckoStore
 import com.v2ray.ang.colitu.data.ColituLm
 import com.v2ray.ang.colitu.data.ColituRussianServers
 import com.v2ray.ang.colitu.data.ColituWhitelist
 import com.v2ray.ang.colitu.data.ColituSubscription
 import com.v2ray.ang.colitu.data.ColituTransportChoice
+import com.v2ray.ang.colitu.data.ColituWhitelistRow
 import com.v2ray.ang.colitu.data.ColituUser
 import com.v2ray.ang.colitu.data.ColituVpnConfig
 import com.v2ray.ang.colitu.data.ColituUiMode
@@ -182,7 +189,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         connectedServerId.takeIf { status != VpnStatus.Disconnected },
         acNode.takeIf { status == VpnStatus.Connecting },
         selectedServerId.takeIf { !autoSelection },
-    )
+    ) + ColituWhitelistRow.keepVisible(servers, whitelistRowId, whitelistMode)
 
     /** Unreachable with the VPN off ([ColituReachability]): left out of the list and of automatic mode. */
     private val unreachableIds: Set<String>
@@ -217,6 +224,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
     val whitelistMode: Boolean get() = whitelistNetwork != null && whitelistNetwork == networkKey
     /** Connects that ended in an error in a row (a success resets it); two start a whitelist check. */
     private var failuresInRow = 0
+    /** Whitelist trigger T1: distinct servers whose every transport failed in a connect on this network. */
+    private val whitelistLedger = ColituWhitelist.FailureLedger()
+    /** `measure_targets` of the last /servers that sent them (kept; only RU clients get any). */
+    private var measureTargets: ColituIpBlock.MeasureTargets? = ColituIpBlock.targetsFromJson(store.decodeString(KEY_MEASURE_TARGETS))
+    private var measureJob: Job? = null
     private var whitelistCheckJob: Job? = null
     private var whitelistRecheckJob: Job? = null
     /** The server and transport the model chose for this connect (its transport goes first there). */
@@ -248,7 +260,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
      * (last, still a fallback); a manual choice is untouched.
      */
     private fun hintedServers(network: String, now: Long): Set<String> {
-        val hinted = networkRecord?.blockedServersFor(clientNetwork, now).orEmpty()
+        val hinted = ColituWhitelistRow.addressBlocked(servers, networkRecord?.blockedServersFor(clientNetwork, now).orEmpty(), whitelistMode)
         if (hinted.isEmpty()) return emptySet()
         return hinted - setOfNotNull(memory.lastGoodServer(network, now))
     }
@@ -313,6 +325,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private set
     var selectedServerId by mutableStateOf(ColituServerRepository.getSelectedServerId())
         private set
+    /** Node whose virtual "Whitelist" row is the selection (stored as "whitelist:<nodeId>"); null for a normal pick. */
+    var whitelistRowId by mutableStateOf(ColituWhitelistRow.nodeOf(store.decodeString(KEY_SELECTION_KEY)))
+        private set
+    /** Selected as a normal row of its own: not the automatic choice and not the whitelist row. */
+    fun isNormalSelection(id: String): Boolean = !autoSelection && selectedServerId == id && whitelistRowId == null
     var connectedServerId by mutableStateOf<String?>(store.decodeString(KEY_CONNECTED_SERVER))
         private set
     var transport by mutableStateOf<String?>(store.decodeString(KEY_LAST_TRANSPORT))
@@ -350,11 +367,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private set
     /** Only tester accounts see alpha nodes, so only they see the CSL settings. */
     val cslAvailable: Boolean get() = servers.any { it.alpha }
-    /** Privacy mode: no Russian direct-routing exception (ColituRuBypass). */
+    /** Privacy mode: everything else through the VPN; Russian destinations are always direct (ColituRuBypass). */
     var privacyMode by mutableStateOf(ColituRuBypass.privacyMode)
-        private set
-    /** The one-time notice about the Russian direct rule is on screen. */
-    var ruNoticeVisible by mutableStateOf(false)
         private set
     /** User split tunneling (apps, sites, addresses); independent of privacy mode. */
     var splitTunnel by mutableStateOf(ColituSplitTunnel.settings)
@@ -368,6 +382,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private var trialBannerDismissedDay by mutableStateOf(store.decodeString(KEY_TRIAL_BANNER_DAY))
     /** Server country the running profile was built for (see ColituRuBypass.profileCountry). */
     private var profileCountry by mutableStateOf(ColituRuBypass.profileCountry)
+
+    init {
+        // A stored profile from before "Russian always direct" (tile, widget, Always-on) gets the rules now.
+        viewModelScope.launch { ColituVpnRepository.reapplyRuBypassToStoredProfile() }
+    }
     var uploadBps by mutableDoubleStateOf(0.0)
         private set
     var downloadBps by mutableDoubleStateOf(0.0)
@@ -451,6 +470,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             )
         }
     val recommendedServer: ColituServer? get() = rankedServers.firstOrNull()
+    /** Last known client_country (kept across a list fetched through the VPN), for display ordering only. */
+    val lastClientCountry: String? get() = clientCountry
     /** Nodes first, then the multihop routes. */
     val allServers: List<ColituServer> get() = servers + routes
     val selectedServer: ColituServer? get() = allServers.firstOrNull { it.id == selectedServerId }
@@ -469,12 +490,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** The tunnel runs over a multihop route (double VPN). */
     val onMultihopRoute: Boolean get() = connected && connectedServer?.isMultihop == true
     val rotationActive: Boolean get() = rotation?.active == true
-
-    /**
-     * Russian sites currently leave outside the VPN: connected, privacy mode
-     * off and the server outside Russia. Same rule as the config generator.
-     */
-    val ruDirectActive: Boolean get() = connected && ColituRuBypass.applies(runningCountry(), privacyMode)
 
     private fun runningCountry(): String? = when (val country = profileCountry) {
         // A profile imported before the country was recorded.
@@ -543,6 +558,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (ColituRecoveryTestMode.enabled) LogUtil.w(AppConfig.TAG, "Colitu: ${ColituRecoveryTestMode.STARTUP_LOG}")
         registerReceiver()
         registerNetworkCallback()
+        // The API path order: RU relays earlier in Russia, the whitelist relay first in whitelist mode.
+        com.v2ray.ang.colitu.api.ColituEndpoints.routeContext = {
+            com.v2ray.ang.colitu.api.RouteContext(clientCountry, whitelistNetwork != null)
+        }
         viewModelScope.launch {
             ColituAuthEvents.authExpired.collect { endSession(ColituLoc["auth.expired"]) }
         }
@@ -699,7 +718,9 @@ class ColituController(application: Application) : AndroidViewModel(application)
         coroutineScope {
             val offWhenAsked = vpnReallyOff()
             val policy = async { refreshPolicy() }
-            val list = async { safeCall { ColituServerRepository.fetchServers() } }
+            // The stored token of this network (also through WARP or a multihop exit); none after a network change.
+            val listToken = networkRecord?.tokenForList(clientNetwork, networkKey, System.currentTimeMillis())
+            val list = async { safeCall { ColituServerRepository.fetchServers(listToken) } }
             val me = async { runCatching { ColituAuthRepository.fetchMe() } }
             val sub = async { safeCall { ColituBillingRepository.fetchSubscription() } }
             val rotationPref = async { safeCall { ColituRotationRepository.fetch() } }
@@ -721,6 +742,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                             val record = ColituNetworkRecord(
                                 network, response.networkToken, response.networkHints?.blocked.orEmpty(), System.currentTimeMillis(),
                                 response.networkHints?.preferred.orEmpty(), response.networkHints?.blockedServers.orEmpty(),
+                                ColituServerRanking.networkKey(networkLink, network),
                             )
                             networkRecord = record
                             store.encode(KEY_NETWORK_RECORD, record.toJson())
@@ -735,6 +757,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     response.whitelistProbe?.let {
                         whitelistProbe = it
                         store.encode(KEY_WHITELIST_PROBE, ColituWhitelist.probeToJson(it))
+                    }
+                    response.measureTargets?.let {
+                        measureTargets = it
+                        store.encode(KEY_MEASURE_TARGETS, ColituIpBlock.targetsToJson(it))
                     }
                     measurePings()
                     if (!autoSelection && selectedServer == null) {
@@ -811,12 +837,54 @@ class ColituController(application: Application) : AndroidViewModel(application)
             } else {
                 pings = pings + measured.mapValues { (_, ms) -> ColituPing(ms, now, network) }
                 reachability = reachability.afterRound(network, measured, now)
+                // Whitelist trigger T2: >= 4 non-RU nodes in >= 2 countries and none answered.
+                whitelistLedger.onNetwork(network)
+                if (ColituFeatures.acEngine4() && !whitelistMode && status == VpnStatus.Disconnected &&
+                    underlyingCaps().isNotEmpty() && whitelistLedger.canCheck(now) && ColituWhitelist.pingsDue(servers, measured)
+                ) {
+                    whitelistLedger.started(now)
+                    runWhitelistCheck("pings")
+                }
                 // Latency used for the ranking: nodes only (a route's ping is its entry node's).
                 measured.forEach { (id, ms) -> if (isNode(id)) acRecord(ColituAcEvents.probe(id, ms)) }
+                maybeMeasureTargets(network)
             }
             store.encode(KEY_PINGS, ColituServerRanking.pingsToJson(pings))
             store.encode(KEY_REACHABILITY, reachability.toJson())
             journalPingRound(measured, connectedRound)
+        }
+    }
+
+    /**
+     * Spec TLS-PROBE-SPEC section 3: with the VPN off and no connect under way, once per due moment (never run on
+     * this network, or the last run >= interval_h ago) every target of the panel's list is TLS-probed at the same
+     * time (<= 8 s), cellular included; one probe event each (measure:true). Only with the usage-statistics switch on.
+     */
+    private fun maybeMeasureTargets(network: String) {
+        val list = measureTargets ?: return
+        if (!ColituMetrics.enabled || !ColituFeatures.tlsProbeEvents() || measureJob?.isActive == true) return
+        val vpnOn = status != VpnStatus.Disconnected || serviceUp || pendingStart != null || connectJob?.isActive == true
+        val now = System.currentTimeMillis()
+        val last = store.decodeLong(KEY_MEASURE_RUN_PREFIX + network, 0L).takeIf { it > 0L }
+        val ageH = last?.let { ((now - it) / 3_600_000.0).takeIf { h -> h >= 0 } }
+        if (!ColituIpBlock.measurementDue(vpnOn, list.targets.size, ageH, list.intervalH)) return
+        store.encode(KEY_MEASURE_RUN_PREFIX + network, now)
+        measureJob = viewModelScope.launch {
+            val outcomes = ColituTlsProbe.probeAll(
+                list.targets.map { ColituTlsProbe.Target(it.host, it.port, it.sni) }, ColituTlsProbe.androidIo(null), ColituIpBlock.MEASURE_BUDGET_MS,
+            )
+            // A connect that began meanwhile owns the network: its numbers would be the tunnel's, not the operator's.
+            if (status != VpnStatus.Disconnected || serviceUp || networkKey != network) return@launch
+            outcomes.forEach { o ->
+                val target = list.targets.firstOrNull { it.host == o.target.host && it.port == o.target.port } ?: return@forEach
+                acRecord(ColituAcEvents.tlsProbe(target.nodeId, target.protocol, o.result, o.ms, target.port, measure = true))
+            }
+            ColituEngineJournalStore.add("tls_measure") {
+                addProperty("link", networkLink)
+                addProperty("targets", list.targets.size)
+                addProperty("ok", outcomes.count { it.result == ColituTlsProbe.Result.Ok })
+                addProperty("tls_rst", outcomes.count { it.result == ColituTlsProbe.Result.TlsRst })
+            }
         }
     }
 
@@ -943,6 +1011,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
             networkLink = link
             forgetClientNetworkIfReplaced()
             if (link == "none") return@launch
+            // A new network: the API path is chosen again from the start (GET /health, 2 s each).
+            if (changed) com.v2ray.ang.colitu.api.ColituEndpoints.onNetworkChanged()
             if (changed && status == VpnStatus.Disconnected) measurePings()
             if (!resumeAllowed()) return@launch
             if (!deviceOnline() || !resumeAllowed()) return@launch
@@ -1218,7 +1288,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     /** The model's candidates: every server of [pool] x its protocols. */
     private fun ac4Candidates(pool: List<ColituServer>, network: String, now: Long): List<ColituLm.Candidate> {
-        val hinted = networkRecord?.blockedServersFor(clientNetwork, now).orEmpty()
+        val hinted = ColituWhitelistRow.addressBlocked(servers, networkRecord?.blockedServersFor(clientNetwork, now).orEmpty(), whitelistMode)
         val history = ColituAcModel.history()
         return pool.flatMap { server ->
             val (entry, exit) = ColituRussianServers.countries(server)
@@ -1424,6 +1494,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     private fun startConnectFlow(fresh: Boolean = false, continuing: Boolean = false) {
         offerFastest = false
+        offerAutoProtocol = false
         attachedSpare = null
         lmTried.clear()
         engineNotStarted = false
@@ -1575,6 +1646,27 @@ class ColituController(application: Application) : AndroidViewModel(application)
         error = null
         ColituServerRepository.clearConfigUnreachable()
         acEngine = null
+        geckoTried = false
+        ColituGeckoProtocol.prepare()
+        if (preferredTransport == ColituGeckoRules.PROTOCOL && ColituGeckoProtocol.offer == ColituGeckoOffer.NotOffered) {
+            // 404: Gecko is not offered to this account any more, the picker no longer lists it.
+            LogUtil.w(AppConfig.TAG, "Colitu: ColituGecko is no longer offered; the pick is back to automatic")
+            preferredTransport = ""
+            store.encode(KEY_PREFERRED_TRANSPORT, "")
+        }
+        if (ColituGeckoRules.pickApplies(preferredTransport, whitelistRowSelected = whitelistRowId != null)) {
+            // Picked by hand: Gecko-only, whatever normal server is selected; on failure the connect error, never another protocol.
+            // A Whitelist row is not a normal server: it connects through its whitelist exit (the pick stays for later).
+            acAuto = false
+            acFallbacks = 0
+            acTransportFallback = false
+            connectGecko(context, begin, manual = true)?.let { code ->
+                fail(code)
+                // The pick is kept (no silent fall-back): the notice offers the automatic choice in one tap.
+                offerAutoProtocol = true
+            }
+            return
+        }
         var server = effectiveServer
         if (server == null) {
             // No server list (the API was blocked from the start): the recovery set may still carry the connect.
@@ -1585,6 +1677,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 safeCall { ColituServerRepository.fetchConfigCandidates() }
                 if (apiUnreachable(null) && connectViaRecoverySet(context, emptyList(), begin, connectsAutomatically)) return
             }
+            if (connectsAutomatically && geckoAfter(context, begin, ColituGeckoRules.STEP_NORMAL)) return
             fail(if (servers.isEmpty()) "NO_SERVERS" else "NO_SERVER_SELECTED")
             return
         }
@@ -1592,13 +1685,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
         acAuto = automatic
         acFallbacks = 0
         acTransportFallback = false
+        // Whitelist mode: Gecko-only goes before the whitelist rows (Adaptive Connect: normal → Gecko → Whitelist → RU).
+        if (automatic && ColituGeckoRules.firstStep(whitelistMode, geckoUsable()) == ColituGeckoRules.STEP_GECKO && deviceOnline()) {
+            if (connectGecko(context, begin, manual = false) == null) return
+        }
         // Automatic: this connect's order (engine, else the app's), its first server and its fallbacks.
-        val order = if (automatic) connectOrder(context) else rankedServers
+        var order = if (automatic) connectOrder(context) else rankedServers
         if (automatic) {
             server = order.firstOrNull() ?: server
             acChoice(server)
         }
-        val connectDeadline = begin + CONNECT_BUDGET_MS
+        var connectDeadline = begin + CONNECT_BUDGET_MS
+        var maxServers = MAX_SERVERS_PER_CONNECT
         val failed = mutableListOf<String>()
         var cameUp = false
         var recoveryTried = false
@@ -1611,6 +1709,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
             } else if (automatic && ColituFeatures.recoverySet()) {
                 LogUtil.w(AppConfig.TAG, "Colitu: recovery set not tried (API unreachable: $unreachable, already tried: $recoveryTried)")
             }
+            // Every normal server and transport failed: the Gecko step (once per connect, not while cooling down).
+            if (automatic && !engineNotStarted && (code in GECKO_AFTER_CODES || unreachable) &&
+                geckoAfter(context, begin, ColituGeckoRules.STEP_NORMAL)
+            ) return
             fail(if (engineNotStarted) ColituEngineStart.ENGINE_NOT_STARTED else code)
         }
         while (server != null) {
@@ -1628,6 +1730,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         return
                     }
                     lmServerFailed(server.id)
+                    whitelistLedger.add(networkKey, server.id, ColituRussianServers.countries(server).first)
                     // A picked server is never left, so it is not penalized either, except in a
                     // server outage (no port answered): then the reconnects and Adaptive Connect 4
                     // started on it again at once.
@@ -1636,8 +1739,24 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         saveMemory()
                     }
                     failed += server.id
+                    // Whitelist trigger T1: the 3rd silent server (2+ countries) checks for a whitelist before
+                    // the next normal server starts; if it is one, the rest of this connect takes whitelist servers.
+                    if (automatic && ColituFeatures.acEngine4() && !whitelistMode && whitelistCheckJob?.isActive != true &&
+                        whitelistLedger.due(System.currentTimeMillis()) && underlyingCaps().isNotEmpty()
+                    ) {
+                        whitelistLedger.started(System.currentTimeMillis())
+                        val entered = whitelistCheckNow("servers")
+                        val flagged = (servers + routes).any { it.isAvailable && it.whitelistOk }
+                        if (entered && flagged) {
+                            // Normal → Gecko → Whitelist: Gecko-only is tried before the whitelist servers.
+                            if (geckoAfter(context, begin, ColituGeckoRules.STEP_NORMAL)) return
+                            order = connectOrder(context)
+                            maxServers = failed.size + MAX_SERVERS_PER_CONNECT
+                            connectDeadline = android.os.SystemClock.elapsedRealtime() + CONNECT_BUDGET_MS
+                        }
+                    }
                     val left = connectDeadline - android.os.SystemClock.elapsedRealtime()
-                    server = ColituServerRanking.fallbackServer(automatic, order, failed, MAX_SERVERS_PER_CONNECT, left >= MIN_TRANSPORT_MS)
+                    server = ColituServerRanking.fallbackServer(automatic, order, failed, maxServers, left >= MIN_TRANSPORT_MS)
                     if (server != null) {
                         acFallbacks++
                         acChoice(server)
@@ -1727,6 +1846,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
     /** Every transport of a manually chosen server failed: Home offers "Try the fastest server". */
     var offerFastest by mutableStateOf(false)
         private set
+
+    /** A ColituGecko picked by hand failed: the home notice offers "Connect automatically" (the pick changes only on that tap). */
+    var offerAutoProtocol by mutableStateOf(false)
+        private set
+
+    /** Back to the automatic connection method and connect. */
+    fun tryAutomaticProtocol() {
+        offerAutoProtocol = false
+        error = null
+        pickTransport("")
+        if (status == VpnStatus.Disconnected) toggle()
+    }
 
     /** "Try the fastest server": automatic mode, then connect (one tap, never on its own). */
     fun tryFastest() {
@@ -1900,6 +2031,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
             !ColituUiMode.warmSpareActive(advancedMode, warmSpare) -> "setting off"
             server.isMultihop -> "multihop route"
             rotationActive -> "rotating exit"
+            forcedProtocol(server) != null -> "whitelist connection"
             else -> null
         }
         if (off != null) {
@@ -2003,8 +2135,13 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // Transports that keep freezing right after the connect on this network go last; a
         // successful connect clears the stall marks, so they alone did not hold them back.
         val flapping = configs.mapNotNull { it.protocolType }.filterTo(mutableSetOf()) { flaps.isDemoted(network, server.id, it, now) }
-        val auto = ColituFlapGuard.demotedLast(automaticOrderForStart(server, configs, probe)) { it.protocolType in flapping }
-        if (flapping.isNotEmpty() && auto.isNotEmpty()) {
+        val autoAll = ColituFlapGuard.demotedLast(automaticOrderForStart(server, configs, probe)) { it.protocolType in flapping }
+        forcedProtocol(server)?.let { forced ->
+            LogUtil.w(AppConfig.TAG, "Colitu: whitelist connection, only $forced is tried on ${server.id.take(8)}")
+            return ColituWhitelistRow.forcedOrder(autoAll) { it.protocolType }
+        }
+        val auto = ColituWhitelistRow.normalOrder(autoAll) { it.protocolType }
+        if (flapping.isNotEmpty() && autoAll.isNotEmpty()) {
             LogUtil.w(AppConfig.TAG, "Colitu: dropped right after connecting here recently, tried last: $flapping")
         }
         val picked = preferredTransport.takeIf { it.isNotEmpty() } ?: return ac4First(server, auto, flapping)
@@ -2038,7 +2175,51 @@ class ColituController(application: Application) : AndroidViewModel(application)
         return result
     }
 
-    private suspend fun automaticOrderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
+    /**
+     * The order for this connect; in the round probe ([probe]) the TLS ip_blocked check of the server
+     * runs at the same time (spec TLS-PROBE-SPEC section 2): a blocked IP gets an empty order (no
+     * transport is tried, no stall marks; [serverOutageThisRound] keeps the marks off and ends pending retries).
+     */
+    private suspend fun automaticOrderForStart(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> = coroutineScope {
+        val blocked = if (probe) async { serverIpBlocked(server, configs) } else null
+        val order = automaticOrderForStartUnchecked(server, configs, probe)
+        if (blocked?.await() == true) {
+            serverOutageThisRound = true
+            LogUtil.w(AppConfig.TAG, "Colitu: ip_blocked ${server.id.take(8)}: TLS handshakes are reset on distinct ports; no transport of this server is tried")
+            emptyList()
+        } else {
+            order
+        }
+    }
+
+    /**
+     * TLS-probes 2 endpoints of distinct ports (Reality, XHTTP, Trojan) of [server] outside the tunnel:
+     * ip_blocked when at least 2 handshakes are reset. Then one probe event per probed port goes out. The ledger
+     * of silent servers gets the server once, when the connect fails (whitelistLedger.add in the connect loop).
+     */
+    private suspend fun serverIpBlocked(server: ColituServer, configs: List<ColituVpnConfig>): Boolean {
+        val network = networkKey
+        // The TCP ping of this server timed out on this network: nothing to probe.
+        pings[server.id]?.takeIf { it.fresh(network, System.currentTimeMillis()) && it.ms == null }?.let { return false }
+        val endpoints = ColituIpBlock.pickEndpoints(configs.mapNotNull { ColituIpBlock.endpointOf(it.protocolType, it.rawConfig) })
+        if (endpoints.size < ColituIpBlock.MAX_ENDPOINTS) return false
+        // Bound to the physical network like the whitelist probes: with the tunnel up, no network means no probe.
+        val outside = if (status == VpnStatus.Connected || serviceUp) outsideNetwork() ?: return false else null
+        val outcomes = ColituTlsProbe.probeAll(
+            endpoints.map { ColituTlsProbe.Target(it.host, it.port, it.sni) }, ColituTlsProbe.androidIo(outside), ColituIpBlock.CLASSIFIER_BUDGET_MS,
+        )
+        val blocked = ColituIpBlock.ipBlocked(outcomes.map { it.target.port to it.result })
+        LogUtil.w(AppConfig.TAG, "Colitu: TLS probe ${server.id.take(8)} ${outcomes.map { "${it.target.port}=${it.result.wire}" }} blocked=$blocked")
+        if (blocked) {
+            outcomes.forEach { o ->
+                val endpoint = endpoints.firstOrNull { it.port == o.target.port } ?: return@forEach
+                acRecord(ColituAcEvents.tlsProbe(server.id, endpoint.protocol, o.result, o.ms, o.target.port, measure = false))
+            }
+        }
+        return blocked
+    }
+
+    private suspend fun automaticOrderForStartUnchecked(server: ColituServer, configs: List<ColituVpnConfig>, probe: Boolean): List<ColituVpnConfig> {
         val now = System.currentTimeMillis()
         serverOutageThisRound = false
         roundProbe = emptyMap()
@@ -2213,6 +2394,154 @@ class ColituController(application: Application) : AndroidViewModel(application)
         return StartOutcome.Failed(cameUp)
     }
 
+    // ── ColituGecko as a protocol (Adaptive Connect: normal → Gecko → Whitelist → RU) ──
+
+    /** The Gecko step ran in this connect (automatic connects try it once). */
+    private var geckoTried = false
+
+    private fun geckoCoolingDown(): Boolean = ColituGeckoRules.coolingDown(ColituGeckoStore.failedAt, System.currentTimeMillis())
+
+    /** Gecko would be tried now (the configuration is fetched by the step itself, within 6 s). */
+    private fun geckoUsable(manual: Boolean = false): Boolean =
+        ColituGeckoRules.stepSkip(ColituGeckoProtocol.offer, hasConfig = true, coolingDown = geckoCoolingDown(), manual = manual, triedThisConnect = geckoTried) == null
+
+    /** In an automatic connect, after [after] failed: the Gecko step when it is next; true once connected over Gecko. */
+    private suspend fun geckoAfter(context: Application, begin: Long, after: String): Boolean {
+        if (!ColituGeckoRules.autoStepAllowed(whitelistRowSelected = whitelistRowId != null)) return false
+        if (ColituGeckoRules.nextStep(after, geckoUsable()) != ColituGeckoRules.STEP_GECKO || !deviceOnline()) return false
+        return connectGecko(context, begin, manual = false) == null
+    }
+
+    /**
+     * One Gecko-only attempt: the panel's configuration (cached, or fetched
+     * within 6 s), the Gecko-only profile started, gecko-client's session
+     * awaited ([ColituGeckoRules.READY_DEADLINE_MS]) and real traffic checked
+     * through it. Null once connected, else the error code; a failure is
+     * stored (the cool-down Adaptive Connect respects and a [manual] pick
+     * ignores) and the interface stays held for whatever comes next.
+     */
+    private suspend fun connectGecko(context: Application, begin: Long, manual: Boolean): String? {
+        val stepBegin = android.os.SystemClock.elapsedRealtime()
+        val config = if (ColituGeckoProtocol.offer != ColituGeckoOffer.NotOffered) ColituGeckoProtocol.ensureConfig() else null
+        val skip = ColituGeckoRules.stepSkip(ColituGeckoProtocol.offer, config != null, geckoCoolingDown(), manual, geckoTried)
+        geckoTried = true
+        if (skip != null) {
+            LogUtil.w(AppConfig.TAG, "Colitu: Gecko step skipped ($skip, manual $manual)")
+            ColituEngineJournalStore.add(ColituGeckoRules.STEP_GECKO) {
+                addProperty("result", "skipped")
+                addProperty("reason", skip)
+                addProperty("manual", manual)
+            }
+            return ColituGeckoRuntime.UNAVAILABLE
+        }
+        LogUtil.w(AppConfig.TAG, "Colitu: Gecko step (manual $manual, ${android.os.SystemClock.elapsedRealtime() - begin} ms into the connect)")
+        if (!manual) {
+            phase = ConnectPhase.Switching
+            showToast(ColituLoc["gecko.trying"], error = false)
+        }
+        if (serviceUp) {
+            stopService(force = true, hold = true)
+            delay(TEARDOWN_SETTLE_MS)
+        }
+        phase = ConnectPhase.Starting
+        acNode = null
+        acProtocol = ColituGeckoRules.PROTOCOL
+        val attemptAt = System.currentTimeMillis()
+        val guid = startCore(context, ColituGeckoProtocol.profile(), null)
+        val code: String = when {
+            guid == null -> if (engineNotStarted) ColituEngineStart.ENGINE_NOT_STARTED else GECKO_FAILED
+            else -> {
+                phase = ConnectPhase.Verifying
+                val ready = awaitGeckoSession(attemptAt)
+                val delayMs = if (ready) verifyTunnel(VERIFY_TIMEOUT_MS, VerifyPath.Primary) else -1L
+                if (delayMs >= 0) {
+                    ColituEngineJournalStore.add(ColituGeckoRules.STEP_GECKO) {
+                        addProperty("result", "connected")
+                        addProperty("manual", manual)
+                        addProperty("ms", android.os.SystemClock.elapsedRealtime() - stepBegin)
+                    }
+                    geckoConnected(delayMs, begin)
+                    return null
+                }
+                if (ready) ColituGeckoStore.markFailed("session up, no traffic through it")
+                stopService(force = true, hold = true)
+                GECKO_FAILED
+            }
+        }
+        LogUtil.w(AppConfig.TAG, "Colitu: Gecko step failed (${ColituGeckoStore.failure ?: code})")
+        ColituEngineJournalStore.add(ColituGeckoRules.STEP_GECKO) {
+            addProperty("result", "failed")
+            addProperty("manual", manual)
+            addProperty("ms", android.os.SystemClock.elapsedRealtime() - stepBegin)
+            ColituGeckoStore.failure?.let { addProperty("reason", it) }
+        }
+        return code
+    }
+
+    /** Until gecko-client has a non-bootstrap session (true) or failed after [since] (false), within its deadline. */
+    private suspend fun awaitGeckoSession(since: Long): Boolean {
+        val deadline = android.os.SystemClock.elapsedRealtime() + ColituGeckoRules.READY_DEADLINE_MS + 2_000L
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            if (ColituGeckoStore.active) return true
+            if (ColituGeckoStore.failedAt >= since) return false
+            delay(250)
+        }
+        return false
+    }
+
+    /** Real traffic flowed over Gecko: connected; no server (the panel's anchors pick the exit). */
+    private fun geckoConnected(delayMs: Long, begin: Long) {
+        ColituGeckoStore.clearFailure()
+        transport = ColituGeckoRules.PROTOCOL
+        store.encode(KEY_LAST_TRANSPORT, ColituGeckoRules.PROTOCOL)
+        connectedServerId = null
+        store.removeValueForKey(KEY_CONNECTED_SERVER)
+        connectedAt = store.decodeLong(AppConfig.PREF_COLITU_CONNECTED_AT, 0L).takeIf { it > 0 } ?: System.currentTimeMillis()
+        connectedSeconds = ((System.currentTimeMillis() - connectedAt) / 1000).toInt().coerceAtLeast(0)
+        profileCountry = ""
+        status = VpnStatus.Connected
+        phase = ConnectPhase.Idle
+        error = null
+        reconnecting = false
+        reconnectAttempt = 0
+        resumeOnNetwork = false
+        failuresInRow = 0
+        whitelistLedger.reset()
+        stalledThisConnect.clear()
+        freshFailedThisConnect.clear()
+        attachedSpare = null
+        connectedConfig = null
+        connectedCandidates = emptyList()
+        offeredTransports = emptySet()
+        endMetricAttempt(ok = true, protocol = ColituGeckoRules.PROTOCOL)
+        endMetricRecovery(ok = true, newProtocol = ColituGeckoRules.PROTOCOL)
+        acConnected = null
+        LogUtil.w(AppConfig.TAG, "Colitu: connected via ColituGecko in ${android.os.SystemClock.elapsedRealtime() - begin} ms (check $delayMs ms)")
+        showToast(ColituLoc["gecko.connected"], error = false)
+        verifyJob?.cancel()
+        verifyJob = viewModelScope.launch { watchGecko() }
+    }
+
+    /**
+     * While connected over Gecko: gecko-client losing its session (it
+     * exited or was stopped, [ColituGeckoStore.active]) is a drop, repaired
+     * like any other (the reconnects; Gecko again for a manual pick).
+     */
+    private suspend fun watchGecko() {
+        while (connected && transport == ColituGeckoRules.PROTOCOL) {
+            delay(GECKO_WATCH_MS)
+            if (!connected || transport != ColituGeckoRules.PROTOCOL || connectJob?.isActive == true) return
+            if (!ColituGeckoStore.active) {
+                LogUtil.w(AppConfig.TAG, "Colitu: ColituGecko lost its session (${ColituGeckoStore.failure ?: "?"})")
+                status = VpnStatus.Disconnected
+                clearSession()
+                onUnexpectedDrop()
+                return
+            }
+        }
+    }
+
+
     /** Imports [config] (with [spare]) and starts the core; the profile's guid, or null when it did not start. */
     private suspend fun startCore(context: Application, config: ColituVpnConfig, spare: ColituVpnConfig?): String? {
         val guid = ColituVpnRepository.importRuntimeConfig(context, config, spare).getOrElse {
@@ -2347,6 +2676,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         memory.recordSuccess(networkKey, actual.id, config.protocolType, System.currentTimeMillis(), goodServer = acAuto && !actual.isMultihop)
         lmServerConnected(actual.id, config.protocolType)
         failuresInRow = 0
+        whitelistLedger.reset()
         // The device was online and this transport worked: what failed before it in this round really stalled.
         memory.confirm(networkKey, actual.id, stalledThisConnect - config.protocolType.orEmpty(), System.currentTimeMillis())
         // Only fresh profiles outside a server outage say TCP fails here: a stale cached one does not.
@@ -2752,24 +3082,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
         reconnectAttempt = 0
         resumeOnNetwork = false
         if (!quiet) showToast(ColituLoc.format("locations.switched", "server" to titleOf(server)), error = false)
-        maybeShowRuNotice()
-    }
-
-    /**
-     * Once per device, the first time a connection is up with the Russian
-     * direct rule active: explain it and offer privacy mode. Not shown (and
-     * not marked as seen) while privacy mode is on or the server is in Russia.
-     */
-    private fun maybeShowRuNotice() {
-        if (ruNoticeVisible || !ruDirectActive || ColituRuBypass.noticeShown) return
-        ruNoticeVisible = true
-    }
-
-    /** The notice was answered or dismissed; [enablePrivacy] turns privacy mode on. */
-    fun answerRuNotice(enablePrivacy: Boolean) {
-        ColituRuBypass.noticeShown = true
-        ruNoticeVisible = false
-        if (enablePrivacy) setPrivacyModeEnabled(true)
     }
 
     private fun fail(code: String?) {
@@ -2858,13 +3170,20 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private fun runWhitelistCheck(trigger: String) {
         if (whitelistCheckJob?.isActive == true) return
-        whitelistCheckJob = viewModelScope.launch {
+        whitelistCheckJob = viewModelScope.launch { whitelistCheckNow(trigger) }
+    }
+
+    /**
+     * The check itself (suspends, at most 4 s). True when whitelist mode was entered by this check.
+     * Also called inside a running automatic connect (trigger "servers").
+     */
+    private suspend fun whitelistCheckNow(trigger: String): Boolean {
             val network = networkKey
-            val outside = if (status != VpnStatus.Disconnected) outsideNetwork() ?: return@launch else null
+            val outside = if (status == VpnStatus.Connected || serviceUp) outsideNetwork() ?: return false else null
             val domestic = ColituWhitelist.domesticHosts(whitelistProbe, clientCountry)
             val nodes = ColituWhitelist.colituTargets(servers) { pings[it.id]?.ms }
             val check = ColituWhitelist.check(nodes, domestic, outside)
-            if (networkKey != network) return@launch
+            if (networkKey != network) return false
             val was = whitelistMode
             val on = ColituWhitelist.next(was, check)
             LogUtil.w(AppConfig.TAG, "Colitu: whitelist check ($trigger): ${check.flag} in ${check.ms} ms, country ${clientCountry ?: "?"}")
@@ -2880,10 +3199,12 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 addProperty("changed", on != was)
             }
             saveWhitelistState(on, network)
-            if (on == was) return@launch
+            whitelistLedger.onNetwork(network)
+            whitelistLedger.checked(System.currentTimeMillis(), whitelist = on)
+            if (on == was) return false
             acRecord(ColituAcEvents.whitelist(on, check.foreignOk, check.foreignTotal, check.domesticOk, check.domesticTotal, check.ms))
             if (on) enterWhitelistMode(network) else leaveWhitelistMode()
-        }
+            return on
     }
 
     private fun enterWhitelistMode(network: String) {
@@ -3111,7 +3432,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     fun selectServer(server: ColituServer) {
         if (!server.isAvailable) return
-        val changed = autoSelection || selectedServerId != server.id
+        val changed = autoSelection || selectedServerId != server.id || whitelistRowId != null
+        setWhitelistRow(null)
         autoSelection = false
         selectedServerId = server.id
         store.encode(KEY_AUTO_SELECTION, false)
@@ -3119,8 +3441,34 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (changed) applySelection(server)
     }
 
+    /** The virtual "Whitelist" row: that node, connected with vless-ws only (remembered apart from its normal row). */
+    fun selectWhitelistRow(server: ColituServer) {
+        if (!ColituWhitelistRow.eligible(server)) return
+        val changed = autoSelection || selectedServerId != server.id || whitelistRowId != server.id
+        setWhitelistRow(server.id)
+        autoSelection = false
+        selectedServerId = server.id
+        store.encode(KEY_AUTO_SELECTION, false)
+        ColituServerRepository.setSelectedServerId(server.id)
+        if (changed) applySelection(server)
+    }
+
+    private fun setWhitelistRow(nodeId: String?) {
+        whitelistRowId = nodeId
+        store.encode(KEY_SELECTION_KEY, nodeId?.let { ColituWhitelistRow.selectionKey(it) }.orEmpty())
+    }
+
+    /** The transport a connect to [server] is forced to (the whitelist row, or whitelist mode on its node), else null. */
+    private fun forcedProtocol(server: ColituServer): String? = ColituWhitelistRow.forcedProtocol(
+        server,
+        rowSelected = !autoSelection && whitelistRowId == server.id,
+        whitelistMode = whitelistMode,
+        automatic = autoSelection,
+    )
+
     fun selectAuto() {
         val changed = !autoSelection
+        setWhitelistRow(null)
         autoSelection = true
         store.encode(KEY_AUTO_SELECTION, true)
         recommendedServer?.let { ColituServerRepository.setSelectedServerId(it.id) }
@@ -3186,6 +3534,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
     fun pickTransport(protocol: String?) {
         val method = ColituTransportChoice.normalize(protocol)
         if (method == preferredTransport) return
+        // Listed but unavailable (503): shown disabled, not pickable.
+        if (method == ColituGeckoRules.PROTOCOL && !ColituGeckoProtocol.pickable) return
         preferredTransport = method
         store.encode(KEY_PREFERRED_TRANSPORT, method)
         LogUtil.w(AppConfig.TAG, "Colitu: connection method picked by the user: ${method.ifEmpty { "automatic" }}")
@@ -3231,8 +3581,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
         if (connected || status == VpnStatus.Connecting) {
             showToast("${ColituLoc["privacy.title"]} · ${ColituLoc["settings.saved"]}", error = false)
             startConnectFlow()
-        } else {
-            viewModelScope.launch { ColituVpnRepository.reapplyRuBypassToStoredProfile(value) }
         }
     }
 
@@ -3369,6 +3717,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
         autoSelection = true
         autoConnect = false
         selectedServerId = null
+        whitelistRowId = null
+        measureTargets = null
+        store.removeValueForKey(KEY_MEASURE_TARGETS)
+        runCatching { store.allKeys()?.filter { it.startsWith(KEY_MEASURE_RUN_PREFIX) }?.forEach { store.removeValueForKey(it) } }
+        store.encode(KEY_SELECTION_KEY, "")
         supportUnread = 0
         supportChecked = false
         supportAvailable = true
@@ -3397,7 +3750,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         connectedServerId = connectedServerId ?: effectiveServer?.id
                         profileCountry = ColituRuBypass.profileCountry
                         status = VpnStatus.Connected
-                        maybeShowRuNotice()
                     }
                 }
                 AppConfig.MSG_STATE_NOT_RUNNING -> {
@@ -3419,7 +3771,6 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         connectedAt = System.currentTimeMillis()
                         profileCountry = ColituRuBypass.profileCountry
                         status = VpnStatus.Connected
-                        maybeShowRuNotice()
                     }
                 }
                 AppConfig.MSG_STATE_START_FAILURE -> pendingStart?.complete(content.ifBlank { "ENGINE_FAILED" })
@@ -3497,6 +3848,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val KEY_AUTO_SELECTION = "auto_selection"
+        private const val KEY_SELECTION_KEY = "whitelist_row_selection"
         private const val KEY_AUTO_CONNECT = "auto_connect"
         private const val KEY_LAST_TRANSPORT = "last_transport"
         /** v1 (global, no expiry); removed on the first load of [KEY_CONNECT_MEMORY]. */
@@ -3518,6 +3870,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val KEY_REACHABILITY = "server_reachability"
         /** `whitelist_probe` of the last /servers (Adaptive Connect 4). */
         private const val KEY_WHITELIST_PROBE = "whitelist_probe"
+        /** `measure_targets` of the last /servers (TLS probe list, RU clients; [ColituIpBlock.MeasureTargets] as JSON). */
+        private const val KEY_MEASURE_TARGETS = "measure_targets"
+        /** Last measurement run (ms) per network key: prefix + key. */
+        private const val KEY_MEASURE_RUN_PREFIX = "measure_run_"
         /** Whitelist mode, its last check and network ([ColituWhitelist.Saved] as JSON). */
         private const val KEY_WHITELIST_STATE = "whitelist_state"
         /** Connected, a ping round outside the tunnel runs at most this often. */
@@ -3546,7 +3902,14 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private val RECONNECT_RETRY_CODES = setOf(
             "UNREACHABLE", "VERIFY_FAILED", "TUNNEL_TIMEOUT", "ENGINE_FAILED", "ENGINE_NOT_STARTED", "TUN_FAILED",
             "NETWORK_ERROR", "TIMEOUT", "IO_ERROR", "SERVER_UNAVAILABLE", "SERVICE_UNAVAILABLE", "CONFIG_NOT_READY",
+            "GECKO_FAILED",
         )
+
+        /** Give-up codes after which the Gecko step is tried (the servers did not carry the connect). */
+        private val GECKO_AFTER_CODES = setOf("UNREACHABLE", "VERIFY_FAILED", "network_error", "timeout")
+
+        /** gecko-client did not carry traffic (exited, no session, or the check failed). */
+        private const val GECKO_FAILED = "GECKO_FAILED"
         /**
          * Direct (outside the tunnel) reachability when the system did not validate the network. No
          * Cloudflare (throttled in Russia); Yandex stays reachable on Russian whitelist-only mobile networks.
@@ -3556,6 +3919,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val STOP_TIMEOUT_MS = 4_000L
         private const val PROBE_TIMEOUT_MS = 4_500L
         private const val TEARDOWN_SETTLE_MS = 600L
+        private const val GECKO_WATCH_MS = 3_000L
         /** How long a server with credentials_pending is retried, and how often. */
         private const val PENDING_SETTLE_MS = 20_000L
         private const val PENDING_RETRY_MS = 2_000L

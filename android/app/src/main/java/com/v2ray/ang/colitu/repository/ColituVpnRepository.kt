@@ -43,7 +43,7 @@ object ColituVpnRepository {
                 val runtime = XrayMobileAdapter.withVerifyInbound(com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.attach(
                     ColituAdBlock.apply(
                         ColituSplitTunnel.configure(
-                            ColituRuBypass.configure(proxied, config.serverCountry, ColituRuBypass.privacyMode),
+                            ColituRuBypass.configure(proxied),
                         ),
                     ),
                     spare?.rawConfig?.takeIf { com.v2ray.ang.colitu.data.ColituUiMode.warmSpareActive(com.v2ray.ang.colitu.data.ColituUiMode.advanced, ColituWarmSpare.enabled) },
@@ -89,20 +89,16 @@ object ColituVpnRepository {
     }
 
     /**
-     * Privacy mode changed while no tunnel runs: the stored Colitu profile,
-     * which the quick-settings tile, the widget and Always-on start without
-     * the app, is rebuilt for the new setting right away. Turning privacy mode
-     * on always removes the Russian direct rules; turning it off adds them back
-     * only when the profile's server country is known.
+     * Brings the stored Colitu profile (which the quick-settings tile, the
+     * widget and Always-on start without the app) up to date: the Russian
+     * direct rules are always present, whatever privacy mode says.
      */
-    suspend fun reapplyRuBypassToStoredProfile(privacyMode: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun reapplyRuBypassToStoredProfile() = withContext(Dispatchers.IO) {
         val subId = MmkvManager.decodeSubscriptions().find { it.subscription.remarks == SUBSCRIPTION_NAME }?.guid
             ?: return@withContext
-        val country = ColituRuBypass.profileCountry
-        if (!privacyMode && country == null) return@withContext
         MmkvManager.decodeServerList(subId).forEach { guid ->
             val raw = MmkvManager.decodeServerRaw(guid) ?: return@forEach
-            runCatching { com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.reroute(ColituRuBypass.configure(raw, country?.ifEmpty { null }, privacyMode))) }
+            runCatching { com.v2ray.ang.colitu.data.ColituDnsRoute.throughTunnel(ColituWarmSpare.reroute(ColituRuBypass.configure(raw))) }
                 .onSuccess { if (it != raw) MmkvManager.encodeServerRaw(guid, it) }
                 .onFailure { Log.e(TAG, "stored profile update failed: ${it.javaClass.simpleName}") }
         }

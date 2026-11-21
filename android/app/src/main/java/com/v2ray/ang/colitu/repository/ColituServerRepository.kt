@@ -57,8 +57,8 @@ object ColituServerRepository {
 
     // ── Servers ──────────────────────────────────────────────────────────────────
 
-    suspend fun fetchServers(): Result<ColituServerListResponse> = withContext(Dispatchers.IO) {
-        when (val result = ColituApiClient.get("/servers")) {
+    suspend fun fetchServers(networkToken: String? = null): Result<ColituServerListResponse> = withContext(Dispatchers.IO) {
+        when (val result = ColituApiClient.get(com.v2ray.ang.colitu.data.ColituServersToken.path(networkToken), com.v2ray.ang.colitu.data.ColituServersToken.headers(networkToken))) {
             is ColituApiClient.ApiResult.Success -> {
                 try {
                     Result.success(parseServerList(result.data))

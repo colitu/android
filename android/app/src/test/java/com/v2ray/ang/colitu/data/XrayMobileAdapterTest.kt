@@ -235,6 +235,61 @@ class XrayMobileAdapterTest {
         assertFalse(user.has("flow"))
     }
 
+    private fun wsSource(transport: String, security: String): com.google.gson.JsonObject {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-ws")
+        payload.getAsJsonObject("endpoint").addProperty("host", "relay.example.test")
+        payload.add("transport", JsonParser.parseString(transport))
+        payload.add("security", JsonParser.parseString(security))
+        return source
+    }
+
+    @Test
+    fun rendersVlessWsWithTlsAndNoFlow() {
+        val source = wsSource(
+            """{"type":"ws","path":"/service/telemetry/fixture/","host":"cdn.example.test"}""",
+            """{"type":"tls","server_name":"relay.example.test","fingerprint":"firefox","alpn":["http/1.1"]}""",
+        )
+        val result = XrayMobileAdapter.render(source, now)
+        assertEquals("vless-ws", result.protocolType)
+        val outbound = JsonParser.parseString(requireNotNull(result.rawConfig)).asJsonObject.getAsJsonArray("outbounds")[0].asJsonObject
+        assertEquals("vless", outbound.get("protocol").asString)
+        val stream = outbound.getAsJsonObject("streamSettings")
+        assertEquals("ws", stream.get("network").asString)
+        assertEquals("tls", stream.get("security").asString)
+        assertEquals("/service/telemetry/fixture/", stream.getAsJsonObject("wsSettings").get("path").asString)
+        assertEquals("cdn.example.test", stream.getAsJsonObject("wsSettings").get("host").asString)
+        val tls = stream.getAsJsonObject("tlsSettings")
+        assertEquals("relay.example.test", tls.get("serverName").asString)
+        assertEquals("firefox", tls.get("fingerprint").asString)
+        assertEquals(1, tls.getAsJsonArray("alpn").size())
+        assertEquals("http/1.1", tls.getAsJsonArray("alpn")[0].asString)
+        val user = outbound.getAsJsonObject("settings").getAsJsonArray("vnext")[0].asJsonObject.getAsJsonArray("users")[0].asJsonObject
+        assertFalse(user.has("flow"))
+    }
+
+    @Test
+    fun vlessWsFallsBackToDefaultsAndRanksLast() {
+        val source = wsSource("""{"type":"ws","path":"/p/"}""", """{"type":"tls"}""")
+        val result = XrayMobileAdapter.render(source, now)
+        val stream = JsonParser.parseString(requireNotNull(result.rawConfig)).asJsonObject
+            .getAsJsonArray("outbounds")[0].asJsonObject.getAsJsonObject("streamSettings")
+        assertEquals("relay.example.test", stream.getAsJsonObject("wsSettings").get("host").asString)
+        val tls = stream.getAsJsonObject("tlsSettings")
+        assertEquals("relay.example.test", tls.get("serverName").asString)
+        assertEquals("firefox", tls.get("fingerprint").asString)
+        assertEquals("http/1.1", tls.getAsJsonArray("alpn")[0].asString)
+        assertEquals(XrayMobileAdapter.transportRank.values.max(), XrayMobileAdapter.transportRank.getValue("vless-reality-relay"))
+        assertTrue(XrayMobileAdapter.transportRank.getValue("trojan") < XrayMobileAdapter.transportRank.getValue("vless-ws"))
+        assertFalse("vless-ws" in ColituTransportChoice.METHODS)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun vlessWsRejectsPathWithoutLeadingSlash() {
+        XrayMobileAdapter.render(wsSource("""{"type":"ws","path":"p/"}""", """{"type":"tls"}"""), now)
+    }
+
     @Test
     fun xhttpXmuxPassesOnlyKnownKeysWithSafeValues() {
         val source = envelope()
@@ -355,4 +410,26 @@ class XrayMobileAdapterTest {
           }}
         }""",
     ).asJsonObject
+
+    @Test
+    fun rendersVlessRealityRelayLikeRealityWithProfileFingerprint() {
+        val source = envelope()
+        val payload = source.getAsJsonObject("profile").getAsJsonObject("payload")
+        payload.addProperty("protocol", "vless-reality-relay")
+        payload.getAsJsonObject("endpoint").addProperty("host", "relay.example.test")
+        payload.add("transport", JsonParser.parseString("""{"type":"tcp"}"""))
+        payload.add("security", JsonParser.parseString("""{"type":"reality","server_name":"exit.example.test","public_key":"pk","short_id":"ab","fingerprint":"firefox"}"""))
+        val result = XrayMobileAdapter.render(source, now)
+        assertEquals("vless-reality-relay", result.protocolType)
+        val outbound = JsonParser.parseString(requireNotNull(result.rawConfig)).asJsonObject.getAsJsonArray("outbounds")[0].asJsonObject
+        val stream = outbound.getAsJsonObject("streamSettings")
+        assertEquals("tcp", stream.get("network").asString)
+        assertEquals("reality", stream.get("security").asString)
+        val reality = stream.getAsJsonObject("realitySettings")
+        assertEquals("exit.example.test", reality.get("serverName").asString)
+        assertEquals("firefox", reality.get("fingerprint").asString)
+        val user = outbound.getAsJsonObject("settings").getAsJsonArray("vnext")[0].asJsonObject.getAsJsonArray("users")[0].asJsonObject
+        assertEquals("xtls-rprx-vision", user.get("flow").asString)
+        assertFalse(ColituMultihop.isVless("vless-reality-relay"))
+    }
 }

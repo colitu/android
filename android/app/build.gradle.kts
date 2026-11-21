@@ -27,6 +27,8 @@ val mirrors = secret("MIRRORS", "COLITU_MIRRORS").orEmpty()
 if (releaseSigningRequired && mirrors.isBlank()) {
     throw GradleException("MIRRORS (signing.properties) or COLITU_MIRRORS is required for a release build")
 }
+// Built-in API relays (`id|host:port|sni|region|wl;...`), kept out of the public repository like the mirrors. Optional.
+val relays = secret("RELAYS", "COLITU_RELAYS").orEmpty()
 
 android {
     namespace = "com.v2ray.ang"
@@ -38,8 +40,8 @@ android {
         applicationId = "com.colitulu"
         minSdk = 24
         targetSdk = 36
-        versionCode = 31200
-        versionName = "3.1.2"
+        versionCode = 32000
+        versionName = "3.2.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -259,6 +261,9 @@ abstract class ColituBuildValuesTask : DefaultTask() {
     @get:Input
     abstract val mirrorList: Property<String>
 
+    @get:Input
+    abstract val relayList: Property<String>
+
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
@@ -270,13 +275,17 @@ abstract class ColituBuildValuesTask : DefaultTask() {
         val value = mirrorList.get()
         if (value.isNotEmpty()) {
             val escaped = value.replace("\\", "").replace("\"", "")
-            dir.resolve("colitu-build.json").writeText("{\"mirrors\":\"$escaped\"}\n", Charsets.UTF_8)
+            // No relays: the file stays exactly as before (same bytes for the same mirrors).
+            val relayValue = relayList.get().replace("\\", "").replace("\"", "")
+            val relayField = if (relayValue.isEmpty()) "" else ",\"relays\":\"$relayValue\""
+            dir.resolve("colitu-build.json").writeText("{\"mirrors\":\"$escaped\"$relayField}\n", Charsets.UTF_8)
         }
     }
 }
 
 val colituBuildValues = tasks.register<ColituBuildValuesTask>("colituBuildValues") {
     mirrorList.set(mirrors)
+    relayList.set(relays)
     outputDir.set(layout.buildDirectory.dir("generated/colitu-build-values"))
 }
 
@@ -366,6 +375,7 @@ dependencies {
 
     // Testing Libraries
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.tls)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.compose.bom))

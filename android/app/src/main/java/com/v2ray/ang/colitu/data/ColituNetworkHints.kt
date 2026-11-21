@@ -54,10 +54,19 @@ data class ColituNetworkRecord(
     val at: Long,
     val preferred: List<String> = emptyList(),
     val blockedServers: Set<String> = emptySet(),
+    /** [ColituServerRanking.networkKey] when the token was issued (link + ISP network); null for an older record. */
+    val issuedKey: String? = null,
 ) {
     private fun valid(network: String?, now: Long) = network == clientNetwork && now - at in 0 until TTL_MS
 
     fun tokenFor(network: String?, now: Long): String? = token?.takeIf { valid(network, now) }
+
+    /**
+     * Token for GET /servers (see [ColituServersToken]): valid like [tokenFor] and issued on the network
+     * that is current now ([currentKey]); after a network change none, never the old one.
+     */
+    fun tokenForList(network: String?, currentKey: String, now: Long): String? =
+        tokenFor(network, now)?.takeIf { issuedKey != null && issuedKey == currentKey }
 
     fun blockedFor(network: String?, now: Long): Set<String> = if (valid(network, now)) blocked else emptySet()
 
@@ -72,6 +81,7 @@ data class ColituNetworkRecord(
         add("preferred", JsonArray().apply { preferred.forEach(::add) })
         add("blocked_servers", JsonArray().apply { blockedServers.forEach(::add) })
         addProperty("at", at)
+        issuedKey?.let { addProperty("key", it) }
     }.toString()
 
     companion object {
@@ -87,6 +97,7 @@ data class ColituNetworkRecord(
                 o.get("at").asLong,
                 o.get("preferred")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }.orEmpty(),
                 o.get("blocked_servers")?.takeIf { it.isJsonArray }?.asJsonArray?.map { it.asString }?.toSet().orEmpty(),
+                o.get("key")?.takeIf { it.isJsonPrimitive }?.asString,
             )
         }.getOrNull()
     }
@@ -153,4 +164,22 @@ object ColituNetworkHintsPolicy {
             if (!token.isNullOrBlank()) addProperty("network_token", token)
         }
     }
+}
+
+/**
+ * GET /servers carries the stored `network_token` too (like /client/ac-model), so through WARP or a
+ * multihop exit the panel still names the network's country (the RU-only "Beyaz Liste" entry stays).
+ */
+object ColituServersToken {
+    const val PATH = "/servers"
+    const val HEADER = "X-Colitu-Network-Token"
+
+    /** Same limit as the model fetch (the panel accepts up to 256 characters). */
+    fun usable(token: String?): String? =
+        token?.trim()?.takeIf { it.isNotEmpty() && it.length <= ColituAcModel.MAX_TOKEN_LENGTH }
+
+    fun path(token: String?): String =
+        usable(token)?.let { "$PATH?network_token=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: PATH
+
+    fun headers(token: String?): Map<String, String> = usable(token)?.let { mapOf(HEADER to it) }.orEmpty()
 }

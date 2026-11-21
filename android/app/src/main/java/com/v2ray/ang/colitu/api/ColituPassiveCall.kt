@@ -15,14 +15,16 @@ import com.google.gson.JsonParser
  * access to [ColituTokenManager] or [ColituAuthEvents].
  */
 internal object ColituPassiveCall {
-    fun result(code: Int, body: String?): ColituApiClient.ApiResult<JsonObject> {
+    const val GECKO_SIGNATURE_HEADER = "X-Gecko-Config-Signature"
+
+    fun result(code: Int, body: String?, signature: String? = null): ColituApiClient.ApiResult<JsonObject> {
         if (code !in 200..299) {
             return ColituApiClient.ApiResult.Error(code, "api_error", isAuthError = code == 401 || code == 403)
         }
         if (code == 204 || body.isNullOrBlank()) return ColituApiClient.ApiResult.Success(JsonObject(), code)
         val parsed = runCatching { JsonParser.parseString(body).takeIf { it.isJsonObject }?.asJsonObject }.getOrNull()
             ?: return ColituApiClient.ApiResult.Error(code, "parse_error")
-        return ColituApiClient.ApiResult.Success(parsed, code)
+        return ColituApiClient.ApiResult.Success(parsed, code, rawBody = if (signature != null) body else null, signature = signature)
     }
 
     val noToken = ColituApiClient.ApiResult.Error(401, "no_token", isAuthError = true)

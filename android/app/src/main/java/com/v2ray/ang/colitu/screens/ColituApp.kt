@@ -335,14 +335,6 @@ private fun Shell(c: ColituController, welcome: String?, onWelcomeShown: () -> U
     ColituSurveyHost(c)
     if (!ColituTv.isTv) PassportRevealHost(c)
 
-    if (c.ruNoticeVisible) {
-        RuDirectNoticeDialog(
-            onKeep = { c.answerRuNotice(enablePrivacy = false) },
-            onEnablePrivacy = { c.answerRuNotice(enablePrivacy = true) },
-            onDetails = { openUrl(context, splitTunnelingUrl()) },
-        )
-    }
-
     if (confirmSignOut) {
         ColituConfirmDialog(
             title = loc["account.signOut"],

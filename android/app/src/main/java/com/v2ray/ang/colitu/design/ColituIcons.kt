@@ -385,6 +385,28 @@ object ColituIcons {
         fill { circle(12f, 7.8f, 1.2f) }
     }
 
+    val Clock = icon("clock") {
+        stroke { circle(12f, 12f, 9f) }
+        stroke(2f) {
+            moveTo(12f, 7f)
+            verticalLineTo(12f)
+            lineTo(15.5f, 14f)
+        }
+    }
+
+    val Route = icon("route") {
+        stroke { circle(6f, 18f, 2.2f) }
+        stroke { circle(18f, 6f, 2.2f) }
+        stroke(2f) {
+            moveTo(8.2f, 18f)
+            horizontalLineTo(14f)
+            arcTo(3.5f, 3.5f, 0f, false, false, 14f, 11f)
+            horizontalLineTo(10f)
+            arcTo(3.5f, 3.5f, 0f, false, true, 10f, 6f)
+            horizontalLineTo(15.8f)
+        }
+    }
+
     val Question = icon("question") {
         stroke { circle(12f, 12f, 9f) }
         stroke(2f) {

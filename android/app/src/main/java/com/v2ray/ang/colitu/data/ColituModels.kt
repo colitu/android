@@ -164,6 +164,8 @@ data class ColituServerListResponse(
     val features: Map<String, Boolean>? = null,
     /** Adaptive Connect 4 whitelist check: domestic hosts per country; null from an older panel. */
     val whitelistProbe: Map<String, List<String>>? = null,
+    /** TLS probe targets of the panel (`measure_targets`, only for clients in a listed country); null when absent. */
+    val measureTargets: ColituIpBlock.MeasureTargets? = null,
 ) {
     companion object {
         /**
@@ -191,6 +193,7 @@ data class ColituServerListResponse(
                 ColituNetworkHints.fromJson(json.get("network_hints")?.takeIf { it.isJsonObject }?.asJsonObject),
                 ColituRemoteFeatures.parse(json.get("features")?.takeIf { it.isJsonObject }?.asJsonObject),
                 ColituWhitelist.parseProbe(json.get("whitelist_probe")?.takeIf { it.isJsonObject }?.asJsonObject),
+                ColituIpBlock.parseTargets(json.get("measure_targets")?.takeIf { it.isJsonObject }?.asJsonObject),
             )
         }
 

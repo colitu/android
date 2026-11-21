@@ -72,9 +72,22 @@ object ColituApiClient {
         .retryOnConnectionFailure(false)
         .build()
 
+    // GET /health of an API path (self-heal): 2 s in all.
+    private val probeClient = ColituCertPins.applyTo(OkHttpClient.Builder())
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.SECONDS)
+        .callTimeout(2, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
     init {
-        ColituEndpoints.fetcher = { url ->
-            callOnce(Request.Builder().url(url).get().build(), listClient).use { response ->
+        ColituEndpoints.prober = { request ->
+            runCatching { callOnce(request, probeClient).use { it.isSuccessful } }.getOrDefault(false)
+        }
+        ColituEndpoints.fetcher = { request ->
+            callOnce(request, listClient).use { response ->
                 if (!response.isSuccessful) null
                 else readLimited(response.body.byteStream(), MAX_LIST_BYTES)?.toString(Charsets.UTF_8)
             }
@@ -92,6 +105,9 @@ object ColituApiClient {
             val data: T,
             val statusCode: Int = 200,
             val etag: String? = null,
+            /** The exact body and the `X-Gecko-Config-Signature` header, only when that header came (the signature covers those bytes). */
+            val rawBody: String? = null,
+            val signature: String? = null,
         ) : ApiResult<T>()
         data class Error(
             val code: Int,
@@ -107,12 +123,24 @@ object ColituApiClient {
 
     // ── Public API ──────────────────────────────────────────────────────────────
 
+    /**
+     * Marks a call that must leave over the phone's own network, never through
+     * the tunnel: GET /gecko/config, whose entries the panel picks by the
+     * network the request comes from (a Russian client gets the Russian
+     * entries). Through a connected tunnel the panel saw the exit's country
+     * (2026-11-21: a Whitelist exit in Sweden) and left them out, so
+     * gecko-client, which always dials directly, got only blocked entries.
+     */
+    object DirectCall
+
     suspend fun get(
         path: String,
         headers: Map<String, String> = emptyMap(),
+        direct: Boolean = false,
     ): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
         val url = buildUrl(path)
         val builder = Request.Builder().url(url).get()
+        if (direct) builder.tag(DirectCall::class.java, DirectCall)
         headers.forEach(builder::header)
         executeWithRetry(builder.build(), url, attempt = 0, allowRefresh = true)
     }
@@ -123,14 +151,30 @@ object ColituApiClient {
      * and it never touches the tokens or the session state. No token, a 401/403
      * or any failure is just an [ApiResult.Error] for the caller to ignore.
      */
-    suspend fun getPassive(path: String): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
+    suspend fun getPassive(path: String, direct: Boolean = false): ApiResult<JsonObject> = withContext(Dispatchers.IO) {
         if (ColituTokenManager.getAccessToken().isNullOrBlank()) return@withContext ColituPassiveCall.noToken
         try {
-            call(Request.Builder().url(buildUrl(path)).get().build()).use { response ->
-                ColituPassiveCall.result(response.code, readBody(response))
+            val builder = Request.Builder().url(buildUrl(path)).get()
+            if (direct) builder.tag(DirectCall::class.java, DirectCall)
+            call(builder.build()).use { response ->
+                ColituPassiveCall.result(response.code, readBody(response), response.header(ColituPassiveCall.GECKO_SIGNATURE_HEADER))
             }
         } catch (e: IOException) {
             ApiResult.Error(-1, "network_error")
+        }
+    }
+
+    /**
+     * POST of a JSON [body] with the stored access token as it is, for the VPN
+     * process (ColituGecko failure reports; same rules as [getPassive]). The
+     * HTTP status, -1 when there is no token or the network failed.
+     */
+    suspend fun postPassive(path: String, body: String): Int = withContext(Dispatchers.IO) {
+        if (ColituTokenManager.getAccessToken().isNullOrBlank()) return@withContext -1
+        try {
+            call(Request.Builder().url(buildUrl(path)).post(body.toRequestBody(JSON_TYPE)).build()).use { it.code }
+        } catch (e: IOException) {
+            -1
         }
     }
 
@@ -219,8 +263,14 @@ object ColituApiClient {
     }
 
     private fun callOnce(request: Request, base: OkHttpClient): Response {
+        // A relay is a path around a block of the direct one: dialled directly, never through the tunnel.
+        request.tag(ApiRelay::class.java)?.let { relay ->
+            return ColituRelayTransport.client(base, relay).newCall(request).execute()
+        }
         val proxy = ColituLocalProxy.activeTunnel()
-        if (proxy == null || System.currentTimeMillis() - tunnelFailedAt < TUNNEL_BACKOFF_MS) {
+        if (proxy == null || request.tag(DirectCall::class.java) != null ||
+            System.currentTimeMillis() - tunnelFailedAt < TUNNEL_BACKOFF_MS
+        ) {
             return base.newCall(request).execute()
         }
         ColituSocksAuth.install(proxy)
@@ -316,7 +366,7 @@ object ColituApiClient {
                 ApiResult.Error(code, message, body = parseObject(bodyStr))
             }
             code == 204 || bodyStr.isBlank() -> ApiResult.Success(JsonObject(), code, response.header("ETag"))
-            else -> parseBody(bodyStr, code, response.header("ETag"))
+            else -> parseBody(bodyStr, code, response.header("ETag"), response.header(ColituPassiveCall.GECKO_SIGNATURE_HEADER))
         }
     }
 
@@ -461,8 +511,8 @@ object ColituApiClient {
 
     // ── Parse ────────────────────────────────────────────────────────────────────
 
-    private fun parseBody(bodyStr: String, code: Int, etag: String?): ApiResult<JsonObject> = try {
-        ApiResult.Success(JsonParser.parseString(bodyStr).asJsonObject, code, etag)
+    private fun parseBody(bodyStr: String, code: Int, etag: String?, signature: String? = null): ApiResult<JsonObject> = try {
+        ApiResult.Success(JsonParser.parseString(bodyStr).asJsonObject, code, etag, rawBody = if (signature != null) bodyStr else null, signature = signature)
     } catch (_: Exception) {
         rememberFriendlyError("parse_error")
         ApiResult.Error(code, "parse_error")

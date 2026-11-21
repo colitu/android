@@ -4,7 +4,7 @@ import com.google.gson.JsonParser
 
 /**
  * Values a release gets from outside the public source: the API mirror origins
- * (comma separated). The build writes them to one file at the root of the APK,
+ * (comma separated) and the API relays. The build writes them to one file at the root of the APK,
  * colitu-build.json (task colituBuildValues in app/build.gradle.kts), instead of
  * compiling them into the code: the rest of the APK then comes out byte for byte
  * the same from the public source (reproducible builds). No file (a developer
@@ -15,6 +15,9 @@ object ColituBuildValues {
 
     /** Comma-separated https mirror origins, or "". */
     val mirrors: String by lazy { read("mirrors") }
+
+    /** Built-in API relays, `id|host:port|sni|region|wl` separated by `;` (ColituEndpointList.parseBuildRelays), or "". */
+    val relays: String by lazy { read("relays") }
 
     private fun read(name: String): String = runCatching {
         val stream = ColituBuildValues::class.java.classLoader?.getResourceAsStream(FILE_NAME) ?: return ""
