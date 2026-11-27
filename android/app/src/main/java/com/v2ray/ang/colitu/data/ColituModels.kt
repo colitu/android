@@ -166,6 +166,8 @@ data class ColituServerListResponse(
     val whitelistProbe: Map<String, List<String>>? = null,
     /** TLS probe targets of the panel (`measure_targets`, only for clients in a listed country); null when absent. */
     val measureTargets: ColituIpBlock.MeasureTargets? = null,
+    /** Learned-fingerprint policy (`fingerprint_policy`); null from an older panel (fixed fingerprint stays). */
+    val fingerprintPolicy: ColituFingerprint.Policy? = null,
 ) {
     companion object {
         /**
@@ -194,6 +196,7 @@ data class ColituServerListResponse(
                 ColituRemoteFeatures.parse(json.get("features")?.takeIf { it.isJsonObject }?.asJsonObject),
                 ColituWhitelist.parseProbe(json.get("whitelist_probe")?.takeIf { it.isJsonObject }?.asJsonObject),
                 ColituIpBlock.parseTargets(json.get("measure_targets")?.takeIf { it.isJsonObject }?.asJsonObject),
+                ColituFingerprint.parsePolicy(json.get("fingerprint_policy")?.takeIf { it.isJsonObject }?.asJsonObject),
             )
         }
 

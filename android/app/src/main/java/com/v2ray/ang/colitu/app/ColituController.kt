@@ -27,6 +27,7 @@ import com.v2ray.ang.colitu.api.ColituAuthEvents
 import com.v2ray.ang.colitu.api.ColituTokenManager
 import com.v2ray.ang.colitu.data.ClientBootstrapPolicy
 import com.v2ray.ang.colitu.data.ColituAdBlock
+import com.v2ray.ang.colitu.data.ColituFingerprint
 import com.v2ray.ang.colitu.data.ColituIpBlock
 import com.v2ray.ang.colitu.data.ColituTlsProbe
 import com.v2ray.ang.colitu.data.ColituConnectMemory
@@ -228,6 +229,78 @@ class ColituController(application: Application) : AndroidViewModel(application)
     private val whitelistLedger = ColituWhitelist.FailureLedger()
     /** `measure_targets` of the last /servers that sent them (kept; only RU clients get any). */
     private var measureTargets: ColituIpBlock.MeasureTargets? = ColituIpBlock.targetsFromJson(store.decodeString(KEY_MEASURE_TARGETS))
+
+    // ── Learned uTLS fingerprint per network (FP-SPEC) ──
+    /** The panel's `fingerprint_policy`; null from an older panel (the endpoint's own fingerprint stays). */
+    private var fpPolicy: ColituFingerprint.Policy? = runCatching {
+        ColituFingerprint.parsePolicy(store.decodeString(KEY_FP_POLICY)?.let { com.google.gson.JsonParser.parseString(it).asJsonObject })
+    }.getOrNull()
+    private val fpState = ColituFingerprint.State.fromJson(store.decodeString(KEY_FP_STATE))
+    /** The fingerprint each started transport ("serverId|protocol") carries now. */
+    private val fpUsed = mutableMapOf<String, String>()
+    private var fpRetriesThisConnect = 0
+    /** Worst TLS probe result of the last round per server: "ok", "tls_rst" or null (unknown). */
+    private val tlsProbeResult = mutableMapOf<String, String?>()
+
+    private fun fpKey(serverId: String?, protocol: String?) = "$serverId|$protocol"
+
+    private fun chosenFingerprint(protocol: String?): String? {
+        if (protocol !in ColituFingerprint.TLS_TRANSPORTS) return null
+        val policy = fpPolicy ?: return null
+        val network = networkKey
+        val deviceId = ColituTokenManager.getDeviceId().orEmpty()
+        val entries = synchronized(fpState) { fpState.entries(network).toMap() }
+        return ColituFingerprint.choose(policy, deviceId, network, entries, System.currentTimeMillis()).takeIf { it.isNotEmpty() }
+    }
+
+    /** [config] with this network's chosen fingerprint rendered in (TLS transports only); remembers what it carries. */
+    private fun withFingerprint(config: ColituVpnConfig): ColituVpnConfig {
+        val fp = chosenFingerprint(config.protocolType) ?: return config
+        val raw = config.rawConfig ?: return config
+        fpUsed[fpKey(config.serverId, config.protocolType)] = fp
+        return config.copy(rawConfig = XrayMobileAdapter.withFingerprint(raw, config.protocolType, fp))
+    }
+
+    private fun saveFingerprints() {
+        store.encode(KEY_FP_STATE, synchronized(fpState) { fpState.toJson() })
+    }
+
+    private fun fingerprintWorked(config: ColituVpnConfig) {
+        val fp = fpUsed[fpKey(config.serverId, config.protocolType)] ?: return
+        synchronized(fpState) { fpState.markOk(networkKey, fp, System.currentTimeMillis()) }
+        saveFingerprints()
+    }
+
+    /**
+     * Section 5: [config] was up but carried nothing. When that is a fingerprint-type failure (TCP reachable, the
+     * server answers TLS, not an outage) the fingerprint is marked failed and true is returned when the next choice
+     * differs: the caller retries the same transport on the same server.
+     */
+    private fun fingerprintRetry(actual: ColituServer, config: ColituVpnConfig, transportBegin: Long, deadline: Long): Boolean {
+        val protocol = config.protocolType
+        val fp = fpUsed[fpKey(config.serverId, protocol)] ?: return false
+        if (serverOutageThisRound || deadline - android.os.SystemClock.elapsedRealtime() < MIN_TRANSPORT_MS) return false
+        val tcpOk = roundProbe[protocol]?.let { it >= 0 } ?: true
+        if (!ColituFingerprint.shouldRetry(protocol, tcpOk, tlsProbeResult[actual.id], fpRetriesThisConnect)) return false
+        synchronized(fpState) { fpState.markFailed(networkKey, fp, System.currentTimeMillis()) }
+        saveFingerprints()
+        val next = chosenFingerprint(protocol)
+        if (next == null || next == fp) return false
+        // The failed fingerprint is its own connect event (the retry is another one, first_try false).
+        if (ColituFeatures.fpEvents() && ColituMetrics.enabled) {
+            acRecord(
+                ColituAcEvents.connect(
+                    actual.id.takeIf { isNode(it) }, protocol, false, "TIMEOUT", android.os.SystemClock.elapsedRealtime() - transportBegin,
+                    firstTry = acFallbacks == 0 && !acTransportFallback && fpRetriesThisConnect == 0, auto = acAuto, engine = acEngine,
+                    fingerprint = fp,
+                ),
+            )
+        }
+        fpRetriesThisConnect++
+        acTransportFallback = true
+        LogUtil.w(AppConfig.TAG, "Colitu: $protocol fingerprint $fp carried nothing here (TCP and TLS answer); retrying with $next")
+        return true
+    }
     private var measureJob: Job? = null
     private var whitelistCheckJob: Job? = null
     private var whitelistRecheckJob: Job? = null
@@ -758,6 +831,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
                         whitelistProbe = it
                         store.encode(KEY_WHITELIST_PROBE, ColituWhitelist.probeToJson(it))
                     }
+                    // Absent (an old panel): the endpoint's own fingerprint stays.
+                    fpPolicy = response.fingerprintPolicy
+                    if (response.fingerprintPolicy != null) store.encode(KEY_FP_POLICY, response.fingerprintPolicy.toJson().toString())
+                    else store.removeValueForKey(KEY_FP_POLICY)
                     response.measureTargets?.let {
                         measureTargets = it
                         store.encode(KEY_MEASURE_TARGETS, ColituIpBlock.targetsToJson(it))
@@ -1403,6 +1480,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
                 nodeId ?: acNode, protocol ?: acProtocol, ok, code, ms,
                 // First try: the first round on the first server (its primary or its spare), as on Windows.
                 firstTry = acFallbacks == 0 && !acTransportFallback, auto = acAuto, engine = acEngine,
+                fingerprint = fpUsed[fpKey(nodeId ?: acNode, protocol ?: acProtocol)],
             ),
         )
         if (metricFirst) ColituMetrics.markFirstDone()
@@ -1492,7 +1570,18 @@ class ColituController(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private val connectGate = com.v2ray.ang.colitu.data.ColituConnectGate()
+
     private fun startConnectFlow(fresh: Boolean = false, continuing: Boolean = false) {
+        // Who asked (the caller's method), for the log: repeated starts are visible by their source.
+        val reason = Throwable().stackTrace.getOrNull(1)?.methodName ?: "?"
+        val target = "${if (autoSelection) "auto" else selectedServerId.orEmpty()}|wl=${whitelistRowId.orEmpty()}|m=$preferredTransport|f=$fresh|c=$continuing"
+        val running = connectJob?.isActive == true
+        if (!connectGate.shouldStart(target, android.os.SystemClock.elapsedRealtime(), running)) {
+            LogUtil.w(AppConfig.TAG, "Colitu: connect flow: $reason folded into the one already running")
+            return
+        }
+        LogUtil.w(AppConfig.TAG, "Colitu: connect flow: $reason")
         offerFastest = false
         offerAutoProtocol = false
         attachedSpare = null
@@ -1513,11 +1602,15 @@ class ColituController(application: Application) : AndroidViewModel(application)
             reconnecting = true
             reconnectAttempt = 0
         }
-        connectJob?.cancel()
+        // cancelAndJoin: the previous flow is fully gone before this one starts (two runConnect never overlap).
+        val previous = connectJob
+        previous?.cancel()
         verifyJob?.cancel()
         userStopped = false
         cancelledStart = false
         connectJob = viewModelScope.launch {
+            // Bounded: a previous flow stuck in a native call must not keep the new one from starting.
+            if (previous != null) withTimeoutOrNull(PREVIOUS_FLOW_WAIT_MS) { previous.join() }
             try {
                 runConnect(fresh)
             } finally {
@@ -1646,6 +1739,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
         error = null
         ColituServerRepository.clearConfigUnreachable()
         acEngine = null
+        fpRetriesThisConnect = 0
         geckoTried = false
         ColituGeckoProtocol.prepare()
         if (preferredTransport == ColituGeckoRules.PROTOCOL && ColituGeckoProtocol.offer == ColituGeckoOffer.NotOffered) {
@@ -2199,6 +2293,7 @@ class ColituController(application: Application) : AndroidViewModel(application)
      */
     private suspend fun serverIpBlocked(server: ColituServer, configs: List<ColituVpnConfig>): Boolean {
         val network = networkKey
+        tlsProbeResult.remove(server.id)
         // The TCP ping of this server timed out on this network: nothing to probe.
         pings[server.id]?.takeIf { it.fresh(network, System.currentTimeMillis()) && it.ms == null }?.let { return false }
         val endpoints = ColituIpBlock.pickEndpoints(configs.mapNotNull { ColituIpBlock.endpointOf(it.protocolType, it.rawConfig) })
@@ -2209,6 +2304,11 @@ class ColituController(application: Application) : AndroidViewModel(application)
             endpoints.map { ColituTlsProbe.Target(it.host, it.port, it.sni) }, ColituTlsProbe.androidIo(outside), ColituIpBlock.CLASSIFIER_BUDGET_MS,
         )
         val blocked = ColituIpBlock.ipBlocked(outcomes.map { it.target.port to it.result })
+        tlsProbeResult[server.id] = when {
+            outcomes.any { it.result == ColituTlsProbe.Result.TlsRst } -> "tls_rst"
+            outcomes.isNotEmpty() && outcomes.all { it.result == ColituTlsProbe.Result.Ok } -> "ok"
+            else -> null
+        }
         LogUtil.w(AppConfig.TAG, "Colitu: TLS probe ${server.id.take(8)} ${outcomes.map { "${it.target.port}=${it.result.wire}" }} blocked=$blocked")
         if (blocked) {
             outcomes.forEach { o ->
@@ -2319,6 +2419,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
             if (attempt > 0 && deadline - android.os.SystemClock.elapsedRealtime() < MIN_TRANSPORT_MS) break
             phase = if (attempt == 0) ConnectPhase.Starting else ConnectPhase.Switching
             if (attempt > 0) showToast(ColituLoc["home.switchingTransport"], error = false)
+            // A fingerprint retry runs this transport again on the same server (FP-SPEC section 5).
+            var again: Boolean
+            do {
+            again = false
             // Parallel connect (happy eyeballs): the best two candidates start
             // together as primary and spare and are checked at the same time.
             val spareConfig = forcedSpare ?: spareFor(spare, config, sameServer)
@@ -2380,16 +2484,21 @@ class ColituController(application: Application) : AndroidViewModel(application)
                     LogUtil.w(AppConfig.TAG, "Colitu: ${config.protocolType} is up but carries no traffic")
                     // fail() ends the hold.
                     if (!deviceOnline()) return StartOutcome.Offline
-                    primaryFailed(actual, config, fromCache)
-                    spareConfig?.let { failedSpare ->
-                        failedSpare.protocolType?.let { protocol ->
-                            deadSpares += failedSpare.serverId to protocol
-                            if (failedSpare.serverId == actual.id) stalledThisConnect += protocol
+                    if (fingerprintRetry(actual, config, transportBegin, deadline)) {
+                        again = true
+                    } else {
+                        primaryFailed(actual, config, fromCache)
+                        spareConfig?.let { failedSpare ->
+                            failedSpare.protocolType?.let { protocol ->
+                                deadSpares += failedSpare.serverId to protocol
+                                if (failedSpare.serverId == actual.id) stalledThisConnect += protocol
+                            }
                         }
                     }
                     stopService(force = true, hold = true)
                 }
             }
+            } while (again)
         }
         return StartOutcome.Failed(cameUp)
     }
@@ -2543,7 +2652,10 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
 
     /** Imports [config] (with [spare]) and starts the core; the profile's guid, or null when it did not start. */
-    private suspend fun startCore(context: Application, config: ColituVpnConfig, spare: ColituVpnConfig?): String? {
+    private suspend fun startCore(context: Application, plainConfig: ColituVpnConfig, plainSpare: ColituVpnConfig?): String? {
+        // The fingerprint chosen for this network goes into the TLS transports (primary and spare alike).
+        val config = withFingerprint(plainConfig)
+        val spare = plainSpare?.let { withFingerprint(it) }
         val guid = ColituVpnRepository.importRuntimeConfig(context, config, spare).getOrElse {
             LogUtil.e(AppConfig.TAG, "Colitu: import failed for ${config.protocolType}")
             return null
@@ -2687,6 +2799,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         // This connect is over: hours later its stalls must not reorder (or "confirm") the next one.
         stalledThisConnect.clear()
         freshFailedThisConnect.clear()
+        fingerprintWorked(config)
+        fpRetriesThisConnect = 0
         attachedSpare = spareConfig?.let { spare -> (servers.firstOrNull { it.id == spare.serverId } ?: actual) to spare.protocolType.orEmpty() }
         connectedConfig = config
         connectedCandidates = candidates.ifEmpty { listOf(config) }
@@ -3720,6 +3834,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         whitelistRowId = null
         measureTargets = null
         store.removeValueForKey(KEY_MEASURE_TARGETS)
+        fpPolicy = null
+        store.removeValueForKey(KEY_FP_POLICY)
         runCatching { store.allKeys()?.filter { it.startsWith(KEY_MEASURE_RUN_PREFIX) }?.forEach { store.removeValueForKey(it) } }
         store.encode(KEY_SELECTION_KEY, "")
         supportUnread = 0
@@ -3872,6 +3988,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
         private const val KEY_WHITELIST_PROBE = "whitelist_probe"
         /** `measure_targets` of the last /servers (TLS probe list, RU clients; [ColituIpBlock.MeasureTargets] as JSON). */
         private const val KEY_MEASURE_TARGETS = "measure_targets"
+        private const val KEY_FP_POLICY = "fp_policy"
+        private const val KEY_FP_STATE = "fp_state"
         /** Last measurement run (ms) per network key: prefix + key. */
         private const val KEY_MEASURE_RUN_PREFIX = "measure_run_"
         /** Whitelist mode, its last check and network ([ColituWhitelist.Saved] as JSON). */
@@ -3910,6 +4028,8 @@ class ColituController(application: Application) : AndroidViewModel(application)
 
         /** gecko-client did not carry traffic (exited, no session, or the check failed). */
         private const val GECKO_FAILED = "GECKO_FAILED"
+        /** How long a new connect flow waits for the cancelled one to finish. */
+        private const val PREVIOUS_FLOW_WAIT_MS = 5_000L
         /**
          * Direct (outside the tunnel) reachability when the system did not validate the network. No
          * Cloudflare (throttled in Russia); Yandex stays reachable on Russian whitelist-only mobile networks.

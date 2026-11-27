@@ -74,7 +74,9 @@ object ColituAcEvents {
     }
 
     /** [engine]: what ordered an automatic connect (`ac4`, `ac3`, `panel`); a manual connect has none. */
-    fun connect(nodeId: String?, protocol: String?, ok: Boolean, code: String?, ms: Long, firstTry: Boolean, auto: Boolean, engine: String? = null): JsonObject? {
+    fun connect(nodeId: String?, protocol: String?, ok: Boolean, code: String?, ms: Long, firstTry: Boolean, auto: Boolean, engine: String? = null,
+        fingerprint: String? = null, fpEvents: Boolean = ColituFeatures.fpEvents(),
+    ): JsonObject? {
         val n = node(nodeId) ?: return null
         val p = protocol(protocol) ?: return null
         return JsonObject().apply {
@@ -87,6 +89,8 @@ object ColituAcEvents {
             addProperty("first_try", firstTry)
             addProperty("mode", if (auto) "auto" else "manual")
             engine?.takeIf { auto && it in ENGINES }?.let { addProperty("engine", it) }
+            // Only with features.fp_events (an old panel rejects unknown fields) and only TLS transports.
+            if (fpEvents && p in ColituFingerprint.TLS_TRANSPORTS && fingerprint in ColituFingerprint.NAMES) addProperty("fingerprint", fingerprint)
         }
     }
 

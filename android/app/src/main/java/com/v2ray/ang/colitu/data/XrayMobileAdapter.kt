@@ -151,6 +151,20 @@ object XrayMobileAdapter {
     }
 
     /**
+     * [raw] with the uTLS fingerprint of its (first) outbound set to [fingerprint], for the four TLS transports
+     * ([ColituFingerprint.TLS_TRANSPORTS]) only; anything else, or a blank/unknown name, returns [raw] unchanged.
+     */
+    fun withFingerprint(raw: String, protocol: String?, fingerprint: String): String {
+        if (protocol !in ColituFingerprint.TLS_TRANSPORTS || fingerprint !in ColituFingerprint.NAMES) return raw
+        val json = runCatching { com.google.gson.JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return raw
+        val stream = json.getAsJsonArray("outbounds")?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.getAsJsonObject("streamSettings") ?: return raw
+        val settings = stream.getAsJsonObject("realitySettings") ?: stream.getAsJsonObject("tlsSettings") ?: return raw
+        settings.addProperty("fingerprint", fingerprint)
+        return json.toString()
+    }
+
+    /**
      * [raw] with its SOCKS inbound replaced by one on [proxy]'s port that
      * accepts only [proxy]'s account (hev-socks5-tunnel and the API client
      * log in with it). Also used on the stored profile before every core

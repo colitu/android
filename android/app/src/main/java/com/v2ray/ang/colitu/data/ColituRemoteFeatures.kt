@@ -14,10 +14,12 @@ object ColituRemoteFeatures {
     const val KEY_AC3 = "feature_adaptive_connect_3"
     const val KEY_AC4 = "feature_ac_engine_4"
     const val KEY_TLS_EVENTS = "feature_tls_probe_events"
+    const val KEY_FP_EVENTS = "feature_fp_events"
 
     @Volatile private var ac3Cache: Boolean? = null
     @Volatile private var ac4Cache: Boolean? = null
     @Volatile private var tlsEventsCache: Boolean? = null
+    @Volatile private var fpEventsCache: Boolean? = null
 
     /** Adaptive Connect 3.0 is on for this device; false when never told (or without MMKV, e.g. JVM tests). */
     val adaptiveConnect3: Boolean
@@ -34,6 +36,10 @@ object ColituRemoteFeatures {
     val tlsProbeEvents: Boolean
         get() = tlsEventsCache ?: runCatching { store().decodeBool(KEY_TLS_EVENTS, false) }.getOrDefault(false).also { tlsEventsCache = it }
 
+    /** The panel accepts `fingerprint` on connect events of ac-events (`features.fp_events`); false when absent. */
+    val fpEvents: Boolean
+        get() = fpEventsCache ?: runCatching { store().decodeBool(KEY_FP_EVENTS, false) }.getOrDefault(false).also { fpEventsCache = it }
+
     /** The `features` object of a /servers answer: the switches it carries, null when absent. */
     fun parse(json: JsonObject?): Map<String, Boolean>? {
         if (json == null) return null
@@ -48,6 +54,9 @@ object ColituRemoteFeatures {
         val tls = features?.get("tls_probe_events") == true
         runCatching { store().encode(KEY_TLS_EVENTS, tls) }
         tlsEventsCache = tls
+        val fp = features?.get("fp_events") == true
+        runCatching { store().encode(KEY_FP_EVENTS, fp) }
+        fpEventsCache = fp
         features?.get("adaptive_connect_3")?.let { ac3 ->
             runCatching { store().encode(KEY_AC3, ac3) }
             ac3Cache = ac3
@@ -62,7 +71,9 @@ object ColituRemoteFeatures {
         runCatching { store().removeValueForKey(KEY_AC3) }
         runCatching { store().removeValueForKey(KEY_AC4) }
         runCatching { store().removeValueForKey(KEY_TLS_EVENTS) }
+        runCatching { store().removeValueForKey(KEY_FP_EVENTS) }
         tlsEventsCache = false
+        fpEventsCache = false
         ac3Cache = false
         ac4Cache = false
     }

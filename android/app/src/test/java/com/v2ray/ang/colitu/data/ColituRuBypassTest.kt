@@ -20,8 +20,11 @@ class ColituRuBypassTest {
     @Test
     fun sendsRussianDomainsAndIpsDirect() {
         val json = JsonParser.parseString(ColituRuBypass.apply(runtime)).asJsonObject
-        val rules = rules(json)
-        assertEquals(2, rules.size)
+        val all = rules(json)
+        // panel.colitu.com first (through the tunnel), then the two Russian direct rules.
+        assertEquals(3, all.size)
+        assertEquals(ColituRuBypass.PANEL_RULE_TAG, all[0].get("ruleTag").asString)
+        val rules = all.drop(1)
         assertEquals(ColituRuBypass.DIRECT_DOMAINS, rules[0].getAsJsonArray("domain").map { it.asString })
         assertEquals("geoip:ru", rules[1].getAsJsonArray("ip").single().asString)
         assertTrue(rules.all { it.get("outboundTag").asString == "direct" })
@@ -51,7 +54,8 @@ class ColituRuBypassTest {
         val rules = rules(JsonParser.parseString(again).asJsonObject)
         assertEquals("dns-out", rules.first().get("outboundTag").asString)
         assertEquals(2, rules.count { it.get("ruleTag")?.asString == ColituRuBypass.RULE_TAG })
-        assertEquals(3, rules.size)
+        assertEquals(1, rules.count { it.get("ruleTag")?.asString == ColituRuBypass.PANEL_RULE_TAG })
+        assertEquals(4, rules.size)
     }
 
     /** Any rule that would send Russian traffic outside the tunnel. */
@@ -92,7 +96,8 @@ class ColituRuBypassTest {
         val ruIndexes = all.indices.filter { all[it].get("ruleTag")?.asString == ColituRuBypass.RULE_TAG }
         assertEquals(2, ruIndexes.size)
         // Behind only the DNS hijack, ahead of every rule to the proxy.
-        assertTrue(ruIndexes.all { i -> all.take(i).all { it.get("outboundTag").asString == "dns-out" || it.get("ruleTag")?.asString == ColituRuBypass.RULE_TAG } })
+        val ours = setOf(ColituRuBypass.RULE_TAG, ColituRuBypass.PANEL_RULE_TAG)
+        assertTrue(ruIndexes.all { i -> all.take(i).all { it.get("outboundTag").asString == "dns-out" || it.get("ruleTag")?.asString in ours } })
     }
 
     @Test
@@ -130,5 +135,17 @@ class ColituRuBypassTest {
         assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(emptyArray(), loggedIn = true)))
         assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(arrayOf("ru_direct_notice_shown"), loggedIn = false)))
         assertFalse(ColituRuBypass.initialPrivacyMode(ColituRuBypass.hasPriorState(arrayOf("language", "synced_server"), loggedIn = false)))
+    }
+
+    @Test
+    fun panelGoesThroughTheTunnelAndTheApiStaysDirect() {
+        val all = rules(JsonParser.parseString(ColituRuBypass.apply(ColituRuBypass.apply(runtime))).asJsonObject)
+        val panel = all.single { it.get("ruleTag")?.asString == ColituRuBypass.PANEL_RULE_TAG }
+        assertEquals("proxy", panel.get("outboundTag").asString)
+        assertEquals(listOf("full:panel.colitu.com"), panel.getAsJsonArray("domain").map { it.asString })
+        // Ahead of the Russian direct rules (colitu.com is on a Russian IP), and only that host:
+        // api.colitu.com and the site keep going direct.
+        assertTrue(all.indexOf(panel) < all.indexOfFirst { it.get("ruleTag")?.asString == ColituRuBypass.RULE_TAG })
+        assertTrue(all.none { r -> r.get("outboundTag").asString == "proxy" && r.getAsJsonArray("domain")?.any { it.asString.contains("api.colitu.com") || it.asString == "domain:colitu.com" } == true })
     }
 }

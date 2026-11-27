@@ -20,6 +20,10 @@ import com.v2ray.ang.colitu.api.ColituSecureStore
 object ColituRuBypass {
     internal const val RULE_TAG = "colitu-ru-direct"
 
+    /** panel.colitu.com goes through the tunnel even though colitu.com sits on a Russian IP: the admin panel allows only known addresses. */
+    internal const val PANEL_RULE_TAG = "colitu-panel-proxy"
+    internal const val PANEL_HOST = "panel.colitu.com"
+
     private const val KEY_PRIVACY_MODE = "privacy_mode"
     private const val KEY_NOTICE_SHOWN = "ru_direct_notice_shown"
     private const val KEY_PROFILE_COUNTRY = "ru_direct_profile_country"
@@ -137,12 +141,21 @@ object ColituRuBypass {
 
         val routing = json.get("routing")?.takeIf { it.isJsonObject }?.asJsonObject ?: JsonObject()
         val existing = routing.get("rules")?.takeIf { it.isJsonArray }?.asJsonArray
-            ?.filterNot { it.isJsonObject && it.asJsonObject.get("ruleTag")?.asString == RULE_TAG }
+            ?.filterNot { it.isJsonObject && it.asJsonObject.get("ruleTag")?.asString in setOf(RULE_TAG, PANEL_RULE_TAG) }
             .orEmpty()
         // DNS hijack rules (ad blocking) stay in front, like on iOS.
         val dnsPrefix = existing.takeWhile { it.isJsonObject && it.asJsonObject.get("outboundTag")?.asString == "dns-out" }
         val rules = JsonArray().apply {
             dnsPrefix.forEach(::add)
+            // Before the Russian direct rules; only this host (the API and the site stay direct).
+            tunnelOutbound(outbounds)?.let { tunnel ->
+                add(JsonObject().apply {
+                    addProperty("type", "field")
+                    add("domain", JsonArray().apply { add("full:$PANEL_HOST") })
+                    addProperty("outboundTag", tunnel)
+                    addProperty("ruleTag", PANEL_RULE_TAG)
+                })
+            }
             add(directRule { add("domain", JsonArray().apply { DIRECT_DOMAINS.forEach(::add) }) })
             add(directRule { add("ip", JsonArray().apply { add("geoip:ru") }) })
             existing.drop(dnsPrefix.size).forEach(::add)
@@ -177,6 +190,16 @@ object ColituRuBypass {
             else -> v
         }
         return host.trimEnd('.').substringAfterLast('.') in russianTlds
+    }
+
+    /**
+     * The outbound that carries tunnel traffic: `proxy` in a server profile, else the first
+     * outbound that is not local (the Gecko-only profile's SOCKS to gecko-client); null when none.
+     */
+    internal fun tunnelOutbound(outbounds: JsonArray): String? {
+        val tagged = outbounds.mapNotNull { it.takeIf { o -> o.isJsonObject }?.asJsonObject }
+        if (tagged.any { it.get("tag")?.asString == "proxy" }) return "proxy"
+        return tagged.firstOrNull { it.get("protocol")?.asString !in setOf("freedom", "blackhole", "dns") }?.get("tag")?.asString
     }
 
     private fun directRule(match: JsonObject.() -> Unit) = JsonObject().apply {

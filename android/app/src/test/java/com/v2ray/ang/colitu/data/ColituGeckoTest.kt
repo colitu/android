@@ -276,6 +276,8 @@ class ColituGeckoTest {
         val rules = rules(core)
         assertFalse(rules.any { it.has("balancerTag") })
         assertTrue(rules.all { it.get("outboundTag").asString in setOf(ColituGeckoRules.OUTBOUND_TAG, "direct", "dns-out", "block") })
+        // panel.colitu.com goes through Gecko here (there is no "proxy" outbound in this profile).
+        assertEquals(ColituGeckoRules.OUTBOUND_TAG, rules.single { it.get("ruleTag")?.asString == ColituRuBypass.PANEL_RULE_TAG }.get("outboundTag").asString)
         // Gecko carries UDP too: no Gecko rule is limited to TCP.
         assertTrue(rules.filter { it.get("outboundTag").asString == ColituGeckoRules.OUTBOUND_TAG }.none { it.get("network")?.asString == "tcp" })
         // The core's own DNS and the connect check go through Gecko.
@@ -293,7 +295,11 @@ class ColituGeckoTest {
         val private = rules.indexOfFirst { it.get("ruleTag")?.asString == ColituGeckoRules.PRIVATE_RULE_TAG }
         assertTrue(private >= 0)
         assertEquals("geoip:private", rules[private].get("ip").asJsonArray[0].asString)
-        val open = rules.indices.filter { rules[it].get("outboundTag").asString == ColituGeckoRules.OUTBOUND_TAG && !rules[it].has("inboundTag") }
+        // The panel.colitu.com rule is one host, deliberately ahead of the Russian rules; every open rule comes after them.
+        val open = rules.indices.filter {
+            rules[it].get("outboundTag").asString == ColituGeckoRules.OUTBOUND_TAG && !rules[it].has("inboundTag") &&
+                rules[it].get("ruleTag")?.asString != ColituRuBypass.PANEL_RULE_TAG
+        }
         assertTrue(open.all { it > ru.max() && it > private })
         assertTrue(dns < ru.min())
     }

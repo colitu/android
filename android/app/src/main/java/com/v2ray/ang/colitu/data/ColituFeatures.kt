@@ -53,4 +53,7 @@ object ColituFeatures {
 
     /** `features.tls_probe_events`: ac-events may carry the TLS probe fields (absent = false). */
     fun tlsProbeEvents(remote: Boolean = ColituRemoteFeatures.tlsProbeEvents): Boolean = remote
+
+    /** `features.fp_events`: connect events of TLS transports may carry `fingerprint` (absent = false). */
+    fun fpEvents(remote: Boolean = ColituRemoteFeatures.fpEvents): Boolean = remote
 }
