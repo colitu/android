@@ -79,7 +79,7 @@ fun OnboardingScreen(replay: Boolean, onFinish: (register: Boolean) -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { ColituWordmark(height = 14.dp) }
                 Box(Modifier.width(132.dp)) {
-                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { it.uppercase() }, height = 34.dp)
+                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { if (it == "zh") "中文" else it.uppercase() }, height = 34.dp)
                 }
             }
             HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth()) { index ->

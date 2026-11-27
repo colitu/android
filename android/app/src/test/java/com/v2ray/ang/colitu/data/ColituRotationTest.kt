@@ -187,8 +187,8 @@ class ColituRotationTest {
                 state.value = language
                 keys.map { key -> ColituLoc[key].also { assertNotEquals("$key missing in $language", key, it) } }
             }
-            // Three different wordings, not one copied text.
-            keys.indices.forEach { i -> assertEquals(keys[i], 3, perLanguage.map { it[i] }.toSet().size) }
+            // One distinct wording per language, not one copied text.
+            keys.indices.forEach { i -> assertEquals(keys[i], ColituLoc.languages.size, perLanguage.map { it[i] }.toSet().size) }
             state.value = "en"
             assertEquals("Estimated · +1 hop", ColituLoc["multihop.ping"])
             assertEquals("Entry FI → Exit DE", ColituLoc.format("multihop.home", "entry" to "FI", "exit" to "DE"))

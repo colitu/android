@@ -47,6 +47,31 @@ class ColituLocTest {
     }
 
     @Test
+    fun everyKeyAndCountryHasAllLanguages() {
+        for (name in listOf("strings", "countries")) {
+            val field = ColituLoc::class.java.getDeclaredField(name).apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val table = field.get(ColituLoc) as Map<String, Array<String>>
+            for ((key, values) in table) {
+                assertEquals("$name/$key", ColituLoc.languages.size, values.size)
+                values.forEachIndexed { i, text -> assert(text.isNotBlank()) { "$name/$key/${ColituLoc.languages[i]} is blank" } }
+            }
+        }
+    }
+
+    @Test
+    fun chineseHasOneFormAndCommaSeparators() = inLanguage("zh") {
+        assertEquals("1 天", ColituLoc.count("day", 1))
+        assertEquals("1,234 台设备", ColituLoc.count("device", 1234))
+        assertEquals("1,290.50 ₽", ColituLoc.money(129_050))
+        assertEquals("连接", ColituLoc["home.connect"])
+        assertEquals("德国", ColituLoc.countryName("DE"))
+        assertEquals("DE", ColituLoc.countryCodeForName("德国"))
+        assertEquals("东京", ColituServerNames.city("Tokyo"))
+        assertEquals("拉脱维亚 (桥接)", ColituServerNames.displayName("Letonya (Köprü)", countryCode = "LV"))
+    }
+
+    @Test
     fun androidWordingReplacesIphoneMentions() {
         for (language in ColituLoc.languages) {
             inLanguage(language) {

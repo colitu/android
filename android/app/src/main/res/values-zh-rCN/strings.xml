@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_action_stop_v2ray">断开连接</string>
+    <string name="title_service_restart">重新连接</string>
+    <string name="colitu_shortcut_connect">连接</string>
+    <string name="colitu_shortcut_disconnect">断开连接</string>
+</resources>

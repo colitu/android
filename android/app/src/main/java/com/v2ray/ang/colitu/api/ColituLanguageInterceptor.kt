@@ -5,7 +5,7 @@ import okhttp3.Interceptor
 import okhttp3.Response
 
 /**
- * Sends the app language ("ru", "tr", "en") as Accept-Language with every API
+ * Sends the app language ("ru", "tr", "en", "zh") as Accept-Language with every API
  * request, so the panel can keep the account's language (users.locale) and
  * write its notifications and e-mails in it. Only the language the user picked
  * in the app, never the phone's full locale list.

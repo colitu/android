@@ -353,7 +353,7 @@ fun AuthScreen(initialMessage: String?, register: Boolean, onSignedIn: () -> Uni
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { ColituWordmark(height = 14.dp) }
                 Box(Modifier.width(132.dp)) {
-                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { it.uppercase() }, height = 34.dp)
+                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { if (it == "zh") "中文" else it.uppercase() }, height = 34.dp)
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -405,7 +405,7 @@ private fun TvAuthLayout(title: String, subtitle: String, form: @Composable () -
                 CText(subtitle, ColituText.muted, align = TextAlign.Center)
                 Spacer(Modifier.height(16.dp))
                 Box(Modifier.width(260.dp)) {
-                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { it.uppercase() }, height = 38.dp)
+                    ColituSegment(ColituLoc.languages, loc.language, { ColituLoc.setLanguage(it) }, { if (it == "zh") "中文" else it.uppercase() }, height = 38.dp)
                 }
             }
             Spacer(Modifier.width(36.dp))

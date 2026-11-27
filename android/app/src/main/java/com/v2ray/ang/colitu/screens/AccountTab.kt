@@ -332,6 +332,7 @@ fun AccountTab(
                         when (it) {
                             "ru" -> "Русский"
                             "tr" -> "Türkçe"
+                            "zh" -> "中文"
                             else -> "English"
                         }
                     },

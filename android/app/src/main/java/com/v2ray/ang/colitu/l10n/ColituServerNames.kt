@@ -16,7 +16,7 @@ package com.v2ray.ang.colitu.l10n
  * as soon as the language changes.
  */
 object ColituServerNames {
-    /** [ru, tr, en] like [ColituLoc.languages], then aliases. */
+    /** [ru, tr, en] like [ColituLoc.languages] (Chinese is in [zhCities]), then aliases. */
     private val cities: List<List<String>> = listOf(
         listOf("Тирана", "Tiran", "Tirana"),
         listOf("Мельбурн", "Melbourne", "Melbourne"),
@@ -77,16 +77,46 @@ object ColituServerNames {
         listOf("Сеул", "Seul", "Seoul"),
     )
 
+    /** Simplified Chinese city names, keyed by the English name (third column above). */
+    private val zhCities: Map<String, String> = mapOf(
+        "Tirana" to "地拉那", "Melbourne" to "墨尔本", "São Paulo" to "圣保罗", "Frankfurt" to "法兰克福",
+        "Berlin" to "柏林", "Tallinn" to "塔林", "Tartu" to "塔尔图", "Madrid" to "马德里",
+        "Helsinki" to "赫尔辛基", "Paris" to "巴黎", "London" to "伦敦", "Coventry" to "考文垂",
+        "Thessaloniki" to "塞萨洛尼基", "Tel Aviv" to "特拉维夫", "Tokyo" to "东京", "Almaty" to "阿拉木图",
+        "Vilnius" to "维尔纽斯", "Riga" to "里加", "Kerkrade" to "凯尔克拉德", "Dronten" to "德龙滕",
+        "Warsaw" to "华沙", "Moscow" to "莫斯科", "Singapore" to "新加坡", "Bursa" to "布尔萨",
+        "Kyiv" to "基辅", "Dallas" to "达拉斯", "Amsterdam" to "阿姆斯特丹", "Istanbul" to "伊斯坦布尔",
+        "Ankara" to "安卡拉", "Stockholm" to "斯德哥尔摩", "Vienna" to "维也纳", "Zurich" to "苏黎世",
+        "Prague" to "布拉格", "Bucharest" to "布加勒斯特", "Sofia" to "索菲亚", "Budapest" to "布达佩斯",
+        "Athens" to "雅典", "Belgrade" to "贝尔格莱德", "Yerevan" to "埃里温", "Tbilisi" to "第比利斯",
+        "Baku" to "巴库", "Dubai" to "迪拜", "Copenhagen" to "哥本哈根", "Oslo" to "奥斯陆",
+        "Milan" to "米兰", "Rome" to "罗马", "Munich" to "慕尼黑", "Düsseldorf" to "杜塞尔多夫",
+        "Nuremberg" to "纽伦堡", "New York" to "纽约", "Los Angeles" to "洛杉矶", "Miami" to "迈阿密",
+        "Toronto" to "多伦多", "Montreal" to "蒙特利尔", "Sydney" to "悉尼", "Hong Kong" to "香港",
+        "Seoul" to "首尔",
+    )
+
+    private val zhSuffixes: Map<String, String> = mapOf("Bridge" to "桥接")
+
     /** Suffixes in "(...)" after a country name, [ru, tr, en]. */
     private val suffixes: List<List<String>> = listOf(
         listOf("Мост", "Köprü", "Bridge"),
     )
 
-    private val cityIndex: Map<String, List<String>> by lazy { index(cities) }
-    private val suffixIndex: Map<String, List<String>> by lazy { index(suffixes) }
+    private val cityIndex: Map<String, List<String>> by lazy { index(cities, zhCities) }
+    private val suffixIndex: Map<String, List<String>> by lazy { index(suffixes, zhSuffixes) }
 
-    private fun index(rows: List<List<String>>): Map<String, List<String>> =
-        buildMap { rows.forEach { row -> row.forEach { put(normalize(it), row) } } }
+    private fun index(rows: List<List<String>>, zh: Map<String, String>): Map<String, List<String>> =
+        buildMap {
+            rows.forEach { row ->
+                row.forEach { put(normalize(it), row) }
+                zh[row[2]]?.let { put(normalize(it), row) }
+            }
+        }
+
+    /** The [row] ([ru, tr, en, ...aliases]) in [language]; Chinese comes from the zh tables. */
+    private fun pick(row: List<String>, zh: Map<String, String>, language: String?): String =
+        if (lang(language) == "zh") zh[row[2]] ?: row[2] else row[slot(language)]
 
     private val folds: Map<Char, String> = mapOf(
         'ı' to "i", 'ş' to "s", 'ğ' to "g", 'ü' to "u", 'ö' to "o", 'ç' to "c",
@@ -125,7 +155,7 @@ object ColituServerNames {
         val text = raw?.trim().orEmpty()
         if (text.isEmpty()) return text
         val row = cityIndex[normalize(text)] ?: return text
-        return row[slot(language)]
+        return pick(row, zhCities, language)
     }
 
     /**
@@ -146,11 +176,11 @@ object ColituServerNames {
         } else {
             val cityRow = cityIndex[normalize(head)]
             if (cityRow == null && match == null) return text
-            cityRow?.get(slot(language)) ?: head
+            cityRow?.let { pick(it, zhCities, language) } ?: head
         }
         if (suffix == null) return localizedHead
         if (head.isEmpty()) return text
-        val localizedSuffix = suffixIndex[normalize(suffix)]?.get(slot(language)) ?: suffix
+        val localizedSuffix = suffixIndex[normalize(suffix)]?.let { pick(it, zhSuffixes, language) } ?: suffix
         return "$localizedHead ($localizedSuffix)"
     }
 
